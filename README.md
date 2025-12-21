@@ -1,1 +1,1 @@
-# Ubuntu-Sztresstest
+# Ubuntu-Stresstest

@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Poetry
+poetry.lock
+
+# Prime95/mprime – Binary ist ~37 MB, wird per Installer nachgeladen
+# Soll NICHT ins Git-Repo, sondern per install_hardwaretest.sh heruntergeladen
+vendor/prime95/mprime
+vendor/prime95/libgmp.so*
+vendor/prime95/*.txt
+
+# mprime Laufzeitdateien
+vendor/prime95/prime.txt
+vendor/prime95/local.txt
+vendor/prime95/prime.hwbackup
+vendor/prime95/local.hwbackup
+vendor/prime95/results.txt
+vendor/prime95/results.json.txt
+vendor/prime95/worktodo.txt
+
+# Backup-Dateien
+*.bak
+*.hwbackup

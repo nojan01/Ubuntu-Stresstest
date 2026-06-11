@@ -1,0 +1,6 @@
+name: Default RAM Stress
+ram_megabytes: 1024
+duration_seconds: 120
+cpu_cores: all
+tool: stress-ng
+notes: "Standardprofil, nutzt freien RAM automatisch, wenn Wert leer."

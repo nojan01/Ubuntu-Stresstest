@@ -1,0 +1,481 @@
+"""Panel fuer den zyklischen RAM-Fuelltest (Speicher vollschreiben/freigeben)."""
+
+from __future__ import annotations
+
+from typing import Callable, Optional
+
+from PySide6.QtCore import QThread, QTimer, Signal, Qt
+from PySide6.QtWidgets import (
+    QFormLayout,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSpinBox,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from hardwaretest.core.system_info import (
+    SystemInfo,
+    check_swapoff_safe,
+    disable_swap,
+    needs_password_for_swap,
+    read_system_info,
+)
+from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
+from hardwaretest.tests.memory_fill import MemoryFillRunner
+from hardwaretest.ui.utils import launch_command_in_terminal
+from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
+
+
+# ---------------------------------------------------------------------------
+# Background worker so swapoff never blocks the Qt event loop
+# ---------------------------------------------------------------------------
+
+class _SwapWorker(QThread):
+    finished_ok = Signal()
+    failed = Signal(str)
+
+    def __init__(self, password: Optional[str] = None, parent=None):
+        super().__init__(parent)
+        self._password = password
+
+    def run(self) -> None:
+        try:
+            disable_swap(password=self._password)
+            self.finished_ok.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+SystemInfoProvider = Callable[[], SystemInfo]
+
+
+class MemoryFillPanel(QWidget):
+    """Konfiguriert und startet den zyklischen RAM-Fuelltest."""
+
+    log_signal = Signal(str)
+
+    def __init__(
+        self,
+        system_info_provider: SystemInfoProvider = read_system_info,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.system_info_provider = system_info_provider
+        self.runner: Optional[BaseTestRunner] = None
+        self._system_info = self.system_info_provider()
+
+        # --- System-Info ---
+        self.info_label = QLabel("Systemdaten werden ermittelt...")
+        self.refresh_btn = QPushButton("Systemwerte aktualisieren")
+        self.refresh_btn.clicked.connect(lambda: self._refresh_system_info(update_memory_value=True))
+
+        # --- Temperatur-Widget ---
+        self.temp_widget = TemperatureWidget()
+
+        # --- Dauer ---
+        self.duration_hours = QSpinBox()
+        self.duration_hours.setRange(0, 240)
+        self.duration_hours.setSuffix(" h")
+        self.duration_minutes = QSpinBox()
+        self.duration_minutes.setRange(0, 59)
+        self.duration_minutes.setSuffix(" m")
+        self.duration_seconds = QSpinBox()
+        self.duration_seconds.setRange(0, 59)
+        self.duration_seconds.setSuffix(" s")
+        self._set_default_duration(600)
+
+        # --- Speicher ---
+        self.memory_mb = QSpinBox()
+        self.memory_mb.setRange(0, 1024 * 1024)
+        self.memory_mb.setSuffix(" MB")
+        self.memory_mb.setSpecialValueText("automatisch")
+        self.memory_mb.setValue(0)
+        self.memory_mb.setToolTip(
+            "0 = automatisch (nutzt den gesamten verfuegbaren Speicher abzueglich Reserve). "
+            "Manueller Wert: fester Allokationsbetrag pro Zyklus."
+        )
+
+        self.reserve_mb = QSpinBox()
+        self.reserve_mb.setRange(128, 4096)
+        self.reserve_mb.setSuffix(" MB")
+        self.reserve_mb.setValue(512)
+        self.reserve_mb.setToolTip(
+            "Speicher der fuer das Betriebssystem und die GUI frei bleibt. "
+            "Wird nur bei automatischer Speichermenge beruecksichtigt."
+        )
+
+        self.chunk_mb = QSpinBox()
+        self.chunk_mb.setRange(16, 4096)
+        self.chunk_mb.setSuffix(" MB")
+        self.chunk_mb.setValue(256)
+        self.chunk_mb.setToolTip(
+            "Groesse der einzelnen Speicherbloecke. Kleinere Werte sind "
+            "bei fragmentiertem Speicher erfolgreicher, groessere effizienter."
+        )
+
+        # --- Ergebnis-Anzeige ---
+        self.result_label = QLabel("")
+        self.result_label.setAlignment(Qt.AlignCenter)
+
+        # --- Fortschritt ---
+        self.progress = QLabel("Bereit")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.log_view = QTextEdit()
+        self.log_view.setReadOnly(True)
+
+        # --- Beschreibung ---
+        desc = QLabel(
+            "Allokiert den gesamten verfuegbaren RAM, schreibt Bitmuster "
+            "(0xAA, 0x55, 0xFF, 0x00), verifiziert, gibt frei und wiederholt. "
+            "Findet defekte Speicherzellen und Timing-Fehler im RAM."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #bbbbbb; font-style: italic; padding: 4px 0;")
+
+        # --- Buttons ---
+        # --- Swap-Button ---
+        self.swap_btn = QPushButton("Swap deaktivieren")
+        self.swap_btn.setToolTip(
+            "Deaktiviert Swap, damit der RAM-Test den physischen Speicher testet "
+            "und nicht auf die Festplatte ausweicht."
+        )
+        self.swap_btn.clicked.connect(self._disable_swap)
+
+        self.start_btn = QPushButton("RAM-Fuelltest starten")
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setEnabled(False)
+        self.btop_btn = QPushButton("btop starten")
+        self.klog_btn = QPushButton("Kernel-Logs")
+        self.mce_btn = QPushButton("MCE-Logs")
+
+        # --- Layout ---
+        form = QFormLayout()
+        form.addRow("Dauer", self._build_duration_widget())
+        form.addRow("Speicher", self.memory_mb)
+        form.addRow("Reserve (OS/GUI)", self.reserve_mb)
+        form.addRow("Blockgroesse", self.chunk_mb)
+
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.start_btn)
+        btn_row.addWidget(self.stop_btn)
+        btn_row.addWidget(self.btop_btn)
+        btn_row.addWidget(self.klog_btn)
+        btn_row.addWidget(self.mce_btn)
+
+        util_row = QHBoxLayout()
+        util_row.addWidget(self.swap_btn)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.info_label)
+        layout.addWidget(self.refresh_btn)
+        layout.addWidget(self.temp_widget)
+        layout.addWidget(desc)
+        layout.addLayout(form)
+        layout.addLayout(util_row)
+        layout.addLayout(btn_row)
+        layout.addWidget(self.result_label)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.progress)
+        layout.addWidget(self.log_view)
+        self.setLayout(layout)
+
+        # --- Timer ---
+        self.timer = QTimer(self)
+        self.timer.setInterval(500)
+        self.timer.timeout.connect(self._update_progress)
+
+        # --- Signale ---
+        self.start_btn.clicked.connect(self.start_test)
+        self.stop_btn.clicked.connect(self.stop_test)
+        self.btop_btn.clicked.connect(self._launch_btop)
+        self.klog_btn.clicked.connect(self._launch_klogs)
+        self.mce_btn.clicked.connect(self._launch_mcelog)
+        self.log_signal.connect(self._append_log)
+
+        self._refresh_system_info(update_memory_value=True)
+
+    # --------------------------------------------------------------------- #
+    #  Test-Steuerung                                                        #
+    # --------------------------------------------------------------------- #
+
+    def start_test(self) -> None:
+        if self.runner and self.runner.is_running():
+            return
+        self._refresh_system_info(update_memory_value=False)
+
+        duration = self._total_duration_seconds()
+        if duration <= 0:
+            self._append_log("Bitte eine Dauer groesser als 0 Sekunden auswaehlen.")
+            return
+
+        mem = self.memory_mb.value()
+        reserve = self.reserve_mb.value()
+        chunk = self.chunk_mb.value()
+
+        # Bei aktivem Swap: automatisch deaktivieren
+        if self._system_info.swap_enabled:
+            self._append_log("Swap ist aktiv – versuche automatisch zu deaktivieren …")
+            if not self._try_disable_swap_blocking():
+                # Swap konnte nicht deaktiviert werden – Nutzer fragen ob trotzdem starten
+                answer = QMessageBox.question(
+                    self,
+                    "Swap noch aktiv",
+                    "Swap konnte nicht deaktiviert werden.\n\n"
+                    "Der Test koennte auf die Festplatte ausweichen und "
+                    "unzuverlaessige Ergebnisse liefern.\n\n"
+                    "Trotzdem starten?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if answer != QMessageBox.Yes:
+                    self._append_log("Test abgebrochen – Swap ist noch aktiv.")
+                    return
+                self._append_log("⚠ WARNUNG: Test startet mit aktivem Swap!")
+            else:
+                self._append_log("✓ Swap erfolgreich deaktiviert.")
+                self._refresh_system_info(update_memory_value=False)
+
+        params = TestParameters(duration_seconds=duration)
+        self.runner = MemoryFillRunner(
+            params,
+            memory_mb=mem,
+            reserve_mb=reserve,
+            chunk_mb=chunk,
+            log_fn=self._handle_runner_log,
+        )
+        try:
+            self.runner.start()
+        except Exception as exc:
+            self._append_log(f"Fehler beim Start: {exc}")
+            self.runner = None
+            return
+
+        self.timer.start()
+        self.temp_widget.start_monitoring()
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.progress_bar.setValue(0)
+        self.progress.setText("Fortschritt: 0%")
+        self.result_label.setText("")
+        self.result_label.setStyleSheet("")
+        self._append_log("Zyklischer RAM-Fuelltest gestartet …")
+
+    def stop_test(self) -> None:
+        if not self.runner:
+            return
+        self.runner.stop()
+        self.timer.stop()
+        self.temp_widget.stop_monitoring()
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.progress.setText("Manuell gestoppt")
+        self._show_result()
+        self._append_log("Test manuell gestoppt.")
+
+    # --------------------------------------------------------------------- #
+    #  Log / Fortschritt / Ergebnis                                          #
+    # --------------------------------------------------------------------- #
+
+    def _append_log(self, text: str) -> None:
+        self.log_view.append(text)
+
+    def _handle_runner_log(self, text: str) -> None:
+        self.log_signal.emit(text)
+
+    def _update_progress(self) -> None:
+        if not self.runner:
+            return
+        progress = int(self.runner.progress() * 100)
+        self.progress_bar.setValue(progress)
+        self.progress.setText(f"Fortschritt: {progress}%")
+        if not self.runner.is_running():
+            self.timer.stop()
+            self.temp_widget.stop_monitoring()
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.progress_bar.setValue(100)
+            self.progress.setText("Fertig")
+            self._show_result()
+
+    def _show_result(self) -> None:
+        """Zeigt das Pass/Fail-Ergebnis an."""
+        if not self.runner:
+            return
+        result = self.runner.get_result()
+        if result is None:
+            return
+        if result.passed:
+            self.result_label.setText(
+                f"✓ BESTANDEN – Keine Fehler gefunden ({result.duration_actual:.0f}s)"
+            )
+            self.result_label.setStyleSheet(
+                "color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
+            )
+        else:
+            error_summary = "; ".join(result.errors[:3])
+            if len(result.errors) > 3:
+                error_summary += f" … (+{len(result.errors) - 3} weitere)"
+            self.result_label.setText(f"✗ FEHLER GEFUNDEN – {error_summary}")
+            self.result_label.setStyleSheet(
+                "color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
+            )
+
+    # --------------------------------------------------------------------- #
+    #  System-Info                                                            #
+    # --------------------------------------------------------------------- #
+
+    def _refresh_system_info(self, update_memory_value: bool = False) -> None:
+        info = self.system_info_provider()
+        self._system_info = info
+        swap_state = "aktiv" if info.swap_enabled else "deaktiviert"
+        if info.physical_cpu_cores > 0:
+            core_text = (
+                f"Kerne: {info.cpu_cores} logisch / {info.physical_cpu_cores} physisch"
+            )
+        else:
+            core_text = f"Kerne: {info.cpu_cores} logisch"
+        self.info_label.setText(
+            f"Verfuegbar: {info.available_memory_mb} MB | {core_text} | Swap {swap_state}"
+        )
+        self.memory_mb.setMaximum(max(info.available_memory_mb, self.memory_mb.minimum()))
+        if update_memory_value and self.memory_mb.value() == 0:
+            pass  # auto-Modus beibehalten
+
+        # Swap-Button Status
+        self.swap_btn.setEnabled(info.swap_enabled)
+        if not info.swap_enabled:
+            self.swap_btn.setText("Swap bereits deaktiviert")
+        else:
+            self.swap_btn.setText("Swap deaktivieren")
+
+    # --------------------------------------------------------------------- #
+    #  Hilfsfunktionen                                                       #
+    # --------------------------------------------------------------------- #
+
+    def _build_duration_widget(self) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self.duration_hours)
+        layout.addWidget(self.duration_minutes)
+        layout.addWidget(self.duration_seconds)
+        container.setLayout(layout)
+        return container
+
+    def _total_duration_seconds(self) -> int:
+        return (
+            self.duration_hours.value() * 3600
+            + self.duration_minutes.value() * 60
+            + self.duration_seconds.value()
+        )
+
+    def _set_default_duration(self, seconds: int) -> None:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        self.duration_hours.setValue(hours)
+        self.duration_minutes.setValue(minutes)
+        self.duration_seconds.setValue(secs)
+
+    def _launch_btop(self) -> None:
+        if not launch_command_in_terminal(["btop"]):
+            self._append_log("btop konnte nicht gestartet werden.")
+
+    def _launch_klogs(self) -> None:
+        if not launch_command_in_terminal(["journalctl", "-kf"]):
+            self._append_log("journalctl konnte nicht gestartet werden.")
+
+    def _launch_mcelog(self) -> None:
+        if not launch_command_in_terminal(["journalctl", "-kf", "-g", "MCE"]):
+            self._append_log("MCE-Logs konnten nicht gestartet werden.")
+
+    # --------------------------------------------------------------------- #
+    #  Swap-Verwaltung                                                       #
+    # --------------------------------------------------------------------- #
+
+    def _try_disable_swap_blocking(self) -> bool:
+        """Versucht Swap synchron zu deaktivieren. Gibt True bei Erfolg zurueck."""
+        safe, msg = check_swapoff_safe(self._system_info)
+        if not safe:
+            self._append_log(f"\u26a0 {msg}")
+            return False
+
+        password: Optional[str] = None
+        if needs_password_for_swap():
+            pw, ok = QInputDialog.getText(
+                self,
+                "Swap deaktivieren \u2013 Passwort erforderlich",
+                "sudo-Passwort eingeben:",
+                QLineEdit.EchoMode.Password,
+            )
+            if not ok or not pw:
+                self._append_log("Swap-Deaktivierung abgebrochen (kein Passwort).")
+                return False
+            password = pw
+
+        try:
+            disable_swap(password=password)
+            return True
+        except Exception as exc:
+            self._append_log(f"Swap-Deaktivierung fehlgeschlagen: {exc}")
+            return False
+
+    def _disable_swap(self) -> None:
+        """Manueller Swap-Button: deaktiviert Swap im Hintergrund-Thread."""
+        self._refresh_system_info(update_memory_value=False)
+
+        safe, msg = check_swapoff_safe(self._system_info)
+        if not safe:
+            self._append_log(f"\u26a0 {msg}")
+            QMessageBox.warning(self, "Swap-Deaktivierung nicht sicher", msg)
+            return
+
+        password: Optional[str] = None
+        if needs_password_for_swap():
+            pw, ok = QInputDialog.getText(
+                self,
+                "Swap deaktivieren \u2013 Passwort erforderlich",
+                "sudo-Passwort eingeben:",
+                QLineEdit.EchoMode.Password,
+            )
+            if not ok or not pw:
+                self._append_log("Swap-Deaktivierung abgebrochen (kein Passwort).")
+                return
+            password = pw
+
+        self.swap_btn.setEnabled(False)
+        self.swap_btn.setText("Swap wird deaktiviert \u2026")
+        self._append_log("Swap-Deaktivierung laeuft (Hintergrund-Thread) \u2026")
+
+        worker = _SwapWorker(password=password, parent=self)
+        self._swap_worker = worker
+        worker.finished_ok.connect(self._on_swap_done)
+        worker.failed.connect(self._on_swap_failed)
+        worker.start()
+
+    def _on_swap_done(self) -> None:
+        self._append_log("\u2713 Swap erfolgreich deaktiviert.")
+        self._refresh_system_info(update_memory_value=False)
+        self._swap_worker = None
+
+    def _on_swap_failed(self, error_msg: str) -> None:
+        self._append_log(f"Swap-Deaktivierung fehlgeschlagen: {error_msg}")
+        self._refresh_system_info(update_memory_value=False)
+        QMessageBox.warning(
+            self,
+            "Swap-Deaktivierung",
+            f"Swap konnte nicht deaktiviert werden:\n{error_msg}\n\n"
+            "Manuell ausfuehren: sudo swapoff -a",
+        )
+        self._swap_worker = None

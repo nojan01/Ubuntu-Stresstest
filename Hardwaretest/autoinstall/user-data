@@ -35,8 +35,8 @@ autoinstall:
     hostname: hardwaretest
     username: testuser
     # Passwort "hardwaretest" (SHA-512 Hash)
-    # Generiert mit: openssl passwd -6 hardwaretest
-    password: "$6$rounds=4096$randomsalt123456$Y9Y3Nw8jXGxQx0F5R7Kj5v8ZCm3TgXqE4PaL6D2Z1wQ0xRmV7nBh5iS3kU9oP8cW4fJ6gH2tA1dM0eN7vR3bX/"
+    # Generiert mit: openssl passwd -6 -salt randomsalt123456 hardwaretest
+    password: "$6$randomsalt123456$evnu.KjrXTcNlqcX4R7zx/Ih7zQBbW8vzwrFOuSIAbDH5SJigX/4MKGnrutmfMyD7wUdhjC4TX/LvDN72PLsB0"
 
   # ── SSH-Server mitinstallieren ─────────────────────────────────────────────
   ssh:

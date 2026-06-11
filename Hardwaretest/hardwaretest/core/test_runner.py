@@ -135,6 +135,9 @@ class BaseTestRunner:
     def stop(self) -> None:
         self._watchdog_cancel.set()
         if self._watchdog_thread is not None:
+            # Auf das Watchdog-Ende warten, damit es nicht nebenläufig auf
+            # self._process zugreift, nachdem dieses unten auf None gesetzt wurde.
+            self._watchdog_thread.join(timeout=1)
             self._watchdog_thread = None
         if self._process and self._process.poll() is None:
             self._log("Stoppe Test...")
@@ -143,6 +146,7 @@ class BaseTestRunner:
                 self._process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self._process.kill()
+                self._process.wait()
         self._finalize_result()
         self._process = None
         self._start_time = None
@@ -200,6 +204,7 @@ class BaseTestRunner:
             except subprocess.TimeoutExpired:
                 self._log("Prozess reagiert nicht auf SIGTERM – sende SIGKILL.")
                 self._process.kill()
+                self._process.wait()
 
     def _stream_output(self) -> None:
         if not self._process or not self._process.stdout:

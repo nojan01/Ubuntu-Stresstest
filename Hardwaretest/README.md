@@ -4,36 +4,61 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **CPU, RAM und Festp
 
 ## Installation
 
-### 1. Zip entpacken nach `/opt/hardwaretest`
+### Empfohlen: Debian-/Ubuntu-Paket (.deb)
+
+Am einfachsten lässt sich Hardwaretest als natives `.deb`-Paket installieren.
+Es legt den Launcher `hardwaretest`, einen Menü-Eintrag samt Icon an und zieht
+alle benötigten APT-Abhängigkeiten (PySide6, psutil, …) automatisch mit.
+
+```bash
+# 1. Paket bauen (benötigt dpkg-dev)
+bash scripts/build_deb.sh
+# Ergebnis: dist/hardwaretest_<version>_all.deb
+
+# 2. Installieren (löst Abhängigkeiten automatisch auf)
+sudo apt install ./dist/hardwaretest_*_all.deb
+```
+
+Danach startet die Anwendung über den Menü-Eintrag **Hardwaretest** oder per
+Terminal mit `hardwaretest`. Deinstallieren mit `sudo apt remove hardwaretest`.
+
+> **Hinweis:** Die optionalen Werkzeuge (`stress-ng`, `fio`, `smartmontools`,
+> `ssacli`, Prime95/`mprime`, …) sind als `Recommends`/`Suggests` deklariert und
+> werden bei Bedarf mitinstalliert bzw. können nachgerüstet werden.
+
+### Alternative: Zip + Installationsscript
+
+#### 1. Zip entpacken nach `/opt/hardwaretest`
 
 ```bash
 sudo unzip Hardwaretest-v0.1.0.zip -d /opt/hardwaretest
 ```
 
-### 2. In das Verzeichnis wechseln
+#### 2. In das Verzeichnis wechseln
 
 ```bash
 cd /opt/hardwaretest/Hardwaretest
 ```
 
-### 3. Installationsscript ausführen
+#### 3. Installationsscript ausführen
 
 ```bash
 sudo bash scripts/install_hardwaretest.sh
 ```
 
-### Was passiert dabei?
+#### Was passiert dabei?
 
-Das Script durchläuft **6 Schritte** und fragt vor jeder Aktion nach:
+Das Script durchläuft **7 Schritte** und fragt vor jeder Aktion nach:
 
 | Schritt | Beschreibung |
 |---|---|
-| **1/6** | **APT-Pakete prüfen** – zeigt fehlende Pflicht- und optionale Pakete an, installiert auf Bestätigung |
-| **2/6** | **Prime95 (mprime)** – prüft ob vorhanden, bietet Download an |
-| **3/6** | **Python venv** – erstellt `.venv/`, installiert PySide6, psutil etc. |
-| **4/6** | **CLI-Starter** – legt `/usr/local/bin/hardwaretest` an |
-| **5/6** | **Desktop-Starter** – `.desktop`-Datei + SVG-Icon + Verknüpfung auf dem Desktop |
-| **6/6** | **Zusammenfassung** mit HPE ssacli-Hinweis |
+| **1/7** | **APT-Pakete prüfen** – zeigt fehlende Pflicht- und optionale Pakete an, installiert auf Bestätigung |
+| **2/7** | **Prime95 (mprime)** – prüft ob vorhanden, bietet Download an |
+| **3/7** | **Fastfetch & JSON-Reader** – installiert optionale Diagnose-Helfer |
+| **4/7** | **Python venv** – erstellt `.venv/`, installiert PySide6, psutil etc. |
+| **5/7** | **CLI-Starter** – legt `/usr/local/bin/hardwaretest` an |
+| **6/7** | **Desktop-Starter** – `.desktop`-Datei + SVG-Icon + Verknüpfung auf dem Desktop |
+| **7/7** | **Zusammenfassung** mit HPE ssacli-Hinweis |
 
 ### Optionen
 
@@ -116,7 +141,11 @@ hardwaretest/
 │                   # temperature_widget, memory_controller_panel, mprime_panel
 scripts/
 ├── install_hardwaretest.sh
+├── build_deb.sh           # baut ein installierbares .deb-Paket
+├── build_autoinstall_iso.sh
 └── collect_system_report.sh
+packaging/
+└── hardwaretest.desktop   # Desktop-Eintrag für das .deb-Paket
 assets/
 └── hardwaretest.svg
 ```

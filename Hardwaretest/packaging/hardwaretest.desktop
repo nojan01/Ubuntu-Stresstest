@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Hardwaretest
+Name[de]=Hardwaretest
+GenericName=Hardware Stress Test
+GenericName[de]=Hardware-Stresstest
+Comment=Stress tests for CPU, RAM and Disk (stress-ng, Prime95, fio)
+Comment[de]=Stresstests für CPU, RAM und Festplatten (stress-ng, Prime95, fio)
+Exec=hardwaretest
+Icon=hardwaretest
+Terminal=false
+Categories=System;Utility;Monitor;
+Keywords=stress;test;cpu;ram;disk;fio;prime95;hardware;benchmark;
+StartupNotify=true
+StartupWMClass=hardwaretest

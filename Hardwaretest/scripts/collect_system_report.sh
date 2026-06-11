@@ -65,7 +65,7 @@ import os
 import pathlib
 import platform
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 def read_text(path: pathlib.Path) -> str:
     try:
@@ -95,7 +95,7 @@ kernel = read_text(pathlib.Path(kernel_path)) if kernel_path else "(keine Daten)
 
 payload = {
     "meta": {
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "hostname": platform.node(),
         "kernel": kernel,
     },

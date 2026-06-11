@@ -4,9 +4,22 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **CPU, RAM und Festp
 
 ## Installation
 
-### Empfohlen: Debian-/Ubuntu-Paket (.deb)
+### Fertiges Paket herunterladen (GitHub Release)
 
-Am einfachsten lässt sich Hardwaretest als natives `.deb`-Paket installieren.
+Vorgebaute `.deb`-Pakete werden auf der
+[**Releases-Seite**](../../releases) bereitgestellt. Lade dort das aktuelle
+`hardwaretest_<version>_all.deb` herunter und installiere es:
+
+```bash
+sudo apt install ./hardwaretest_*_all.deb
+```
+
+> Die `.deb` wird automatisch per GitHub Actions gebaut und an das Release
+> angehängt, sobald ein Tag der Form `v*` (z. B. `v0.1.0`) gepusht wird.
+
+### Selbst bauen: Debian-/Ubuntu-Paket (.deb)
+
+Alternativ lässt sich das native `.deb`-Paket lokal bauen.
 Es legt den Launcher `hardwaretest`, einen Menü-Eintrag samt Icon an und zieht
 alle benötigten APT-Abhängigkeiten (PySide6, psutil, …) automatisch mit.
 

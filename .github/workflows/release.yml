@@ -1,0 +1,65 @@
+name: Release .deb
+
+# Baut das Debian-Paket und haengt es als Asset an ein GitHub Release.
+#
+# Ausloeser:
+#   1. Push eines Tags der Form v* (z. B. v0.1.0)  -> Release wird automatisch
+#      erstellt/aktualisiert und die .deb angehaengt.
+#   2. Manueller Start ueber "Run workflow" (workflow_dispatch) mit Angabe
+#      eines Tag-Namens.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag-Name fuer das Release (z. B. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Hardwaretest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build-Werkzeuge installieren
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+
+      - name: .deb-Paket bauen
+        run: bash scripts/build_deb.sh
+
+      - name: Release-Tag bestimmen
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          DEB_PATH="$(ls dist/hardwaretest_*_all.deb | head -n1)"
+          echo "deb_path=${DEB_PATH}" >> "$GITHUB_OUTPUT"
+
+      - name: GitHub Release erstellen/aktualisieren und Asset anhaengen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          DEB="${{ steps.meta.outputs.deb_path }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DEB" --clobber
+          else
+            gh release create "$TAG" "$DEB" \
+              --title "$TAG" \
+              --generate-notes
+          fi

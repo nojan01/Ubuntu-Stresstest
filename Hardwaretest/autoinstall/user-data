@@ -1,0 +1,112 @@
+#cloud-config
+# =============================================================================
+#  Ubuntu 24.04 Autoinstall – Hardwaretest-Umgebung
+#
+#  Vollautomatische Installation: Ubuntu Server + XFCE4 + Hardwaretest
+#  Für HPE iLO Virtual Media, USB-Boot oder PXE.
+#
+#  Benutzer: testuser / hardwaretest
+# =============================================================================
+autoinstall:
+  version: 1
+
+  # ── Locale & Tastatur ──────────────────────────────────────────────────────
+  locale: de_DE.UTF-8
+  keyboard:
+    layout: de
+    variant: ""
+
+  # ── Netzwerk (DHCP auf allen NICs) ─────────────────────────────────────────
+  network:
+    version: 2
+    ethernets:
+      id0:
+        match:
+          name: "en*"
+        dhcp4: true
+
+  # ── Speicher: gesamte Platte verwenden ─────────────────────────────────────
+  storage:
+    layout:
+      name: direct
+
+  # ── Benutzer ───────────────────────────────────────────────────────────────
+  identity:
+    hostname: hardwaretest
+    username: testuser
+    # Passwort "hardwaretest" (SHA-512 Hash)
+    # Generiert mit: openssl passwd -6 -salt randomsalt123456 hardwaretest
+    password: "$6$randomsalt123456$evnu.KjrXTcNlqcX4R7zx/Ih7zQBbW8vzwrFOuSIAbDH5SJigX/4MKGnrutmfMyD7wUdhjC4TX/LvDN72PLsB0"
+
+  # ── SSH-Server mitinstallieren ─────────────────────────────────────────────
+  ssh:
+    install-server: true
+    allow-pw: true
+
+  # ── Zusätzliche Pakete ─────────────────────────────────────────────────────
+  packages:
+    # Desktop
+    - xfce4
+    - xfce4-terminal
+    - lightdm
+    # Hardwaretest-Abhängigkeiten
+    - python3
+    - python3-venv
+    - python3-pip
+    - python3-dev
+    - build-essential
+    - curl
+    - wget
+    - unzip
+    - stress-ng
+    - fio
+    - jq
+    - btop
+    - lshw
+    - pciutils
+    - smartmontools
+    - dmidecode
+    - nvme-cli
+    - hdparm
+    - lm-sensors
+    - edac-utils
+    - memtest86+
+    # Qt6/PySide6 XCB-Abhängigkeiten
+    - libxcb-cursor0
+    - libxcb-icccm4
+    - libxcb-keysyms1
+    - libxcb-render-util0
+    - libxcb-shape0
+    - libxcb-xfixes0
+    - libxkbcommon-x11-0
+    # PolicyKit
+    - polkitd
+
+  # ── Late Commands: Hardwaretest einrichten ─────────────────────────────────
+  late-commands:
+    # --- LightDM Auto-Login einrichten ---
+    - |
+      mkdir -p /target/etc/lightdm/lightdm.conf.d
+      cat > /target/etc/lightdm/lightdm.conf.d/50-autologin.conf <<'AUTOLOGIN'
+      [Seat:*]
+      autologin-user=testuser
+      autologin-user-timeout=0
+      AUTOLOGIN
+
+    # --- Hardwaretest von lokalem Server herunterladen und installieren ---
+    #     ANPASSEN: IP-Adresse des HTTP-Servers mit dem ZIP
+    - curtin in-target -- bash -c 'mkdir -p /opt/Hardwaretest'
+    - |
+      if [ -f /cdrom/hardwaretest/Hardwaretest-v0.1.0.zip ]; then
+        cp /cdrom/hardwaretest/Hardwaretest-v0.1.0.zip /target/tmp/
+      fi
+    - curtin in-target -- bash -c '
+        if [ -f /tmp/Hardwaretest-v0.1.0.zip ]; then
+          unzip -o /tmp/Hardwaretest-v0.1.0.zip -d /opt/Hardwaretest
+          cd /opt/Hardwaretest && bash scripts/install_hardwaretest.sh --yes
+          rm -f /tmp/Hardwaretest-v0.1.0.zip
+        fi
+      '
+
+    # --- Default Boot-Target auf graphisch setzen ---
+    - curtin in-target -- systemctl set-default graphical.target

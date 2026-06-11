@@ -12,7 +12,6 @@ from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -31,7 +30,6 @@ from hardwaretest.core.system_info import (
     check_memtest86_installed,
     check_swapoff_safe,
     disable_swap,
-    disable_swap_with_password,
     needs_password_for_swap,
     read_system_info,
 )

@@ -13,7 +13,6 @@ from typing import Callable, Optional
 from PySide6.QtCore import QProcess
 from PySide6.QtWidgets import (
     QFormLayout,
-    QLabel,
     QMessageBox,
     QPushButton,
     QSizePolicy,

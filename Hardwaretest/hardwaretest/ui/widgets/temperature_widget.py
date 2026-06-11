@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,
-    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -26,7 +25,6 @@ from PySide6.QtWidgets import (
 from hardwaretest.core.system_info import (
     CpuChipSummary,
     CpuTemperature,
-    EdacInfo,
     format_edac_info,
     read_cpu_temperatures,
     read_edac_info,

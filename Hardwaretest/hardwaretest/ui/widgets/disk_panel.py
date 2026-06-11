@@ -32,8 +32,6 @@ from PySide6.QtWidgets import (
 )
 
 from hardwaretest.core.system_info import (
-	HpeRaidInfo,
-	SmartInfo,
 	SystemInfo,
 	format_smart_summary,
 	read_hpe_raid_info,

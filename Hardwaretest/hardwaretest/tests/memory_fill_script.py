@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import mmap
-import os
 import signal
 import sys
 import time
@@ -170,14 +169,12 @@ def run_cycles(
     chunk_mb: int = 256,
 ) -> int:
     """Fuehrt die Fuell-/Freigabe-Zyklen durch. Gibt Exit-Code zurueck."""
-    global _stop
-
     start = time.monotonic()
     cycle = 0
     total_errors = 0
     patterns = [0xAA, 0x55, 0xFF, 0x00]
 
-    print(f"=== Zyklischer RAM-Fuelltest gestartet ===")
+    print("=== Zyklischer RAM-Fuelltest gestartet ===")
     print(f"Dauer: {duration_seconds}s | Reserve: {reserve_mb} MB | Chunk: {chunk_mb} MB")
     print(flush=True)
 
@@ -264,13 +261,13 @@ def run_cycles(
 
     # Zusammenfassung
     total_time = time.monotonic() - start
-    print(f"=== Fuelltest beendet ===")
+    print("=== Fuelltest beendet ===")
     print(f"Zyklen: {cycle} | Dauer: {total_time:.0f}s | Fehler gesamt: {total_errors}")
     if total_errors > 0:
         print(f"ERGEBNIS: FEHLER GEFUNDEN – {total_errors} Verifikationsfehler")
         return 1
     else:
-        print(f"ERGEBNIS: BESTANDEN – Keine Fehler gefunden")
+        print("ERGEBNIS: BESTANDEN – Keine Fehler gefunden")
         return 0
 
 

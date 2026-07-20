@@ -31,8 +31,21 @@ for arg in "$@"; do
             echo "  --yes, -y   Alle Aktionen ohne Rückfrage ausführen"
             exit 0
             ;;
+        *)
+            echo "Unbekanntes Argument: $arg" >&2
+            echo "Verwendung: sudo $0 [--yes|-y] [--help|-h]" >&2
+            exit 2
+            ;;
     esac
 done
+
+# ── Hilfsfunktion: ist ein Paket WIRKLICH installiert? ───────────────────────
+# 'dpkg -s pkg' liefert auch fuer 'rc'-Zustand (entfernt, Config blieb)
+# Exit 0, was zu falschen "bereits installiert"-Meldungen fuehrt.
+pkg_installed() {
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null \
+        | grep -q "^install ok installed$"
+}
 
 # ── Helfer ────────────────────────────────────────────────────────────────────
 info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
@@ -65,6 +78,24 @@ if ! command -v apt-get &>/dev/null; then
     exit 1
 fi
 
+# ── APT-Cache aktualisieren falls leer/veraltet ──────────────────────────────
+# 'apt-cache show' liefert nichts auf frisch installierten Containern oder
+# wenn die Listen aelter als 24 h sind. Damit unsere Paket-Erkennung weiter
+# unten korrekt funktioniert, einmal vorab updaten.
+_apt_lists_dir="/var/lib/apt/lists"
+_needs_update=true
+if [[ -d "$_apt_lists_dir" ]]; then
+    # Pruefe, ob ueberhaupt Package-Listen vorhanden sind und juenger als 24h
+    if find "$_apt_lists_dir" -maxdepth 1 -name '*Packages*' -mtime -1 2>/dev/null \
+        | grep -q .; then
+        _needs_update=false
+    fi
+fi
+if $_needs_update; then
+    info "Aktualisiere APT-Paketlisten (einmalig vorab)..."
+    apt-get update -qq 2>/dev/null || warn "apt-get update fehlgeschlagen – fahre fort."
+fi
+
 # ── Pfade ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -72,13 +103,30 @@ TARGET_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
 TARGET_HOME=$(eval echo "~${TARGET_USER}")
 ICON_SOURCE="$REPO_DIR/assets/hardwaretest.svg"
 
+# ── Puppy Linux / TrixiePup-Erkennung ────────────────────────────────────────
+IS_PUPPY=false
+if [[ -f /etc/puppyversion ]] || [[ -d /initrd ]] || grep -qi 'puppy\|trixiepup' /etc/os-release 2>/dev/null; then
+    IS_PUPPY=true
+    info "Puppy Linux / TrixiePup erkannt."
+    # Puppy laeuft oft als root – pkexec ist dann unnoetig
+    if [[ $(id -u) -eq 0 && "$TARGET_USER" == "root" ]]; then
+        info "System laeuft als root – pkexec wird nicht benoetigt."
+    fi
+fi
+
 header "Hardwaretest Installer"
 info "Projektverzeichnis: $REPO_DIR"
 info "Zielbenutzer:       $TARGET_USER ($TARGET_HOME)"
 
 # ── Helfer: als Zielbenutzer ausführen ────────────────────────────────────────
 run_as_user() {
-    sudo -H -u "$TARGET_USER" bash -c "$1"
+    # Puppy Linux: nur root vorhanden – sudo -u root ist unnoetig und kann
+    # fehlschlagen wenn sudo nicht installiert ist.
+    if [[ "$TARGET_USER" == "root" ]]; then
+        bash -c "$1"
+    else
+        sudo -H -u "$TARGET_USER" bash -c "$1"
+    fi
 }
 
 # ── Temporäres Verzeichnis ────────────────────────────────────────────────────
@@ -106,12 +154,27 @@ if apt-cache show polkitd &>/dev/null; then
 elif apt-cache show policykit-1 &>/dev/null; then
     _POLKIT_PKG="policykit-1"
 else
-    _POLKIT_PKG="pkexec"  # Minimaler Fallback
+    # Kein bekanntes PolicyKit-Paket im Repo – das ist ungewoehnlich.
+    # Ohne polkitd kann pkexec nicht funktionieren; wir warnen, aber
+    # brechen nicht ab – die App bringt einen eigenen Passwort-Dialog mit.
+    warn "Kein PolicyKit-Paket im APT-Cache (polkitd/policykit-1). pkexec wird nicht funktionieren."
+    _POLKIT_PKG=""
+fi
+
+# python3-venv: Auf Debian Trixie heisst das Paket python3.x-venv
+# (wobei x die installierte Python-Minor-Version ist).
+_PY_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3")
+if apt-cache show "python${_PY_VERSION}-venv" &>/dev/null; then
+    _VENV_PKG="python${_PY_VERSION}-venv"
+elif apt-cache show python3-venv &>/dev/null; then
+    _VENV_PKG="python3-venv"
+else
+    _VENV_PKG="python3-venv"  # Fallback – wird ggf. uebersprungen
 fi
 
 REQUIRED_PKG_NAMES=(
     python3
-    python3-venv
+    "$_VENV_PKG"
     python3-pip
     python3-dev
     build-essential
@@ -120,7 +183,6 @@ REQUIRED_PKG_NAMES=(
     tar
     unzip
     git
-    "$_POLKIT_PKG"
     stress-ng
     fio
     jq
@@ -134,7 +196,7 @@ REQUIRED_PKG_NAMES=(
 )
 REQUIRED_PKG_DESC=(
     "Python 3 Interpreter"
-    "Python venv-Modul"
+    "Python venv-Modul ($_VENV_PKG)"
     "Python pip"
     "Python Entwicklungsheader"
     "C-Compiler (für Erweiterungen)"
@@ -143,7 +205,6 @@ REQUIRED_PKG_DESC=(
     "Archiv-Tool"
     "ZIP-Entpacker"
     "Versionsverwaltung"
-    "PolicyKit (pkexec für Root-Zugriffe)"
     "CPU/RAM-Stresstest"
     "Disk I/O Benchmark"
     "JSON-Verarbeitung"
@@ -156,14 +217,34 @@ REQUIRED_PKG_DESC=(
     "Qt6 XCB-Abhängigkeit"
 )
 
+# PolicyKit nur als Pflichtpaket wenn NICHT Puppy-as-root
+# (Puppy laeuft als root – pkexec wird nicht benoetigt)
+if [[ -n "$_POLKIT_PKG" ]] && ! ( $IS_PUPPY && [[ "$TARGET_USER" == "root" ]] ); then
+    REQUIRED_PKG_NAMES+=("$_POLKIT_PKG")
+    REQUIRED_PKG_DESC+=("PolicyKit (pkexec für Root-Zugriffe)")
+fi
+
 # Optionale Pakete (nützlich, aber nicht zwingend)
+# Text-Editor: gnome-text-editor ist nur auf GNOME-Desktops verfuegbar.
+# Auf Puppy/JWM/leichtgewichtigen DEs stattdessen mousepad oder xed versuchen.
+if apt-cache show gnome-text-editor &>/dev/null; then
+    _TEXT_EDITOR_PKG="gnome-text-editor"
+elif apt-cache show mousepad &>/dev/null; then
+    _TEXT_EDITOR_PKG="mousepad"
+elif apt-cache show xed &>/dev/null; then
+    _TEXT_EDITOR_PKG="xed"
+else
+    _TEXT_EDITOR_PKG="mousepad"  # Fallback – wird ggf. uebersprungen
+fi
+
 OPTIONAL_PKG_NAMES=(
     lshw
     pciutils
     smartmontools
     btop
     terminology
-    gnome-text-editor
+    xterm
+    "$_TEXT_EDITOR_PKG"
     dmidecode
     nvme-cli
     hdparm
@@ -177,7 +258,8 @@ OPTIONAL_PKG_DESC=(
     "SMART Disk-Diagnose (smartctl)"
     "Interaktiver Systemmonitor"
     "Terminal-Emulator (Fallback)"
-    "Text-Editor"
+    "Terminal-Emulator (Fallback für FVWM/FunOS)"
+    "Text-Editor ($_TEXT_EDITOR_PKG)"
     "BIOS/DMI-Informationen"
     "NVMe-Verwaltung"
     "HDD-Parameter auslesen"
@@ -193,7 +275,7 @@ installed_count=0
 total_count=$(( ${#REQUIRED_PKG_NAMES[@]} + ${#OPTIONAL_PKG_NAMES[@]} ))
 
 for pkg in "${REQUIRED_PKG_NAMES[@]}"; do
-    if dpkg -s "$pkg" &>/dev/null; then
+    if pkg_installed "$pkg"; then
         installed_count=$((installed_count + 1))
     else
         missing_required+=("$pkg")
@@ -201,7 +283,7 @@ for pkg in "${REQUIRED_PKG_NAMES[@]}"; do
 done
 
 for pkg in "${OPTIONAL_PKG_NAMES[@]}"; do
-    if dpkg -s "$pkg" &>/dev/null; then
+    if pkg_installed "$pkg"; then
         installed_count=$((installed_count + 1))
     else
         missing_optional+=("$pkg")
@@ -286,6 +368,41 @@ else
     ok "Alle optionalen Pakete sind installiert."
 fi
 
+# ── Terminal-Emulator sicherstellen ────────────────────────────────────────
+# Einige Window-Manager (z.B. FVWM unter FunOS) liefern keinen eigenen
+# Terminal-Emulator mit.  Die App braucht aber einen, um externe Befehle
+# (Kernel-Logs, btop, etc.) in einem Terminal-Fenster anzuzeigen.
+_TERMINAL_CANDIDATES=(
+    x-terminal-emulator gnome-terminal kgx konsole xfce4-terminal
+    mate-terminal tilix terminology xterm
+)
+_has_terminal=false
+for _tc in "${_TERMINAL_CANDIDATES[@]}"; do
+    if command -v "$_tc" &>/dev/null; then
+        _has_terminal=true
+        break
+    fi
+done
+
+if ! $_has_terminal; then
+    warn "Kein Terminal-Emulator gefunden."
+    info "Leichtgewichtige Window-Manager (FVWM, FunOS) liefern oft"
+    info "keinen Terminal-Emulator mit. xterm wird empfohlen."
+    if confirm "xterm jetzt installieren? (wird für Log-Anzeige und btop benötigt)"; then
+        apt-get update -qq 2>/dev/null || true
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y xterm &>/dev/null; then
+            ok "xterm installiert."
+        else
+            fail "xterm konnte nicht installiert werden."
+            warn "Einige Funktionen (Kernel-Logs, btop) stehen nicht zur Verfügung."
+        fi
+    else
+        warn "Kein Terminal-Emulator – einige Funktionen stehen nicht zur Verfügung."
+    fi
+else
+    ok "Terminal-Emulator verfügbar."
+fi
+
 # ── PolicyKit-Authentifizierungsagent ─────────────────────────────────────────
 # polkitd/policykit-1 (installiert oben) ist nur das Backend.  Damit pkexec
 # einen grafischen Passwort-Dialog zeigen kann, braucht man zusätzlich einen
@@ -312,6 +429,9 @@ _polkit_agent_running() {
         "deepin-session"; do
         [[ "$args_lower" == *"$desktop_proc"* ]] && return 0
     done
+
+    # FVWM (z.B. FunOS) hat keinen integrierten Polkit-Agent.
+    # Weiter zu den separaten Agent-Prozess-Checks.
 
     # 2. Separate Polkit-Agent-Prozesse erkennen.
     #    WICHTIG: ps -eo args (volle Kommandozeile) statt ps -eo comm verwenden,
@@ -373,11 +493,13 @@ _install_polkit_agent() {
 
     case "$de" in
         *xfce*)
-            # xfce4-session liefert xfce-polkit mit seit Ubuntu 22.04+
-            if apt-cache show xfce4-session &>/dev/null; then
-                agent_pkg="xfce4-session"
-                agent_name="xfce-polkit"
-            fi
+            # XFCE bringt xfce-polkit ueber xfce4-session mit, das zieht aber
+            # die ganze XFCE-Session-Infrastruktur nach. Stattdessen den
+            # leichtgewichtigen polkit-gnome-Agent verwenden – funktioniert
+            # auf XFCE genauso.
+            agent_pkg="policykit-1-gnome"
+            agent_name="polkit-gnome-authentication-agent"
+            agent_exec="/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1"
             ;;
         *mate*)
             agent_pkg="mate-polkit"
@@ -390,6 +512,23 @@ _install_polkit_agent() {
         *lxde*)
             agent_pkg="lxpolkit"
             agent_name="lxpolkit"
+            ;;
+        *fvwm*|*funos*)
+            # FVWM (FunOS) hat keinen eigenen Polkit-Agent
+            # → policykit-1-gnome als leichtgewichtiger universeller Agent
+            agent_pkg="policykit-1-gnome"
+            agent_name="polkit-gnome-authentication-agent"
+            agent_exec="/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1"
+            ;;
+        *jwm*|*puppy*|*trixiepup*)
+            # Puppy Linux (JWM + ROX-Filer) hat keinen eigenen Polkit-Agent.
+            # Hinweis: Puppy laeuft oft als root, dann ist pkexec unnoetig.
+            if [[ $(id -u) -eq 0 && "$TARGET_USER" == "root" ]]; then
+                info "Puppy Linux: System laeuft als root – Polkit-Agent nicht zwingend noetig."
+            fi
+            agent_pkg="policykit-1-gnome"
+            agent_name="polkit-gnome-authentication-agent"
+            agent_exec="/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1"
             ;;
     esac
 
@@ -472,7 +611,11 @@ AUTOSTART
             # Agent gleich jetzt starten, falls nicht bereits laufend
             if ! _polkit_agent_running; then
                 info "Starte Polkit-Agent fuer aktuelle Sitzung..."
-                sudo -u "$TARGET_USER" nohup "$agent_exec" >/dev/null 2>&1 &
+                if [[ "$TARGET_USER" == "root" ]]; then
+                    nohup "$agent_exec" >/dev/null 2>&1 &
+                else
+                    sudo -u "$TARGET_USER" nohup "$agent_exec" >/dev/null 2>&1 &
+                fi
                 sleep 1
                 if _polkit_agent_running; then
                     ok "Polkit-Agent laeuft."
@@ -490,6 +633,8 @@ AUTOSTART
 
 if _polkit_agent_running; then
     ok "PolicyKit-Authentifizierungsagent laeuft bereits."
+elif $IS_PUPPY && [[ "$TARGET_USER" == "root" ]]; then
+    info "Puppy Linux als root – Polkit-Agent nicht erforderlich (bereits root)."
 else
     warn "Kein PolicyKit-Authentifizierungsagent erkannt."
     info "Ohne Agent kann pkexec keinen Passwort-Dialog anzeigen"
@@ -534,14 +679,32 @@ else
         ensure_tmp
         cd "$TMP_DIR"
         info "Lade Prime95 herunter..."
-        wget -q --show-progress "$PRIME_URL"
-        mkdir -p "$PRIME_DIR"
-        info "Entpacke nach $PRIME_DIR..."
-        tar -xzf "${PRIME_URL##*/}" -C "$PRIME_DIR" --strip-components=1 2>/dev/null || \
-            tar -xzf "${PRIME_URL##*/}" -C "$PRIME_DIR"
-        chown -R "$TARGET_USER":"$TARGET_USER" "$PRIME_DIR"
-        chmod +x "$PRIME_BIN"
-        ok "Prime95 ins Projekt integriert."
+        _prime_archive="${PRIME_URL##*/}"
+        if ! wget -q --show-progress "$PRIME_URL" -O "$_prime_archive"; then
+            fail "Download fehlgeschlagen ($PRIME_URL)."
+            warn "Prime95 uebersprungen – Blend-Tests nicht verfuegbar."
+            cd "$REPO_DIR"
+        elif [[ ! -s "$_prime_archive" ]]; then
+            fail "Heruntergeladene Datei ist leer (Server-Fehler?)."
+            warn "Prime95 uebersprungen – Blend-Tests nicht verfuegbar."
+            cd "$REPO_DIR"
+        else
+            mkdir -p "$PRIME_DIR"
+            info "Entpacke nach $PRIME_DIR..."
+            if ! tar -xzf "$_prime_archive" -C "$PRIME_DIR" 2>/dev/null; then
+                fail "Entpacken fehlgeschlagen."
+                warn "Prime95 uebersprungen."
+            else
+                chown -R "$TARGET_USER":"$TARGET_USER" "$PRIME_DIR"
+                chmod +x "$PRIME_BIN" 2>/dev/null || true
+                if [[ -x "$PRIME_BIN" ]]; then
+                    ok "Prime95 ins Projekt integriert."
+                else
+                    fail "mprime-Binary fehlt nach dem Entpacken: $PRIME_BIN"
+                fi
+            fi
+            cd "$REPO_DIR"
+        fi
     else
         warn "Prime95 übersprungen – Blend-Tests stehen nicht zur Verfügung."
     fi
@@ -559,50 +722,30 @@ header "3/7 – Fastfetch & JSON-Reader"
 
 # ── Fastfetch ─────────────────────────────────────────────────────────────────
 # Fastfetch wird im Info-Panel für die Systemübersicht genutzt.
-# Es ist nicht in den Ubuntu/Debian-Standard-Repos enthalten, daher wird
-# das .deb-Paket direkt von GitHub heruntergeladen.
+# Installation über das PPA von zhangsongcui3371.
 
 if command -v fastfetch &>/dev/null; then
     ok "Fastfetch bereits installiert: $(command -v fastfetch)"
 else
     warn "Fastfetch nicht gefunden."
     if confirm "Fastfetch jetzt installieren? (Systeminformationen im Info-Panel)"; then
-        ensure_tmp
-        FASTFETCH_DL_URL=""
-        # GitHub API: neuestes Release von fastfetch-cli/fastfetch
-        if command -v curl &>/dev/null && command -v jq &>/dev/null; then
-            info "Ermittle aktuelle Fastfetch-Version von GitHub..."
-            FASTFETCH_DL_URL=$(curl -fsSL \
-                "https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest" 2>/dev/null \
-                | jq -r '.assets[] | select(.name | test("linux-amd64\\.deb$")) | .browser_download_url' 2>/dev/null \
-                | head -1) || true
+        # add-apt-repository benötigt software-properties-common
+        if ! command -v add-apt-repository &>/dev/null; then
+            info "Installiere software-properties-common..."
+            apt-get install -y software-properties-common || true
         fi
-
-        if [[ -n "$FASTFETCH_DL_URL" ]]; then
-            info "Lade Fastfetch herunter..."
-            cd "$TMP_DIR"
-            if curl -fsSL -o fastfetch.deb "$FASTFETCH_DL_URL" 2>/dev/null; then
-                if dpkg -i fastfetch.deb &>/dev/null; then
-                    ok "Fastfetch installiert (via GitHub .deb)."
-                else
-                    # Fehlende Abhängigkeiten nachziehen
-                    apt-get install -f -y &>/dev/null || true
-                    if command -v fastfetch &>/dev/null; then
-                        ok "Fastfetch installiert (via GitHub .deb, Abhängigkeiten nachinstalliert)."
-                    else
-                        warn "Fastfetch .deb konnte nicht installiert werden."
-                        info "Manuell: https://github.com/fastfetch-cli/fastfetch/releases"
-                    fi
-                fi
+        info "Füge Fastfetch PPA hinzu..."
+        if add-apt-repository -y ppa:zhangsongcui3371/fastfetch; then
+            apt-get update -qq
+            if apt-get install -y fastfetch; then
+                ok "Fastfetch installiert (via PPA)."
             else
-                warn "Download von Fastfetch fehlgeschlagen."
-                info "Manuell: https://github.com/fastfetch-cli/fastfetch/releases"
+                warn "Fastfetch konnte nicht installiert werden."
+                info "Manuell: sudo add-apt-repository ppa:zhangsongcui3371/fastfetch && sudo apt update && sudo apt install fastfetch"
             fi
-            cd "$REPO_DIR"
         else
-            warn "Konnte aktuelle Fastfetch-Version nicht ermitteln (GitHub API)."
-            info "Manuell herunterladen: https://github.com/fastfetch-cli/fastfetch/releases"
-            info "  Dann installieren:   sudo dpkg -i fastfetch-linux-amd64.deb"
+            warn "PPA konnte nicht hinzugefügt werden."
+            info "Manuell: sudo add-apt-repository ppa:zhangsongcui3371/fastfetch && sudo apt update && sudo apt install fastfetch"
         fi
     else
         info "Fastfetch übersprungen – Info-Panel zeigt Hinweis statt Systeminformationen."
@@ -688,6 +831,25 @@ fi
 # =============================================================================
 header "4/7 – Python-Umgebung"
 
+# ── RAM-Warnung fuer Overlay-/RAM-basierte Systeme (Puppy Linux) ─────────────
+# Puppy Linux und aehnliche Distros laufen komplett im RAM (Overlay-FS).
+# PySide6 + Abhaengigkeiten benoetigen ca. 500 MB – bei wenig RAM kritisch.
+if $IS_PUPPY; then
+    total_ram_mb=$(awk '/MemTotal/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
+    if [[ "$total_ram_mb" -gt 0 && "$total_ram_mb" -lt 4096 ]]; then
+        warn "Overlay-basiertes System mit nur ${total_ram_mb} MB RAM erkannt."
+        warn "PySide6 + Abhaengigkeiten benoetigen ca. 500 MB."
+        warn "Bei RAM-Stresstests bleibt dadurch weniger Speicher zum Testen uebrig."
+        echo ""
+        if ! confirm "Trotzdem fortfahren?"; then
+            fail "Installation abgebrochen (zu wenig RAM fuer Overlay-System)."
+            exit 1
+        fi
+    elif [[ "$total_ram_mb" -gt 0 ]]; then
+        ok "Overlay-System mit ${total_ram_mb} MB RAM – ausreichend."
+    fi
+fi
+
 # PATH sicherstellen
 ensure_local_bin_on_path() {
     local snippet='export PATH="$HOME/.local/bin:$PATH"'
@@ -704,10 +866,12 @@ ensure_local_bin_on_path() {
 
 # Sicherstellen, dass der Zielbenutzer Schreibrechte im Projektverzeichnis hat
 # (nötig wenn das Projekt z.B. unter /opt/ liegt und root gehört)
-if [[ ! -w "$REPO_DIR" ]] || ! sudo -u "$TARGET_USER" test -w "$REPO_DIR" 2>/dev/null; then
-    info "Setze Eigentümer von $REPO_DIR auf $TARGET_USER..."
-    chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR"
-    ok "Verzeichnisrechte angepasst."
+if [[ "$TARGET_USER" != "root" ]]; then
+    if [[ ! -w "$REPO_DIR" ]] || ! sudo -u "$TARGET_USER" test -w "$REPO_DIR" 2>/dev/null; then
+        info "Setze Eigentümer von $REPO_DIR auf $TARGET_USER..."
+        chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR"
+        ok "Verzeichnisrechte angepasst."
+    fi
 fi
 
 # venv erstellen/aktualisieren
@@ -729,26 +893,98 @@ if [[ ! -d "$REPO_DIR/.venv" ]]; then
 else
     ok "venv bereits vorhanden."
     # Eigentümer sicherstellen
-    if ! sudo -u "$TARGET_USER" test -w "$REPO_DIR/.venv" 2>/dev/null; then
-        info "Korrigiere Eigentümer der bestehenden venv..."
-        chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR/.venv"
+    if [[ "$TARGET_USER" != "root" ]]; then
+        if ! sudo -u "$TARGET_USER" test -w "$REPO_DIR/.venv" 2>/dev/null; then
+            info "Korrigiere Eigentümer der bestehenden venv..."
+            chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR/.venv"
+        fi
     fi
 fi
 
 info "Aktualisiere pip + wheel..."
-if ! run_as_user "'$REPO_DIR/.venv/bin/python' -m pip install --upgrade pip wheel -q"; then
+if ! run_as_user "'$REPO_DIR/.venv/bin/python' -m pip install --upgrade pip wheel"; then
     warn "pip-Upgrade als $TARGET_USER fehlgeschlagen – versuche als root..."
-    HOME="$TARGET_HOME" "$REPO_DIR/.venv/bin/python" -m pip install --upgrade pip wheel -q
+    HOME="$TARGET_HOME" "$REPO_DIR/.venv/bin/python" -m pip install --upgrade pip wheel
     chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR/.venv"
 fi
 
 info "Installiere Projektabhängigkeiten (PySide6, psutil, ...)..."
-if ! run_as_user "cd '$REPO_DIR' && '$REPO_DIR/.venv/bin/pip' install -e '$REPO_DIR' -q"; then
+info "(Dies kann einige Minuten dauern – PySide6 ist ca. 200 MB gross)"
+if ! run_as_user "cd '$REPO_DIR' && '$REPO_DIR/.venv/bin/pip' install -e '$REPO_DIR'"; then
     warn "Paketinstallation als $TARGET_USER fehlgeschlagen – versuche als root..."
-    HOME="$TARGET_HOME" "$REPO_DIR/.venv/bin/pip" install -e "$REPO_DIR" -q
+    HOME="$TARGET_HOME" "$REPO_DIR/.venv/bin/pip" install -e "$REPO_DIR"
     chown -R "$TARGET_USER":"$TARGET_USER" "$REPO_DIR/.venv"
 fi
-ok "Python-Abhängigkeiten installiert."
+
+# ── PySide6-Importcheck ─────────────────────────────────────────────────────
+# Auf minimalen Systemen (Puppy Linux / TrixiePup) kann pip zwar erfolgreich
+# melden, der Import aber trotzdem fehlschlagen (fehlende .so-Bibliotheken).
+info "Prüfe PySide6-Import..."
+_pyside_check=$("$REPO_DIR/.venv/bin/python" -c "
+import sys
+try:
+    import PySide6
+    print('OK ' + PySide6.__version__)
+except ImportError as e:
+    print('FAIL ' + str(e))
+    sys.exit(1)
+" 2>&1) || true
+
+if [[ "$_pyside_check" == OK* ]]; then
+    ok "PySide6 ${_pyside_check#OK } erfolgreich importiert."
+else
+    fail "PySide6-Import fehlgeschlagen: ${_pyside_check#FAIL }"
+    echo ""
+    warn "Moegliche Ursachen:"
+    info "  1. pip-Installation fehlgeschlagen (kein Internet / zu wenig Speicher)"
+    info "  2. Fehlende Systembibliotheken (libGL, libEGL, libxcb-*)"
+    echo ""
+    info "Diagnose-Befehle:"
+    info "  $REPO_DIR/.venv/bin/pip list | grep -i pyside"
+    info "  $REPO_DIR/.venv/bin/python -c 'import PySide6'"
+    info "  ldd $REPO_DIR/.venv/lib/python*/site-packages/PySide6/Qt/lib/libQt6Core.so.6 | grep 'not found'"
+    echo ""
+    if "$REPO_DIR/.venv/bin/pip" list 2>/dev/null | grep -qi pyside6; then
+        warn "PySide6-Paket ist installiert, aber Import schlaegt fehl."
+        info "Vermutlich fehlen Systembibliotheken. Versuche Nachinstallation..."
+        _missing_libs=(
+            libgl1
+            libegl1
+            libxcb-cursor0
+            libxcb-icccm4
+            libxcb-keysyms1
+            libxcb-render-util0
+            libxcb-shape0
+            libxcb-xfixes0
+            libxkbcommon-x11-0
+            libxkbcommon0
+            libfontconfig1
+            libdbus-1-3
+        )
+        if confirm "Fehlende Systembibliotheken jetzt nachinstallieren?"; then
+            apt-get update -qq 2>/dev/null || true
+            for _lib in "${_missing_libs[@]}"; do
+                if DEBIAN_FRONTEND=noninteractive apt-get install -y "$_lib" &>/dev/null; then
+                    ok "  $_lib installiert"
+                else
+                    warn "  $_lib nicht verfuegbar – uebersprungen"
+                fi
+            done
+            # Erneuter Test
+            if "$REPO_DIR/.venv/bin/python" -c "import PySide6" 2>/dev/null; then
+                ok "PySide6 funktioniert jetzt!"
+            else
+                fail "PySide6-Import schlaegt weiterhin fehl."
+                info "Bitte manuell pruefen: $REPO_DIR/.venv/bin/python -c 'import PySide6'"
+            fi
+        fi
+    else
+        fail "PySide6 wurde nicht installiert."
+        info "Bitte Internetverbindung und Speicherplatz pruefen."
+        info "  Freier Speicher: $(df -h "$REPO_DIR" | tail -1 | awk '{print $4}')"
+        info "  Manuell installieren: $REPO_DIR/.venv/bin/pip install pyside6"
+    fi
+fi
 
 ensure_local_bin_on_path
 
@@ -835,7 +1071,11 @@ install_desktop_shortcut() {
 
     # 1. xdg-user-dir (GNOME, KDE, XFCE, Cinnamon, MATE, Budgie, ...)
     if command -v xdg-user-dir &>/dev/null; then
-        desktop_dir=$(sudo -u "$TARGET_USER" xdg-user-dir DESKTOP 2>/dev/null || true)
+        if [[ "$TARGET_USER" == "root" ]]; then
+            desktop_dir=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+        else
+            desktop_dir=$(sudo -u "$TARGET_USER" xdg-user-dir DESKTOP 2>/dev/null || true)
+        fi
     fi
 
     # 2. Fallback: typische lokalisierte Desktop-Ordnernamen
@@ -869,8 +1109,12 @@ install_desktop_shortcut() {
 
     # GNOME (ab 3.x / 40+): Datei als „vertrauenswürdig" markieren
     if command -v gio &>/dev/null; then
-        sudo -u "$TARGET_USER" gio set "$shortcut" \
-            metadata::trusted true 2>/dev/null || true
+        if [[ "$TARGET_USER" == "root" ]]; then
+            gio set "$shortcut" metadata::trusted true 2>/dev/null || true
+        else
+            sudo -u "$TARGET_USER" gio set "$shortcut" \
+                metadata::trusted true 2>/dev/null || true
+        fi
     fi
 
     # Cinnamon / Nemo: gleiche gio-Methode, bereits oben abgedeckt
@@ -881,11 +1125,19 @@ install_desktop_shortcut() {
 
     # MATE / Caja: ebenfalls automatisch
 
+    # FVWM (FunOS): Desktop-Verknüpfung funktioniert, wenn ein
+    # Dateimanager (PCManFM, Thunar, ROX-Filer) auf dem Desktop
+    # Icons verwaltet.  chmod 755 reicht.
+
     # Moksha / Enlightenment (Bodhi Linux): .desktop wird im PCManFM
     # oder Thunar auf dem Desktop erkannt. chmod 755 reicht.
     # efreetd aktualisieren falls vorhanden (Moksha Desktop-Cache)
     if command -v efreetd &>/dev/null; then
-        sudo -u "$TARGET_USER" efreetd --restart 2>/dev/null || true
+        if [[ "$TARGET_USER" == "root" ]]; then
+            efreetd --restart 2>/dev/null || true
+        else
+            sudo -u "$TARGET_USER" efreetd --restart 2>/dev/null || true
+        fi
     fi
 
     ok "Desktop-Verknüpfung: $shortcut"
@@ -902,7 +1154,11 @@ if command -v update-desktop-database &>/dev/null; then
 fi
 # KDE-spezifisch: kbuildsycoca5 aktualisiert den Anwendungskatalog
 if command -v kbuildsycoca5 &>/dev/null; then
-    sudo -u "$TARGET_USER" kbuildsycoca5 2>/dev/null || true
+    if [[ "$TARGET_USER" == "root" ]]; then
+        kbuildsycoca5 2>/dev/null || true
+    else
+        sudo -u "$TARGET_USER" kbuildsycoca5 2>/dev/null || true
+    fi
 fi
 
 # =============================================================================

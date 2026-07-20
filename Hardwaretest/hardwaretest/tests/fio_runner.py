@@ -7,6 +7,8 @@ Alle Schreib-Workloads nutzen --verify fuer Datenintegritaet.
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import os
 import shutil
 import subprocess
@@ -17,8 +19,12 @@ from typing import List, Optional
 from hardwaretest.core.test_runner import BaseTestRunner, TestExecutionError, TestParameters
 
 
+@functools.lru_cache(maxsize=1)
 def _best_ioengine() -> str:
     """Waehlt die beste verfuegbare IO-Engine.
+
+    Ergebnis wird gecached, damit nicht bei jeder Runner-Instanziierung
+    ein ``fio --enghelp``-Subprozess gestartet wird.
 
     io_uring ist ab Linux 5.1+ verfuegbar und bietet weniger Overhead
     als libaio, was auf HPE ProLiant Gen10+ mit NVMe vorteilhaft ist.
@@ -33,6 +39,64 @@ def _best_ioengine() -> str:
     except (FileNotFoundError, subprocess.SubprocessError):
         pass
     return "libaio"
+
+
+def _mounted_devices() -> set[str]:
+    """Liefert die Menge der aktuell eingehaengten Block-Devices.
+
+    Liest /proc/mounts und expandiert symbolische Links, sodass
+    ``/dev/sda1`` und ``/dev/disk/by-uuid/...`` korrekt erkannt werden.
+    """
+    mounts: set[str] = set()
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                parts = line.split()
+                if not parts:
+                    continue
+                dev = parts[0]
+                if not dev.startswith("/dev/"):
+                    continue
+                mounts.add(dev)
+                try:
+                    real = os.path.realpath(dev)
+                    mounts.add(real)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return mounts
+
+
+def _check_devices_not_mounted(devices: List[str]) -> None:
+    """Wirft TestExecutionError, falls eines der *devices* eingehaengt ist.
+
+    Schuetzt vor versehentlichem Ueberschreiben aktiver Filesysteme im
+    destruktiven Modus.
+    """
+    mounted = _mounted_devices()
+    blocked: List[str] = []
+    for dev in devices:
+        candidates = {dev}
+        with contextlib.suppress(OSError):
+            candidates.add(os.path.realpath(dev))
+        # Auch Partitionen pruefen: /dev/sda blockiert, falls /dev/sda1 mounted
+        dev_name = os.path.basename(dev)
+        for m in mounted:
+            m_name = os.path.basename(m)
+            if m_name.startswith(dev_name) and m_name != dev_name:
+                blocked.append(f"{dev} (Partition {m} eingehaengt)")
+                break
+        else:
+            if candidates & mounted:
+                blocked.append(dev)
+    if blocked:
+        raise TestExecutionError(
+            "Destruktiver Test abgebrochen: folgende Datentraeger sind "
+            "eingehaengt und wuerden zerstoert werden:\n  - "
+            + "\n  - ".join(blocked)
+            + "\nBitte erst aushaengen (umount)."
+        )
 
 
 class FioRunner(BaseTestRunner):
@@ -114,34 +178,40 @@ class _FioJobFileRunner(BaseTestRunner):
         self._pkexec_path: Optional[str] = None
         self.ioengine = ioengine or _best_ioengine()
         if use_pkexec:
-            pkexec_path = shutil.which("pkexec")
-            if not pkexec_path:
-                raise TestExecutionError("pkexec nicht gefunden. Bitte polkit installieren.")
-            self._command_prefix = [pkexec_path]
-            self._pkexec_path = pkexec_path
+            # Skip pkexec when already running as root (e.g. Puppy Linux /
+            # TrixiePup64 where the entire session runs as root).
+            if os.geteuid() == 0:
+                self._command_prefix = []
+                self._pkexec_path = None
+            else:
+                pkexec_path = shutil.which("pkexec")
+                if not pkexec_path:
+                    raise TestExecutionError("pkexec nicht gefunden. Bitte polkit installieren.")
+                self._command_prefix = [pkexec_path]
+                self._pkexec_path = pkexec_path
 
     def build_command(self) -> List[str]:
         lines = self._job_lines()
-        job_file = tempfile.NamedTemporaryFile(
+        with tempfile.NamedTemporaryFile(
             mode="w",
             delete=False,
             prefix="hardwaretest-fio-job-",
             suffix=".fio",
-        )
-        job_file.write("\n".join(lines))
-        job_file.flush()
-        job_file.close()
-        self._job_file = job_file.name
+        ) as job_file:
+            job_file.write("\n".join(lines))
+            self._job_file = job_file.name
         return [*self._command_prefix, "fio", self._job_file]
 
     def _job_lines(self) -> List[str]:  # pragma: no cover - abstract helper
         raise NotImplementedError
 
-    def stop(self) -> None:
+    def stop(self, aborted: bool = False) -> None:
+        if aborted:
+            self._aborted = True
         if self._pkexec_path:
             self._stop_with_pkexec()
         else:
-            super().stop()
+            super().stop(aborted=aborted)
         self._cleanup_job_file()
 
     def _stream_output(self) -> None:
@@ -150,10 +220,8 @@ class _FioJobFileRunner(BaseTestRunner):
 
     def _cleanup_job_file(self) -> None:
         if self._job_file:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(self._job_file)
-            except OSError:
-                pass
             self._job_file = None
 
     def _stop_with_pkexec(self) -> None:
@@ -185,6 +253,13 @@ class _FioJobFileRunner(BaseTestRunner):
                 self._process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self._log("Prozess reagiert nicht auf Kill. Bitte ggf. manuell stoppen.")
+        # Auf den Ausgabe-Thread warten, damit das Ergebnis (inkl. der bis zum
+        # Abbruch gesammelten Fehler) vollstaendig ausgewertet ist, bevor die
+        # GUI es abfragt.
+        if self._stdout_thread is not None:
+            self._stdout_thread.join(timeout=5)
+        if self._result is None:
+            self._finalize_result()
         self._process = None
         self._start_time = None
 
@@ -266,6 +341,8 @@ class FioDestructiveRunner(_FioJobFileRunner):
         if not devices:
             raise TestExecutionError("Keine Datenträger ausgewählt")
         self.devices = [str(Path(dev).expanduser()) for dev in devices]
+        # Sicherheitsnetz: keine eingehaengten Devices destruktiv beschreiben
+        _check_devices_not_mounted(self.devices)
         self.block_size = block_size or "1m"
         self.io_depth = max(1, io_depth)
         self.passes = max(1, passes)

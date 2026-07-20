@@ -53,7 +53,9 @@ def _render_fastfetch_table(entries: List[Dict[str, str]]) -> str:
 
 
 def _render_pre_block(lines: List[str]) -> str:
-    cleaned = "\n".join(_strip_ansi(l) for l in lines if not l.startswith("\x1b"))
+    cleaned = "\n".join(
+        _strip_ansi(line) for line in lines if not line.startswith("\x1b")
+    )
     return f"<pre>{escape(cleaned)}</pre>"
 
 

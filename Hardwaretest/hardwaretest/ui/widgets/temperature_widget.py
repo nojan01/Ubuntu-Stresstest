@@ -159,10 +159,14 @@ class TemperatureWidget(QWidget):
     # Ab dieser Anzahl wird automatisch die kompakte Ansicht verwendet
     COMPACT_THRESHOLD = 8
 
+    # Polling-Intervalle: schnell waehrend eines Tests, langsamer im Leerlauf.
+    _FAST_INTERVAL = 2000
+    _IDLE_INTERVAL = 5000
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._timer = QTimer(self)
-        self._timer.setInterval(2000)
+        self._timer.setInterval(self._IDLE_INTERVAL)
         self._timer.timeout.connect(self._refresh)
 
         # --- Temperatur-Anzeige ---
@@ -197,11 +201,39 @@ class TemperatureWidget(QWidget):
     # ----- public API -----
 
     def start_monitoring(self) -> None:
-        """Startet das periodische Temperatur-/EDAC-Polling."""
+        """Aktiviert das schnelle Temperatur-/EDAC-Polling waehrend eines Tests."""
+        self._timer.setInterval(self._FAST_INTERVAL)
         self._timer.start()
+        self._refresh()
 
     def stop_monitoring(self) -> None:
-        """Stoppt das periodische Polling."""
+        """Beendet das schnelle Polling nach einem Test.
+
+        Das Polling wird nicht komplett gestoppt, sondern nur auf das
+        langsamere Leerlauf-Intervall zurueckgeschaltet. So friert die
+        Anzeige nach Testende nicht auf dem Hoechstwert ein, sondern zeigt
+        weiterhin die aktuellen (abkuehlenden) Werte an. Ist das Widget
+        nicht sichtbar, wird das Polling pausiert (siehe hideEvent).
+        """
+        self._timer.setInterval(self._IDLE_INTERVAL)
+        if self.isVisible():
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self._refresh()
+
+    # ----- Qt events -----
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """Startet das Leerlauf-Polling, sobald das Widget sichtbar wird."""
+        super().showEvent(event)
+        if not self._timer.isActive():
+            self._timer.start()
+        self._refresh()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """Pausiert das Polling, wenn das Widget nicht sichtbar ist."""
+        super().hideEvent(event)
         self._timer.stop()
 
     # ----- internal -----
@@ -253,6 +285,16 @@ class TemperatureWidget(QWidget):
         else:
             self._temp_summary_label.setStyleSheet(_CSS_GREEN)
 
+    @staticmethod
+    def _is_cpu_socket_summary(s: CpuChipSummary) -> bool:
+        """Prueft ob eine Summary ein CPU-Socket ist (vs. anderer Sensor)."""
+        name = s.chip_name.lower()
+        return (
+            name.startswith("cpu ")
+            or name.startswith("cores")
+            or "socket" in name
+        )
+
     def _render_compact(
         self,
         summaries: List[CpuChipSummary],
@@ -266,7 +308,11 @@ class TemperatureWidget(QWidget):
         any_critical = False
         total_cores = 0
 
-        for s in summaries:
+        # CPU-Socket Summaries und sonstige Sensoren trennen
+        cpu_summaries = [s for s in summaries if self._is_cpu_socket_summary(s)]
+        other_summaries = [s for s in summaries if not self._is_cpu_socket_summary(s)]
+
+        for s in cpu_summaries:
             total_cores += s.core_count
             global_max = max(global_max, s.temp_max)
             emoji = _temp_emoji(s.temp_max, s.high, s.critical)
@@ -282,6 +328,17 @@ class TemperatureWidget(QWidget):
             )
             if s.temp_max > _WARN_TEMP:
                 line += f"  (Hotspot: {s.hottest_core_label})"
+            if s.high > 0:
+                line += f"  [Limit: {s.high:.0f}°C]"
+            lines.append(line)
+
+        # Sonstige Sensoren (z.B. acpitz) kompakt anhaengen
+        for s in other_summaries:
+            global_max = max(global_max, s.temp_max)
+            emoji = _temp_emoji(s.temp_max, s.high, s.critical)
+            if s.critical > 0 and s.temp_max >= s.critical:
+                any_critical = True
+            line = f"{emoji} <b>{s.chip_name}</b>: {s.temp_max:.0f}°C"
             if s.high > 0:
                 line += f"  [Limit: {s.high:.0f}°C]"
             lines.append(line)
@@ -302,8 +359,13 @@ class TemperatureWidget(QWidget):
         else:
             self._temp_summary_label.setStyleSheet(_CSS_GREEN)
 
-        # Core-Detail aktualisieren
-        self._core_detail.update_cores(all_temps)
+        # Core-Detail aktualisieren (nur CPU-Cores, keine Package/Sonstige)
+        cpu_core_temps = [
+            t for t in all_temps
+            if not (t.label or "").lower().startswith("package id")
+            and t.chip_name not in ("acpitz",)
+        ]
+        self._core_detail.update_cores(cpu_core_temps)
 
     def _update_edac(self) -> None:
         edac = read_edac_info()

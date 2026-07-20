@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from hardwaretest.core.system_info import SystemInfo, read_system_info
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.memory_controller import MC_STRESSORS, MemoryControllerRunner
-from hardwaretest.ui.utils import launch_command_in_terminal
+from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 
 
@@ -76,7 +76,7 @@ class MemoryControllerPanel(QWidget):
 
         # Ergebnis-Anzeige
         self.result_label = QLabel("")
-        self.result_label.setAlignment(Qt.AlignCenter)
+        self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.progress = QLabel("Bereit")
         self.progress_bar = QProgressBar()
@@ -279,13 +279,13 @@ class MemoryControllerPanel(QWidget):
         self.duration_seconds.setValue(secs)
 
     def _launch_btop(self) -> None:
-        if not launch_command_in_terminal(["btop"]):
+        if not launch_command_in_terminal(["btop"], geometry=(110, 44)):
             self._append_log("btop konnte nicht gestartet werden. Bitte Installation pruefen.")
 
     def _launch_klogs(self) -> None:
-        if not launch_command_in_terminal(["journalctl", "-kf"]):
-            self._append_log("journalctl konnte nicht gestartet werden. Bitte Installation pruefen.")
+        if not launch_command_in_terminal(build_klog_command()):
+            self._append_log("Kernel-Logs konnten nicht gestartet werden. Bitte Installation pruefen.")
 
     def _launch_mcelog(self) -> None:
-        if not launch_command_in_terminal(["journalctl", "-kf", "-g", "MCE"]):
+        if not launch_command_in_terminal(build_mcelog_command()):
             self._append_log("MCE-Logs konnten nicht gestartet werden. Bitte Installation pruefen.")

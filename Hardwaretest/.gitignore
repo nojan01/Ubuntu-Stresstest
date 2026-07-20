@@ -49,3 +49,10 @@ vendor/prime95/worktodo.txt
 # Backup-Dateien
 *.bak
 *.hwbackup
+
+# Release-Artefakte (per scripts/build_release_zip.sh erzeugt)
+Hardwaretest-v*.zip
+
+# Debian-Paket (per scripts/build_deb.sh erzeugt)
+hardwaretest_*.deb
+

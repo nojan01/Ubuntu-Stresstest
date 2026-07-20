@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from hardwaretest.core.system_info import SystemInfo, read_system_info
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.mprime import MprimeRunner, _default_mprime_path
-from hardwaretest.ui.utils import launch_command_in_terminal
+from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 
 
@@ -61,7 +61,7 @@ class MprimePanel(QWidget):
         for label, data, tooltip in Modes:
             self.mode_box.addItem(label, userData=data)
             idx = self.mode_box.count() - 1
-            self.mode_box.setItemData(idx, tooltip, role=Qt.ToolTipRole)
+            self.mode_box.setItemData(idx, tooltip, role=Qt.ItemDataRole.ToolTipRole)
         self.mode_box.currentIndexChanged.connect(self._sync_custom_controls)
 
         self.memory_mb = QSpinBox()
@@ -94,7 +94,7 @@ class MprimePanel(QWidget):
 
         # Ergebnis-Anzeige
         self.result_label = QLabel("")
-        self.result_label.setAlignment(Qt.AlignCenter)
+        self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.progress = QLabel("Bereit")
         self.progress_bar = QProgressBar()
@@ -324,13 +324,13 @@ class MprimePanel(QWidget):
         return None
 
     def _launch_btop(self) -> None:
-        if not launch_command_in_terminal(["btop"]):
+        if not launch_command_in_terminal(["btop"], geometry=(110, 44)):
             self._append_log("btop konnte nicht gestartet werden. Bitte Installation pruefen.")
 
     def _launch_klogs(self) -> None:
-        if not launch_command_in_terminal(["journalctl", "-kf"]):
-            self._append_log("journalctl konnte nicht gestartet werden. Bitte Installation pruefen.")
+        if not launch_command_in_terminal(build_klog_command()):
+            self._append_log("Kernel-Logs konnten nicht gestartet werden. Bitte Installation pruefen.")
 
     def _launch_mcelog(self) -> None:
-        if not launch_command_in_terminal(["journalctl", "-kf", "-g", "MCE"]):
+        if not launch_command_in_terminal(build_mcelog_command()):
             self._append_log("MCE-Logs konnten nicht gestartet werden. Bitte Installation pruefen.")

@@ -44,12 +44,17 @@ class StressNgRunner(BaseTestRunner):
         params: TestParameters,
         mode: str = "combined",
         vm_workers: Optional[int] = None,
+        sched_idle: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(params, **kwargs)
         self.mode = mode if mode in STRESS_NG_MODES else "combined"
         # VM-Worker: Standard = Anzahl CPU-Kerne fuer maximale Abdeckung
         self.vm_workers = vm_workers or (params.cpu_cores or 1)
+        # SCHED_IDLE (chrt --idle): laeuft nur wenn das System sonst nichts
+        # zu tun hat. Standardmaessig AUS, weil es auf belasteten Systemen
+        # zu einem effektiv inaktiven Test fuehrt (false-OK).
+        self.sched_idle = sched_idle
 
     def build_command(self) -> List[str]:
         params = self.params
@@ -78,12 +83,15 @@ class StressNgRunner(BaseTestRunner):
         if params.cpu_mask:
             taskset = shutil.which("taskset")
             if taskset:
-                final_cmd = [taskset, params.cpu_mask] + final_cmd
+                final_cmd = [taskset, params.cpu_mask, *final_cmd]
             else:
                 self._log("taskset nicht gefunden - starte ohne CPU-Affinitaet.")
-        chrt = shutil.which("chrt")
-        if chrt:
-            final_cmd = [chrt, "--idle", "0"] + final_cmd
+        if self.sched_idle:
+            chrt = shutil.which("chrt")
+            if chrt:
+                final_cmd = [chrt, "--idle", "0", *final_cmd]
+            else:
+                self._log("chrt nicht gefunden - starte ohne SCHED_IDLE.")
         return final_cmd
 
     def _build_cpu_args(self, params: TestParameters) -> List[str]:

@@ -50,6 +50,18 @@ def _sanitize_qt_environment() -> None:
         if os.environ.get(var):
             os.environ.pop(var)
 
+    # Ensure a sensible QT_QPA_PLATFORM default.
+    # On Wayland sessions (WAYLAND_DISPLAY set) Qt6 auto-detects the backend.
+    # On pure X11 sessions (common on Puppy Linux / TrixiePup64 Retro, JWM,
+    # FVWM, etc.) we pin to "xcb" so that PySide6 doesn't attempt to load
+    # a Wayland plugin that may not be installed.
+    if not os.environ.get("QT_QPA_PLATFORM"):
+        if os.environ.get("WAYLAND_DISPLAY"):
+            # Wayland session – let Qt try wayland first, fall back to xcb
+            os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
+        else:
+            os.environ["QT_QPA_PLATFORM"] = "xcb"
+
 
 if __name__ == "__main__":
     raise SystemExit(run())

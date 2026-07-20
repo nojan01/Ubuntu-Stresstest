@@ -28,20 +28,28 @@ class MemoryFillRunner(BaseTestRunner):
         memory_mb: int = 0,
         reserve_mb: int = 512,
         chunk_mb: int = 256,
+        pause_seconds: float = 3.0,
         **kwargs,
     ) -> None:
         super().__init__(params, **kwargs)
         self.memory_mb = memory_mb
         self.reserve_mb = reserve_mb
         self.chunk_mb = chunk_mb
+        self.pause_seconds = pause_seconds
 
     def build_command(self) -> List[str]:
         script = str(Path(__file__).with_name("memory_fill_script.py"))
+        # Skript-Dauer leicht unter Runner-Watchdog setzen, damit das Script
+        # geordnet beendet (Freigabe, Zusammenfassung) bevor der Watchdog
+        # SIGTERM sendet. Fallback: bei sehr kurzen Tests gleicher Wert.
+        duration = self.params.duration_seconds
+        script_duration = duration - 5 if duration > 10 else duration
         cmd = [
             sys.executable, script,
-            "--duration", str(self.params.duration_seconds),
+            "--duration", str(script_duration),
             "--reserve-mb", str(self.reserve_mb),
             "--chunk-mb", str(self.chunk_mb),
+            "--pause-seconds", str(self.pause_seconds),
         ]
         if self.memory_mb > 0:
             cmd += ["--memory-mb", str(self.memory_mb)]

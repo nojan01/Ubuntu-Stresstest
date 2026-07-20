@@ -8,6 +8,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMainWindow, QTabWidget
 
+from hardwaretest import __version__
 from hardwaretest.ui.widgets.test_panel import TestPanel
 from hardwaretest.ui.widgets.mprime_panel import MprimePanel
 from hardwaretest.ui.widgets.memory_controller_panel import MemoryControllerPanel
@@ -24,7 +25,7 @@ from hardwaretest.ui.widgets.help_panel import HelpPanel
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Hardware Test Launcher")
+        self.setWindowTitle(f"Hardware Test Launcher v{__version__}")
         tabs = QTabWidget()
         screen = QGuiApplication.primaryScreen()
         available_geom = screen.availableGeometry() if screen else None

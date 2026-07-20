@@ -95,7 +95,7 @@ kernel = read_text(pathlib.Path(kernel_path)) if kernel_path else "(keine Daten)
 
 payload = {
     "meta": {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "hostname": platform.node(),
         "kernel": kernel,
     },

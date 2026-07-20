@@ -1,15 +1,16 @@
 [tool.poetry]
 name = "hardwaretest-gui"
-version = "0.1.0"
+version = "0.2.1"
 description = "GUI launcher for RAM/CPU/Disk stress tests on Ubuntu"
-authors = ["Hardwaretest Maintainers <maintainers@example.com>"]
+authors = ["Norbert Jander <n.jander@posteo.de>"]
 readme = "README.md"
+license = "MIT"
 packages = [{ include = "hardwaretest" }]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
+python = ">=3.10,<3.14"
 pyside6 = "^6.7"
-psutil = "^5.9"
+psutil = "^6.0"
 pyyaml = "^6.0"
 rich = "^13.7"
 
@@ -19,3 +20,26 @@ pytest = "^7.4"
 [build-system]
 requires = ["poetry-core>=1.5.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Verhindert, dass pytest die Domaenenklassen TestRunner/TestParameters/
+# TestExecutionError als Test-Klassen einsammelt.
+python_classes = "Test_*"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F", "E", "B", "SIM", "RUF"]
+ignore = [
+    # Deutschsprachige Kommentare/Strings/Docstrings enthalten bewusst
+    # Umlaute und typografische Zeichen – kein Fehler.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # Zeilenlaenge wird ueber line-length geregelt, nicht hart erzwungen.
+    "E501",
+]
+

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import shutil
 from typing import Dict, List, Optional
@@ -36,6 +37,28 @@ def _default_mprime_path() -> str:
     return str(bundled)
 
 
+def _resolve_work_dir(binary_dir: Path) -> Path:
+    """Liefert ein beschreibbares Arbeitsverzeichnis für mprime.
+
+    mprime schreibt ``prime.txt``/``local.txt``/``results.txt`` in sein
+    Arbeitsverzeichnis. Bei einer ``.deb``-Installation liegt die Binary unter
+    ``/opt/hardwaretest`` (root-eigen) und ist für den normalen Benutzer nicht
+    beschreibbar – ein Start scheitert sonst mit "fehlende Rechte". In diesem
+    Fall wird auf ein benutzereigenes Verzeichnis ausgewichen.
+    """
+    if os.access(binary_dir, os.W_OK):
+        return binary_dir
+    fallback = Path.home() / ".local" / "share" / "hardwaretest" / "prime95"
+    try:
+        fallback.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Letzter Ausweg: temporäres Verzeichnis
+        import tempfile
+        fallback = Path(tempfile.gettempdir()) / "hardwaretest-prime95"
+        fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 _MODE_CODES = {
     "small_ffts": 0,
     "inplace_large_ffts": 1,
@@ -57,7 +80,8 @@ class MprimeRunner(BaseTestRunner):
         **kwargs,
     ) -> None:
         self.binary_path = str(Path(binary_path or _default_mprime_path()).expanduser())
-        work_dir = Path(self.binary_path).parent
+        work_dir = _resolve_work_dir(Path(self.binary_path).parent)
+        self.run_dir = work_dir
         super().__init__(params, work_dir=work_dir, **kwargs)
         self.mode = mode if mode in _MODE_CODES else "blend"
         self.worker_threads = worker_threads
@@ -75,7 +99,7 @@ class MprimeRunner(BaseTestRunner):
         super().start()
 
     def _prepare_local_config(self) -> None:
-        work_dir = Path(self.binary_path).parent
+        work_dir = self.run_dir
         prime_txt = work_dir / "prime.txt"
         local_txt = work_dir / "local.txt"
 
@@ -120,11 +144,11 @@ class MprimeRunner(BaseTestRunner):
         an der richtigen Stelle erhalten bleiben.
         """
         if not cfg_path.exists():
-            sample = cfg_path.with_suffix(".bak")
+            sample = cfg_path.with_name(cfg_path.name + ".bak")
             if sample.exists():
                 shutil.copy(sample, cfg_path)
             return {}
-        backup = cfg_path.with_suffix(".hwbackup")
+        backup = cfg_path.with_name(cfg_path.name + ".hwbackup")
         if cfg_path.exists() and not backup.exists():
             shutil.copy(cfg_path, backup)
         entries: Dict[str, str] = {}

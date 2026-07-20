@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, ClassVar, List, Optional, Tuple
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
@@ -44,7 +44,7 @@ from hardwaretest.tests.fio_runner import (
 	FioDeviceSweepRunner,
 	FioRunner,
 )
-from hardwaretest.ui.utils import launch_command_in_terminal
+from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 
 
 @dataclass
@@ -103,8 +103,8 @@ class DeviceSelectionMixin:
 		self.device_list.clear()
 		for dev in devices:
 			item = QListWidgetItem(self._format_device_entry(dev))
-			item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-			item.setCheckState(Qt.Checked)
+			item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+			item.setCheckState(Qt.CheckState.Checked)
 			self.device_list.addItem(item)
 		self.device_list.blockSignals(False)
 		if devices:
@@ -171,7 +171,7 @@ class DeviceSelectionMixin:
 		return f"{dev.path} – {dev.display_size} – {dev.model}{flag_text}"
 
 	def _set_all_devices_checked(self, checked: bool) -> None:
-		state = Qt.Checked if checked else Qt.Unchecked
+		state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
 		for idx in range(self.device_list.count()):
 			item = self.device_list.item(idx)
 			item.setCheckState(state)
@@ -183,7 +183,7 @@ class DeviceSelectionMixin:
 			if idx >= len(self._devices):
 				continue
 			item = self.device_list.item(idx)
-			if item.checkState() == Qt.Checked:
+			if item.checkState() == Qt.CheckState.Checked:
 				selected.append(self._devices[idx])
 		return selected
 
@@ -193,7 +193,7 @@ class FileDiskPanel(QWidget):
 
 	log_signal = Signal(str)
 
-	WORKLOADS = [
+	WORKLOADS: ClassVar[List[Tuple[str, str, str]]] = [
 		("Seq Read", "read", "Sequenzieller Read-Test"),
 		("Seq Write", "write", "Sequenzieller Write-Test"),
 		("Rand Read", "randread", "Zufälliger Read-Test"),
@@ -201,7 +201,7 @@ class FileDiskPanel(QWidget):
 		("Rand RW", "randrw", "Gemischter Random R/W"),
 	]
 
-	BLOCK_SIZES = ["4k", "16k", "64k", "128k", "256k", "512k", "1m", "2m"]
+	BLOCK_SIZES: ClassVar[List[str]] = ["4k", "16k", "64k", "128k", "256k", "512k", "1m", "2m"]
 
 	def __init__(
 		self,
@@ -239,7 +239,7 @@ class FileDiskPanel(QWidget):
 		for label, value, tooltip in self.WORKLOADS:
 			self.workload_box.addItem(label, userData=value)
 			idx = self.workload_box.count() - 1
-			self.workload_box.setItemData(idx, tooltip, role=Qt.ToolTipRole)
+			self.workload_box.setItemData(idx, tooltip, role=Qt.ItemDataRole.ToolTipRole)
 		self.workload_box.setCurrentIndex(0)
 
 		self.block_size_box = QComboBox()
@@ -273,7 +273,7 @@ class FileDiskPanel(QWidget):
 		self.stop_btn.setEnabled(False)
 
 		self.result_label = QLabel("")
-		self.result_label.setAlignment(Qt.AlignCenter)
+		self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
 		self.btop_btn = QPushButton("btop starten")
 		self.klog_btn = QPushButton("Kernel-Logs")
@@ -423,7 +423,7 @@ class FileDiskPanel(QWidget):
 	def stop_test(self) -> None:
 		if not self.runner:
 			return
-		self.runner.stop()
+		self.runner.stop(aborted=True)
 		self._append_log("Dateibasierter Test manuell gestoppt.")
 		self._on_run_finished(manual=True)
 
@@ -443,7 +443,7 @@ class FileDiskPanel(QWidget):
 		self.timer.stop()
 		if manual:
 			self.progress_label.setText("Abgebrochen")
-			self.progress_bar.setValue(0)
+			self._show_result(aborted=True)
 		else:
 			self.progress_label.setText("Test fertig")
 			self.progress_bar.setValue(100)
@@ -452,21 +452,29 @@ class FileDiskPanel(QWidget):
 		self.stop_btn.setEnabled(False)
 		self.runner = None
 
-	def _show_result(self) -> None:
+	def _show_result(self, aborted: bool = False) -> None:
 		if not self.runner:
 			return
 		result = self.runner.get_result()
 		if result is None:
 			return
 		if result.passed:
-			self.result_label.setText("✓ BESTANDEN – Keine Fehler erkannt")
+			if aborted:
+				self.result_label.setText("✓ ABGEBROCHEN – Bis zum Abbruch keine Fehler erkannt")
+			else:
+				self.result_label.setText("✓ BESTANDEN – Keine Fehler erkannt")
 			self.result_label.setStyleSheet(
 				"color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 		else:
-			self.result_label.setText(
-				f"✗ FEHLER – {len(result.errors)} Problem(e) erkannt"
-			)
+			if aborted:
+				self.result_label.setText(
+					f"✗ ABGEBROCHEN – {len(result.errors)} Problem(e) bis zum Abbruch erkannt"
+				)
+			else:
+				self.result_label.setText(
+					f"✗ FEHLER – {len(result.errors)} Problem(e) erkannt"
+				)
 			self.result_label.setStyleSheet(
 				"color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
@@ -521,15 +529,15 @@ class FileDiskPanel(QWidget):
 			self.file_path.setText(selected)
 
 	def _launch_btop(self) -> None:
-		if not launch_command_in_terminal(["btop"]):
+		if not launch_command_in_terminal(["btop"], geometry=(110, 44)):
 			self._append_log("btop konnte nicht gestartet werden. Bitte Installation prüfen.")
 
 	def _launch_klogs(self) -> None:
-		if not launch_command_in_terminal(["journalctl", "-kf"]):
-			self._append_log("journalctl konnte nicht gestartet werden. Bitte Installation prüfen.")
+		if not launch_command_in_terminal(build_klog_command()):
+			self._append_log("Kernel-Logs konnten nicht gestartet werden. Bitte Installation prüfen.")
 
 	def _launch_mcelog(self) -> None:
-		if not launch_command_in_terminal(["journalctl", "-kf", "-g", "MCE"]):
+		if not launch_command_in_terminal(build_mcelog_command()):
 			self._append_log("MCE-Logs konnten nicht gestartet werden. Bitte Installation prüfen.")
 
 
@@ -588,7 +596,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.stop_btn.setEnabled(False)
 
 		self.result_label = QLabel("")
-		self.result_label.setAlignment(Qt.AlignCenter)
+		self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
 		self.btop_btn = QPushButton("btop starten")
 		self.klog_btn = QPushButton("Kernel-Logs")
@@ -703,7 +711,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 	def stop_test(self) -> None:
 		if not self.runner:
 			return
-		self.runner.stop()
+		self.runner.stop(aborted=True)
 		self._append_log("Rohgeräte-Test manuell gestoppt.")
 		self._on_run_finished(manual=True)
 
@@ -725,7 +733,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.timer.stop()
 		if manual:
 			self.progress_label.setText("Abgebrochen")
-			self.progress_bar.setValue(0)
+			self._show_result(aborted=True)
 		else:
 			self.progress_label.setText("Rohgeräte-Lesetest fertig (heuristisch)")
 			self.progress_bar.setValue(100)
@@ -735,21 +743,29 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.runner = None
 		self._update_device_controls_enabled()
 
-	def _show_result(self) -> None:
+	def _show_result(self, aborted: bool = False) -> None:
 		if not self.runner:
 			return
 		result = self.runner.get_result()
 		if result is None:
 			return
 		if result.passed:
-			self.result_label.setText("✓ BESTANDEN – Alle Blöcke fehlerfrei gelesen")
+			if aborted:
+				self.result_label.setText("✓ ABGEBROCHEN – Bis zum Abbruch alle Blöcke fehlerfrei gelesen")
+			else:
+				self.result_label.setText("✓ BESTANDEN – Alle Blöcke fehlerfrei gelesen")
 			self.result_label.setStyleSheet(
 				"color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 		else:
-			self.result_label.setText(
-				f"✗ FEHLER – {len(result.errors)} I/O-Problem(e) erkannt"
-			)
+			if aborted:
+				self.result_label.setText(
+					f"✗ ABGEBROCHEN – {len(result.errors)} I/O-Problem(e) bis zum Abbruch erkannt"
+				)
+			else:
+				self.result_label.setText(
+					f"✗ FEHLER – {len(result.errors)} I/O-Problem(e) erkannt"
+				)
 			self.result_label.setStyleSheet(
 				"color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
@@ -785,15 +801,15 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		return max(60, int(total_bytes / assumed_throughput))
 
 	def _launch_btop(self) -> None:
-		if not launch_command_in_terminal(["btop"]):
+		if not launch_command_in_terminal(["btop"], geometry=(110, 44)):
 			self._append_log("btop konnte nicht gestartet werden. Bitte Installation prüfen.")
 
 	def _launch_klogs(self) -> None:
-		if not launch_command_in_terminal(["journalctl", "-kf"]):
-			self._append_log("journalctl konnte nicht gestartet werden. Bitte Installation prüfen.")
+		if not launch_command_in_terminal(build_klog_command()):
+			self._append_log("Kernel-Logs konnten nicht gestartet werden. Bitte Installation prüfen.")
 
 	def _launch_mcelog(self) -> None:
-		if not launch_command_in_terminal(["journalctl", "-kf", "-g", "MCE"]):
+		if not launch_command_in_terminal(build_mcelog_command()):
 			self._append_log("MCE-Logs konnten nicht gestartet werden. Bitte Installation prüfen.")
 
 	def _show_smart_info(self) -> None:
@@ -894,7 +910,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.stop_btn.setStyleSheet("background-color: #7f0000; color: white; font-weight: bold;")
 
 		self.result_label = QLabel("")
-		self.result_label.setAlignment(Qt.AlignCenter)
+		self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
 		self.btop_btn = QPushButton("btop starten")
 		self.klog_btn = QPushButton("Kernel-Logs")
@@ -1025,7 +1041,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 	def stop_test(self) -> None:
 		if not self.runner:
 			return
-		self.runner.stop()
+		self.runner.stop(aborted=True)
 		self._append_log("Destruktiver Test manuell gestoppt.")
 		self._on_run_finished(manual=True)
 
@@ -1046,7 +1062,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.timer.stop()
 		if manual:
 			self.progress_label.setText("Abgebrochen")
-			self.progress_bar.setValue(0)
+			self._show_result(aborted=True)
 		else:
 			self.progress_label.setText("Destruktiver Test fertig")
 			self.progress_bar.setValue(100)
@@ -1056,21 +1072,29 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.runner = None
 		self._update_device_controls_enabled()
 
-	def _show_result(self) -> None:
+	def _show_result(self, aborted: bool = False) -> None:
 		if not self.runner:
 			return
 		result = self.runner.get_result()
 		if result is None:
 			return
 		if result.passed:
-			self.result_label.setText("✓ BESTANDEN – Schreib-/Lese-Verifikation fehlerfrei")
+			if aborted:
+				self.result_label.setText("✓ ABGEBROCHEN – Bis zum Abbruch keine Verifikationsfehler")
+			else:
+				self.result_label.setText("✓ BESTANDEN – Schreib-/Lese-Verifikation fehlerfrei")
 			self.result_label.setStyleSheet(
 				"color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 		else:
-			self.result_label.setText(
-				f"✗ FEHLER – {len(result.errors)} Verifikations-/I/O-Problem(e)"
-			)
+			if aborted:
+				self.result_label.setText(
+					f"✗ ABGEBROCHEN – {len(result.errors)} Verifikations-/I/O-Problem(e) bis zum Abbruch"
+				)
+			else:
+				self.result_label.setText(
+					f"✗ FEHLER – {len(result.errors)} Verifikations-/I/O-Problem(e)"
+				)
 			self.result_label.setStyleSheet(
 				"color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
@@ -1144,15 +1168,15 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		return " ".join(parts)
 
 	def _launch_btop(self) -> None:
-		if not launch_command_in_terminal(["btop"]):
+		if not launch_command_in_terminal(["btop"], geometry=(110, 44)):
 			self._append_log("btop konnte nicht gestartet werden. Bitte Installation prüfen.")
 
 	def _launch_klogs(self) -> None:
-		if not launch_command_in_terminal(["journalctl", "-kf"]):
-			self._append_log("journalctl konnte nicht gestartet werden. Bitte Installation prüfen.")
+		if not launch_command_in_terminal(build_klog_command()):
+			self._append_log("Kernel-Logs konnten nicht gestartet werden. Bitte Installation prüfen.")
 
 	def _launch_mcelog(self) -> None:
-		if not launch_command_in_terminal(["journalctl", "-kf", "-g", "MCE"]):
+		if not launch_command_in_terminal(build_mcelog_command()):
 			self._append_log("MCE-Logs konnten nicht gestartet werden. Bitte Installation prüfen.")
 
 	def _show_smart_info(self) -> None:

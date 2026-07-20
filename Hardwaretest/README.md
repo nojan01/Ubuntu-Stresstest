@@ -1,77 +1,55 @@
 # Hardwaretest GUI
 
-PySide6-Anwendung zum Starten von Hardware-Stresstests für **CPU, RAM und Festplatten** – optimiert für **HPE ProLiant Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Getestet unter Ubuntu 22.04 / 24.04 (X11/Wayland, GNOME, KDE Plasma, XFCE, Cinnamon, MATE).
+PySide6-Anwendung zum Starten von Hardware-Stresstests für **CPU, RAM und Festplatten** – optimiert für **HPE ProLiant Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Getestet unter Ubuntu 22.04 / 24.04 und FunOS 24.04.4 (X11/Wayland, GNOME, KDE Plasma, XFCE, Cinnamon, MATE, FVWM).
 
 ## Installation
 
-### Fertiges Paket herunterladen (GitHub Release)
-
-Vorgebaute `.deb`-Pakete werden auf der
-[**Releases-Seite**](../../releases) bereitgestellt. Lade dort das aktuelle
-`hardwaretest_<version>_all.deb` herunter und installiere es:
+### Variante A – Debian-Paket (empfohlen)
 
 ```bash
-sudo apt install ./hardwaretest_*_all.deb
+sudo apt install ./hardwaretest_0.2.1_amd64.deb
 ```
 
-> Die `.deb` wird automatisch per GitHub Actions gebaut und an das Release
-> angehängt, sobald ein Tag der Form `v*` (z. B. `v0.1.0`) gepusht wird.
+APT installiert alle System-Abhängigkeiten automatisch. Das Setup legt unter
+`/opt/hardwaretest/.venv` eine Python-Umgebung mit PySide6 an und richtet den
+Befehl `hardwaretest` sowie einen Desktop-Eintrag ein. Deinstallation mit
+`sudo apt remove hardwaretest`.
 
-### Selbst bauen: Debian-/Ubuntu-Paket (.deb)
+> Das Paket wird aus dem Repo mit `bash scripts/build_deb.sh` erzeugt
+> (benötigt `dpkg-dev`).
 
-Alternativ lässt sich das native `.deb`-Paket lokal bauen.
-Es legt den Launcher `hardwaretest`, einen Menü-Eintrag samt Icon an und zieht
-alle benötigten APT-Abhängigkeiten (PySide6, psutil, …) automatisch mit.
-
-```bash
-# 1. Paket bauen (benötigt dpkg-dev)
-bash scripts/build_deb.sh
-# Ergebnis: dist/hardwaretest_<version>_all.deb
-
-# 2. Installieren (löst Abhängigkeiten automatisch auf)
-sudo apt install ./dist/hardwaretest_*_all.deb
-```
-
-Danach startet die Anwendung über den Menü-Eintrag **Hardwaretest** oder per
-Terminal mit `hardwaretest`. Deinstallieren mit `sudo apt remove hardwaretest`.
-
-> **Hinweis:** Die optionalen Werkzeuge (`stress-ng`, `fio`, `smartmontools`,
-> `ssacli`, Prime95/`mprime`, …) sind als `Recommends`/`Suggests` deklariert und
-> werden bei Bedarf mitinstalliert bzw. können nachgerüstet werden.
-
-### Alternative: Zip + Installationsscript
+### Variante B – Zip + Installationsscript
 
 #### 1. Zip entpacken nach `/opt/hardwaretest`
 
 ```bash
-sudo unzip Hardwaretest-v0.1.0.zip -d /opt/hardwaretest
+sudo unzip Hardwaretest-v0.2.1.zip -d /opt/hardwaretest
 ```
 
-#### 2. In das Verzeichnis wechseln
+### 2. In das Verzeichnis wechseln
 
 ```bash
-cd /opt/hardwaretest/Hardwaretest
+cd /opt/hardwaretest
 ```
 
-#### 3. Installationsscript ausführen
+### 3. Installationsscript ausführen
 
 ```bash
 sudo bash scripts/install_hardwaretest.sh
 ```
 
-#### Was passiert dabei?
+### Was passiert dabei?
 
-Das Script durchläuft **7 Schritte** und fragt vor jeder Aktion nach:
+Das Script durchläuft **6 Schritte** und fragt vor jeder Aktion nach:
 
 | Schritt | Beschreibung |
 |---|---|
-| **1/7** | **APT-Pakete prüfen** – zeigt fehlende Pflicht- und optionale Pakete an, installiert auf Bestätigung |
-| **2/7** | **Prime95 (mprime)** – prüft ob vorhanden, bietet Download an |
-| **3/7** | **Fastfetch & JSON-Reader** – installiert optionale Diagnose-Helfer |
-| **4/7** | **Python venv** – erstellt `.venv/`, installiert PySide6, psutil etc. |
-| **5/7** | **CLI-Starter** – legt `/usr/local/bin/hardwaretest` an |
-| **6/7** | **Desktop-Starter** – `.desktop`-Datei + SVG-Icon + Verknüpfung auf dem Desktop |
-| **7/7** | **Zusammenfassung** mit HPE ssacli-Hinweis |
+| **1/6** | **APT-Pakete prüfen** – zeigt fehlende Pflicht- und optionale Pakete an, installiert auf Bestätigung |
+| **2/6** | **Prime95 (mprime)** – prüft ob vorhanden, bietet Download an |
+| **3/6** | **Python venv** – erstellt `.venv/`, installiert PySide6, psutil etc. |
+| **4/6** | **CLI-Starter** – legt `/usr/local/bin/hardwaretest` an |
+| **5/6** | **Desktop-Starter** – `.desktop`-Datei + SVG-Icon + Verknüpfung auf dem Desktop |
+| **6/6** | **Zusammenfassung** mit HPE ssacli-Hinweis |
 
 ### Optionen
 
@@ -122,7 +100,7 @@ sudo bash scripts/install_hardwaretest.sh --yes
 - **Info-Panel** – CPU/RAM-Zusammenfassung, Fastfetch, JSON-Export, lshw/lspci-Schnellzugriff.
 - **Hilfe-Tab** – Zweisprachige Dokumentation (Deutsch/English) aller Tests und Optionen.
 - **Reporting** – `scripts/collect_system_report.sh` erstellt strukturierte JSON-Dateien.
-- **Desktop-Integration** – SVG-Icon, .desktop-Datei, Unterstützung für GNOME, KDE, XFCE, Cinnamon, MATE.
+- **Desktop-Integration** – SVG-Icon, .desktop-Datei, Unterstützung für GNOME, KDE, XFCE, Cinnamon, MATE, FVWM (FunOS).
 
 ## Manuelles Setup für Entwicklung
 
@@ -142,6 +120,32 @@ python -m hardwaretest
 
 Zusätzlich empfohlen: Prime95 (`~/Prime95/mprime`), btop, lm-sensors, edac-utils, nvme-cli. Auf HPE ProLiant: `ssacli` aus dem [HPE SDR Repository](https://downloads.linux.hpe.com/SDR/project/mcp/).
 
+## Tests & Code-Qualität
+
+```bash
+source .venv/bin/activate
+pip install pytest ruff        # Dev-Werkzeuge
+python -m pytest -q            # Unit-Tests (tests/)
+ruff check hardwaretest tests  # Linting (Konfiguration in pyproject.toml)
+```
+
+Die Ruff-Konfiguration (`[tool.ruff]` in `pyproject.toml`) prüft die Regelgruppen
+`F, E, B, SIM, RUF` bei einer Zeilenlänge von 100. Bewusst deutschsprachige
+Umlaute/Sonderzeichen (`RUF001–003`) sind ausgenommen.
+
+## Release-ZIP bauen
+
+Das Installations-ZIP (`Hardwaretest-v<version>.zip`) wird aus dem Repo erzeugt:
+
+```bash
+bash scripts/build_release_zip.sh
+```
+
+Das Skript liest die Version aus `pyproject.toml`, bündelt die Anwendung inkl.
+`vendor/prime95/mprime` und schließt Caches, `.venv/` sowie Laufzeitdateien aus.
+Das Ergebnis wird von `scripts/install_hardwaretest.sh`,
+`scripts/build_autoinstall_iso.sh` und `autoinstall/user-data` als Quelle genutzt.
+
 ## Projektstruktur
 
 ```
@@ -154,11 +158,10 @@ hardwaretest/
 │                   # temperature_widget, memory_controller_panel, mprime_panel
 scripts/
 ├── install_hardwaretest.sh
-├── build_deb.sh           # baut ein installierbares .deb-Paket
+├── build_release_zip.sh
+├── build_deb.sh
 ├── build_autoinstall_iso.sh
 └── collect_system_report.sh
-packaging/
-└── hardwaretest.desktop   # Desktop-Eintrag für das .deb-Paket
 assets/
 └── hardwaretest.svg
 ```

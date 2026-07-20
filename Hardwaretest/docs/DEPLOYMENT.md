@@ -60,7 +60,7 @@ sudo apt install -y xfce4 xfce4-terminal lightdm --no-install-recommends
 
 # Hardwaretest entpacken
 sudo mkdir -p /opt/Hardwaretest
-sudo unzip /pfad/zu/Hardwaretest-v0.1.0.zip -d /opt/Hardwaretest
+sudo unzip /pfad/zu/Hardwaretest-v0.2.0.zip -d /opt/Hardwaretest
 cd /opt/Hardwaretest
 
 # Installer ausführen (installiert alle Abhängigkeiten)

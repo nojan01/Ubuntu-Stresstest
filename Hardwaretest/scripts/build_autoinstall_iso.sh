@@ -82,7 +82,7 @@ if [[ ! -f "$AUTOINSTALL_DIR/user-data" ]]; then
 fi
 
 # ── Hardwaretest-ZIP erstellen (falls noch nicht vorhanden) ──────────────────
-HARDWARETEST_ZIP="$REPO_DIR/Hardwaretest-v0.1.0.zip"
+HARDWARETEST_ZIP="$REPO_DIR/Hardwaretest-v0.2.1.zip"
 if [[ ! -f "$HARDWARETEST_ZIP" ]]; then
     info "Erstelle Hardwaretest-ZIP..."
     cd "$REPO_DIR"

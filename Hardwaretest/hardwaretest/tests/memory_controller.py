@@ -51,9 +51,8 @@ class MemoryControllerRunner(BaseTestRunner):
             if stressor in MC_STRESSORS:
                 cmd += [f"--{stressor}", str(workers)]
 
-        if self.operations > 0:
+        if self.operations > 0 and self.stressors:
             # Ops-Limit auf den ersten Stressor anwenden
-            if self.stressors:
-                cmd += [f"--{self.stressors[0]}-ops", str(self.operations)]
+            cmd += [f"--{self.stressors[0]}-ops", str(self.operations)]
 
         return cmd

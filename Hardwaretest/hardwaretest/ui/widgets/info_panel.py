@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardwaretest.core.system_info import SystemInfo, read_system_info
+from hardwaretest.core.system_info import SystemInfo, read_system_info, is_running_as_root
 from hardwaretest.ui.report_html import json_to_html_report
 from hardwaretest.ui.utils import launch_command_in_terminal
 
@@ -50,7 +50,7 @@ class InfoPanel(QWidget):
         self.fastfetch_view.setReadOnly(True)
         fastfetch_min_height = 260 if not compact_mode else 190
         self.fastfetch_view.setMinimumHeight(fastfetch_min_height)
-        self.fastfetch_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.fastfetch_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.refresh_btn = QPushButton("Systemdaten aktualisieren")
         self.refresh_btn.clicked.connect(self._update_summary)
@@ -65,17 +65,22 @@ class InfoPanel(QWidget):
         self.open_html_report_btn.clicked.connect(self._open_html_report)
         self.last_report_path: Optional[Path] = None
 
+        # Auf Puppy Linux / Root-Systemen kein sudo noetig
+        _root = is_running_as_root()
+        _pfx = [] if _root else ["sudo"]
+        _pfx_label = "" if _root else "sudo "
+
         self.button_defs = [
-            ("sudo lshw -class cpu", ["sudo", "lshw", "-class", "cpu"], True),
-            ("sudo lshw -class memory", ["sudo", "lshw", "-class", "memory"], True),
-            ("sudo lshw -class storage", ["sudo", "lshw", "-class", "storage"], True),
-            ("sudo lshw -class disk", ["sudo", "lshw", "-class", "disk"], True),
-            ("sudo lshw -class raid", ["sudo", "lshw", "-class", "raid"], True),
-            ("sudo lshw -class scsi", ["sudo", "lshw", "-class", "scsi"], True),
-            ("sudo lshw -class display", ["sudo", "lshw", "-class", "display"], True),
-            ("sudo lshw -class network", ["sudo", "lshw", "-class", "network"], True),
-            ("sudo lspci -vvv", ["sudo", "lspci", "-vvv"], True),
-            ("sudo dmesg", ["sudo", "dmesg"], True),
+            (f"{_pfx_label}lshw -class cpu", [*_pfx, "lshw", "-class", "cpu"], True),
+            (f"{_pfx_label}lshw -class memory", [*_pfx, "lshw", "-class", "memory"], True),
+            (f"{_pfx_label}lshw -class storage", [*_pfx, "lshw", "-class", "storage"], True),
+            (f"{_pfx_label}lshw -class disk", [*_pfx, "lshw", "-class", "disk"], True),
+            (f"{_pfx_label}lshw -class raid", [*_pfx, "lshw", "-class", "raid"], True),
+            (f"{_pfx_label}lshw -class scsi", [*_pfx, "lshw", "-class", "scsi"], True),
+            (f"{_pfx_label}lshw -class display", [*_pfx, "lshw", "-class", "display"], True),
+            (f"{_pfx_label}lshw -class network", [*_pfx, "lshw", "-class", "network"], True),
+            (f"{_pfx_label}lspci -vvv", [*_pfx, "lspci", "-vvv"], True),
+            (f"{_pfx_label}dmesg", [*_pfx, "dmesg"], True),
         ]
 
         layout = QVBoxLayout()
@@ -130,7 +135,8 @@ class InfoPanel(QWidget):
                 f"{script_path} wurde nicht gefunden. Bitte Installation prüfen.",
             )
             return
-        command = ["sudo", str(script_path), str(target)]
+        command = ([str(script_path), str(target)] if is_running_as_root()
+                   else ["sudo", str(script_path), str(target)])
         if not launch_command_in_terminal(command, hold=True):
             QMessageBox.critical(
                 self,

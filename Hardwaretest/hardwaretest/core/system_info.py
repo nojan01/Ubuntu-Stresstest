@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import contextlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,6 +25,7 @@ class CpuTemperature:
     high: float = 0.0
     critical: float = 0.0
     label: str = ""
+    chip_name: str = ""  # Hardware-Sensor-Gruppe (z.B. "coretemp", "acpitz")
 
 
 def read_cpu_temperatures() -> List[CpuTemperature]:
@@ -42,6 +45,7 @@ def read_cpu_temperatures() -> List[CpuTemperature]:
                     high=entry.high or 0.0,
                     critical=entry.critical or 0.0,
                     label=entry.label or chip_name,
+                    chip_name=chip_name,
                 ))
     if not results and temps:
         # Fallback: erste verfuegbare Sensor-Gruppe
@@ -52,6 +56,7 @@ def read_cpu_temperatures() -> List[CpuTemperature]:
                     high=entry.high or 0.0,
                     critical=entry.critical or 0.0,
                     label=entry.label or chip_name,
+                    chip_name=chip_name,
                 ))
             break
     return results
@@ -99,9 +104,12 @@ def summarize_cpu_temperatures(
 
     if package_indices:
         # Intel-Stil: "Package id 0", "Core 0", ..., "Package id 1", "Core 48", ...
-        # Jedes Package bekommt die nachfolgenden Cores bis zum naechsten Package
+        # Jedes Package bekommt die nachfolgenden Cores bis zum naechsten Package.
+        # Dabei werden nur Eintraege desselben Sensor-Chips (z.B. coretemp)
+        # dem Package zugeordnet; andere Chips (z.B. acpitz) bleiben separat.
         for pkg_pos, pkg_idx in enumerate(package_indices):
             pkg_temp = temps[pkg_idx]
+            pkg_chip = pkg_temp.chip_name  # z.B. "coretemp"
             label = pkg_temp.label or ""
             parts = label.split()
             socket_id = parts[-1] if len(parts) >= 3 and parts[-1].isdigit() else str(pkg_pos)
@@ -114,23 +122,52 @@ def summarize_cpu_temperatures(
                 else len(temps)
             )
 
-            # Package-Temp selbst als ersten Eintrag (wird getrennt dargestellt)
-            core_list: List[CpuTemperature] = [pkg_temp]
+            # Nur Eintraege desselben Chips aufnehmen, Package selbst
+            # wird separat als Referenz gefuehrt (nicht als Core gezaehlt).
+            core_list: List[CpuTemperature] = []
+            other_sensors: List[CpuTemperature] = []
             for j in range(pkg_idx + 1, next_pkg_idx):
-                core_list.append(temps[j])
+                entry = temps[j]
+                if entry.chip_name == pkg_chip:
+                    core_list.append(entry)
+                else:
+                    other_sensors.append(entry)
 
+            # Package-Temp als Metadatum speichern (nicht im Core-Count)
             chips[chip_key] = core_list
+            # Pakete merken fuer spaetere Summary-Erstellung
+            if "__packages__" not in chips:
+                chips["__packages__"] = []
+            chips["__packages__"].append(pkg_temp)
+
+            # Fremde Sensor-Eintraege (z.B. acpitz) separat gruppieren
+            for s in other_sensors:
+                other_key = s.label or s.chip_name or "Sonstige"
+                chips.setdefault(other_key, []).append(s)
 
         # Eintraege die VOR dem ersten Package stehen (selten, aber moeglich)
         if package_indices[0] > 0:
             pre = temps[: package_indices[0]]
             if pre:
-                chips.setdefault("Sonstige", []).extend(pre)
+                for s in pre:
+                    if s.chip_name == temps[package_indices[0]].chip_name:
+                        # gehoert wahrscheinlich zum ersten Package
+                        first_key = next(iter(chips))
+                        if first_key != "__packages__":
+                            chips[first_key].append(s)
+                    else:
+                        other_key = s.label or s.chip_name or "Sonstige"
+                        chips.setdefault(other_key, []).append(s)
     else:
         # Kein Package: nach Label-Praefix gruppieren (AMD, ARM, etc.)
         for t in temps:
             chip_key = _chip_key_for_temp(t)
             chips.setdefault(chip_key, []).append(t)
+
+    # Packages herausnehmen (internes Hilfsfeld)
+    package_temps: List[CpuTemperature] = []
+    if "__packages__" in chips:
+        package_temps = chips.pop("__packages__")
 
     summaries: List[CpuChipSummary] = []
     for chip_key, cores in chips.items():
@@ -140,6 +177,21 @@ def summarize_cpu_temperatures(
         hottest = max(cores, key=lambda c: c.current)
         high_vals = [c.high for c in cores if c.high > 0]
         crit_vals = [c.critical for c in cores if c.critical > 0]
+
+        # Falls ein passendes Package vorhanden ist, dessen Limits uebernehmen
+        pkg_high = 0.0
+        pkg_crit = 0.0
+        for pt in package_temps:
+            pkg_label = (pt.label or "").lower()
+            # "CPU 0 (Socket 0)" ↔ "Package id 0"
+            if chip_key.lower().replace("cpu ", "").split()[0] in pkg_label:
+                pkg_high = pt.high if pt.high > 0 else 0.0
+                pkg_crit = pt.critical if pt.critical > 0 else 0.0
+                break
+
+        effective_high = min(high_vals) if high_vals else pkg_high
+        effective_crit = min(crit_vals) if crit_vals else pkg_crit
+
         summaries.append(CpuChipSummary(
             chip_name=chip_key,
             core_count=len(current_values),
@@ -147,8 +199,8 @@ def summarize_cpu_temperatures(
             temp_avg=sum(current_values) / len(current_values),
             temp_max=max(current_values),
             hottest_core_label=hottest.label or chip_key,
-            high=min(high_vals) if high_vals else 0.0,
-            critical=min(crit_vals) if crit_vals else 0.0,
+            high=effective_high,
+            critical=effective_crit,
             per_core=cores,
         ))
     return summaries
@@ -228,15 +280,11 @@ def read_edac_info() -> EdacInfo:
         ce_file = mc_dir / "ce_count"
         ue_file = mc_dir / "ue_count"
         if ce_file.exists():
-            try:
+            with contextlib.suppress(ValueError, OSError):
                 info.correctable_errors += int(ce_file.read_text().strip())
-            except (ValueError, OSError):
-                pass
         if ue_file.exists():
-            try:
+            with contextlib.suppress(ValueError, OSError):
                 info.uncorrectable_errors += int(ue_file.read_text().strip())
-            except (ValueError, OSError):
-                pass
     return info
 
 
@@ -297,6 +345,17 @@ def read_system_info() -> SystemInfo:
         swap_used_bytes=int(swap.used),
         swap_total_bytes=int(swap.total),
     )
+
+
+def is_running_as_root() -> bool:
+    """Return ``True`` when the process is running with effective UID 0.
+
+    On distributions like Puppy Linux / TrixiePup64 the entire desktop
+    session runs as root.  In that case privilege escalation via
+    ``pkexec`` or ``sudo`` is unnecessary and can even cause problems
+    (no polkit agent, no password to enter).
+    """
+    return os.geteuid() == 0
 
 
 def _is_polkit_agent_running() -> bool:
@@ -366,6 +425,7 @@ def needs_password_for_swap() -> bool:
     """Return ``True`` when the user must supply a password for swapoff.
 
     A password is NOT needed when:
+    * the process already runs as root (e.g. Puppy Linux), **or**
     * a polkit authentication agent is running (pkexec will show its own
       graphical dialog), **or**
     * the user has a NOPASSWD sudo rule for swapoff.
@@ -374,6 +434,10 @@ def needs_password_for_swap() -> bool:
     polkit agent) the application must ask the user for a password and
     pipe it to ``sudo -S``.
     """
+    # Already root – no escalation needed (e.g. Puppy Linux / TrixiePup64)
+    if is_running_as_root():
+        return False
+
     pkexec_path: Optional[str] = shutil.which("pkexec")
     if pkexec_path and _is_polkit_agent_running():
         return False
@@ -406,6 +470,10 @@ def _build_swapoff_cmd(*, password: Optional[str] = None
     swapoff_path: Optional[str] = shutil.which("swapoff")
     if not swapoff_path:
         raise FileNotFoundError("swapoff nicht gefunden.")
+
+    # Already root – run swapoff directly (Puppy Linux / TrixiePup64)
+    if is_running_as_root():
+        return [swapoff_path, "-a"], None
 
     if password is not None:
         sudo_path: Optional[str] = shutil.which("sudo")
@@ -459,6 +527,69 @@ def disable_swap(*, password: Optional[str] = None) -> None:
 def disable_swap_with_password(password: str) -> None:
     """Convenience wrapper kept for backwards compatibility."""
     disable_swap(password=password)
+
+
+def _build_swapon_cmd(*, password: Optional[str] = None
+                      ) -> Tuple[List[str], Optional[str]]:
+    """Build the swapon command list and optional stdin input.
+
+    Returns ``(cmd, stdin_data)``.  Re-enables all swap devices listed in
+    ``/etc/fstab`` via ``swapon -a``.
+    """
+    swapon_path: Optional[str] = shutil.which("swapon")
+    if not swapon_path:
+        raise FileNotFoundError("swapon nicht gefunden.")
+
+    # Already root – run swapon directly (Puppy Linux / TrixiePup64)
+    if is_running_as_root():
+        return [swapon_path, "-a"], None
+
+    if password is not None:
+        sudo_path: Optional[str] = shutil.which("sudo")
+        if not sudo_path:
+            raise FileNotFoundError("sudo nicht gefunden.")
+        return [sudo_path, "-S", swapon_path, "-a"], password + "\n"
+
+    pkexec_path: Optional[str] = shutil.which("pkexec")
+    if pkexec_path and _is_polkit_agent_running():
+        return [pkexec_path, swapon_path, "-a"], None
+
+    sudo_path = shutil.which("sudo")
+    cmd = [sudo_path, swapon_path, "-a"] if sudo_path else [swapon_path, "-a"]
+    return cmd, None
+
+
+def enable_swap(*, password: Optional[str] = None) -> None:
+    """Re-enable swap – runs **synchronously** (call from a worker thread!).
+
+    Reactivates all swap devices defined in ``/etc/fstab`` via
+    ``swapon -a``.  When *password* is given it is piped to ``sudo -S``.
+    Otherwise the function tries ``pkexec`` (if a polkit agent is running)
+    or plain ``sudo`` as a fallback.
+
+    .. warning::
+       Call this from a worker thread, never on the main / GUI thread.
+    """
+    cmd, stdin_data = _build_swapon_cmd(password=password)
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=stdin_data,
+            capture_output=True,
+            text=True,
+            timeout=_PKEXEC_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "Swap-Aktivierung: Zeitlimit ueberschritten. "
+            "Kein Polkit-Agent aktiv? Bitte manuell ausfuehren: sudo swapon -a"
+        ) from exc
+
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip()
+        raise RuntimeError(
+            f"swapon fehlgeschlagen (exit {proc.returncode}): {stderr}"
+        )
 
 
 def check_memtest86_installed() -> Tuple[bool, str]:

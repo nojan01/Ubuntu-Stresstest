@@ -1,214 +1,286 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  build_deb.sh – Erstellt ein installierbares Ubuntu/Debian-Paket (.deb)
+#  build_deb.sh – Erstellt ein installierbares Debian-Paket (hardwaretest_*.deb)
 #
-#  Das Paket installiert Hardwaretest nach /opt/hardwaretest, legt einen
-#  Launcher /usr/bin/hardwaretest, eine .desktop-Datei und ein Icon an und
-#  deklariert alle benötigten APT-Abhängigkeiten (PySide6, psutil, …).
+#  Das Paket installiert die Anwendung nach /opt/hardwaretest und richtet im
+#  postinst-Schritt automatisch ein:
+#    * Python-venv unter /opt/hardwaretest/.venv (mit PySide6, psutil, ...)
+#    * CLI-Starter /usr/bin/hardwaretest
+#    * Desktop-Eintrag + Icon (System-weit)
+#
+#  Die System-Abhaengigkeiten (stress-ng, fio, libxcb-*, python3-venv, ...)
+#  werden ueber das Feld "Depends" von apt automatisch mitinstalliert.
 #
 #  Verwendung:
-#    bash scripts/build_deb.sh            # baut hardwaretest_<version>_all.deb
-#    bash scripts/build_deb.sh /tmp/out   # Ausgabeverzeichnis angeben
+#    bash scripts/build_deb.sh
+#    sudo apt install ./hardwaretest_<version>_amd64.deb
 #
-#  Installation des fertigen Pakets:
-#    sudo apt install ./hardwaretest_<version>_all.deb
-#  (oder: sudo dpkg -i hardwaretest_<version>_all.deb && sudo apt -f install)
+#  Voraussetzungen (nur zum Bauen):
+#    sudo apt install -y dpkg-dev          # liefert dpkg-deb
 # =============================================================================
 set -euo pipefail
 
-# ── Pfade ─────────────────────────────────────────────────────────────────────
+# ── Farben ────────────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
+ok()    { echo -e "${GREEN}[ OK ]${NC}  $*"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
+fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
+
+command -v dpkg-deb >/dev/null 2>&1 || fail "dpkg-deb nicht gefunden. Bitte installieren: sudo apt install dpkg-dev"
+
+# ── Pfade & Metadaten ─────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUTPUT_DIR="${1:-$REPO_DIR/dist}"
+cd "$REPO_DIR"
 
-# ── Metadaten ─────────────────────────────────────────────────────────────────
+VERSION="$(grep -m1 -E '^version' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+[[ -n "$VERSION" ]] || fail "Konnte Version nicht aus pyproject.toml lesen."
+
 PKG_NAME="hardwaretest"
-# Version aus pyproject.toml lesen (Fallback 0.1.0)
-VERSION="$(grep -m1 '^version' "$REPO_DIR/pyproject.toml" | sed -E 's/.*"([^"]+)".*/\1/')"
-VERSION="${VERSION:-0.1.0}"
-MAINTAINER="Hardwaretest Maintainers <maintainers@example.com>"
-ARCH="all"
+# vendor/prime95/mprime ist ein amd64-ELF-Binary -> Architektur amd64.
+ARCH="amd64"
+MAINTAINER="Norbert Jander <n.jander@posteo.de>"
+INSTALL_DIR="/opt/hardwaretest"
 
-# ── Voraussetzungen ──────────────────────────────────────────────────────────
-command -v dpkg-deb >/dev/null 2>&1 || {
-    echo "FEHLER: dpkg-deb nicht gefunden. Installieren mit: sudo apt install dpkg-dev" >&2
-    exit 1
-}
+BUILD_ROOT="$(mktemp -d /tmp/hardwaretest-deb.XXXXXX)"
+trap 'rm -rf "$BUILD_ROOT"' EXIT
+PKG_ROOT="$BUILD_ROOT/pkg"
 
-# ── Staging-Verzeichnis vorbereiten ──────────────────────────────────────────
-STAGE="$(mktemp -d)"
-cleanup() { rm -rf "$STAGE"; }
-trap cleanup EXIT
+OUTPUT="$REPO_DIR/${PKG_NAME}_${VERSION}_${ARCH}.deb"
 
-INSTALL_ROOT="/opt/$PKG_NAME"
-PKG_INSTALL_DIR="$STAGE$INSTALL_ROOT"
+info "Repo:    $REPO_DIR"
+info "Version: $VERSION"
+info "Ziel:    $OUTPUT"
 
-echo "[INFO] Staging Anwendungsdateien nach $INSTALL_ROOT ..."
-mkdir -p "$PKG_INSTALL_DIR"
+# ── 1. Anwendungsdateien nach /opt/hardwaretest kopieren ─────────────────────
+APP_DEST="$PKG_ROOT$INSTALL_DIR"
+mkdir -p "$APP_DEST"
 
-# Projektdateien kopieren (ohne VCS-, Build- und Laufzeit-Artefakte).
-# Der relative Layout (hardwaretest/, scripts/, vendor/, assets/) bleibt
-# erhalten, da der Code Geschwister-Verzeichnisse über __file__ auflöst.
-copy_if_exists() {
-    local item="$1"
-    [[ -e "$REPO_DIR/$item" ]] && cp -a "$REPO_DIR/$item" "$PKG_INSTALL_DIR/"
-}
-copy_if_exists hardwaretest
-copy_if_exists scripts
-copy_if_exists assets
-copy_if_exists profiles
-copy_if_exists vendor
-copy_if_exists docs
-copy_if_exists pyproject.toml
-copy_if_exists README.md
+COPY_PATHS=(
+    hardwaretest assets autoinstall docs profiles scripts tests
+    vendor README.md INSTALL.md pyproject.toml
+)
+for path in "${COPY_PATHS[@]}"; do
+    [[ -e "$path" ]] || continue
+    cp -a "$path" "$APP_DEST/"
+done
 
-# Aufräumen: Caches und Build-Reste, die cp -a evtl. mitgenommen hat.
-find "$PKG_INSTALL_DIR" -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
-find "$PKG_INSTALL_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
-rm -rf "$PKG_INSTALL_DIR/.venv" "$PKG_INSTALL_DIR/build" "$PKG_INSTALL_DIR/dist" 2>/dev/null || true
-
-# ── Launcher /usr/bin/hardwaretest ───────────────────────────────────────────
-echo "[INFO] Erstelle Launcher /usr/bin/$PKG_NAME ..."
-mkdir -p "$STAGE/usr/bin"
-cat >"$STAGE/usr/bin/$PKG_NAME" <<LAUNCHER
-#!/bin/sh
-# Hardwaretest GUI Launcher (Debian-Paket)
-exec env PYTHONPATH="$INSTALL_ROOT\${PYTHONPATH:+:\$PYTHONPATH}" python3 -m hardwaretest "\$@"
-LAUNCHER
-chmod 755 "$STAGE/usr/bin/$PKG_NAME"
-
-# ── Desktop-Datei + Icons ─────────────────────────────────────────────────────
-echo "[INFO] Installiere Desktop-Eintrag und Icon ..."
-mkdir -p "$STAGE/usr/share/applications"
-cp "$REPO_DIR/packaging/hardwaretest.desktop" "$STAGE/usr/share/applications/$PKG_NAME.desktop"
-
-if [[ -f "$REPO_DIR/assets/hardwaretest.svg" ]]; then
-    mkdir -p "$STAGE/usr/share/icons/hicolor/scalable/apps" "$STAGE/usr/share/pixmaps"
-    cp "$REPO_DIR/assets/hardwaretest.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/$PKG_NAME.svg"
-    cp "$REPO_DIR/assets/hardwaretest.svg" "$STAGE/usr/share/pixmaps/$PKG_NAME.svg"
+if [[ ! -f "$APP_DEST/vendor/prime95/mprime" ]]; then
+    warn "vendor/prime95/mprime fehlt – Paket wird ohne gebuendeltes Prime95 gebaut."
 fi
 
-# ── Dokumentation (copyright + changelog) ────────────────────────────────────
-DOC_DIR="$STAGE/usr/share/doc/$PKG_NAME"
-mkdir -p "$DOC_DIR"
-cat >"$DOC_DIR/copyright" <<'COPYRIGHT'
-Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: hardwaretest
+# Caches / Laufzeitmuell entfernen
+find "$APP_DEST" -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$APP_DEST" -type d -name '.pytest_cache' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$APP_DEST" -type d -name '.ruff_cache' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$APP_DEST" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
+rm -f "$APP_DEST"/vendor/prime95/prime.txt \
+      "$APP_DEST"/vendor/prime95/local.txt \
+      "$APP_DEST"/vendor/prime95/results*.txt \
+      "$APP_DEST"/vendor/prime95/worktodo.txt \
+      "$APP_DEST"/vendor/prime95/*.hwbackup 2>/dev/null || true
 
-Files: *
-Copyright: Hardwaretest Maintainers
-License: MIT
-COPYRIGHT
+# ── 2. Icon system-weit ablegen ──────────────────────────────────────────────
+ICON_DEST="$PKG_ROOT/usr/share/icons/hicolor/scalable/apps"
+mkdir -p "$ICON_DEST"
+if [[ -f assets/hardwaretest.svg ]]; then
+    cp assets/hardwaretest.svg "$ICON_DEST/hardwaretest.svg"
+fi
 
-cat >"$DOC_DIR/changelog.Debian" <<CHANGELOG
-$PKG_NAME ($VERSION) stable; urgency=medium
+# ── 3. Desktop-Eintrag ───────────────────────────────────────────────────────
+DESKTOP_DEST="$PKG_ROOT/usr/share/applications"
+mkdir -p "$DESKTOP_DEST"
+cat > "$DESKTOP_DEST/hardwaretest.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Hardwaretest
+Comment=GUI für CPU/RAM/Disk-Stresstests (stress-ng, Prime95, fio)
+Comment[en]=GUI launcher for CPU/RAM/disk stress tests
+Exec=hardwaretest
+Icon=hardwaretest
+Terminal=false
+Categories=System;Utility;
+Keywords=stress;memory;cpu;disk;benchmark;hardware;
+StartupNotify=true
+DESKTOP
 
-  * Paketierung als natives Debian-/Ubuntu-Paket.
+# ── 4. Paket-Metadaten berechnen ─────────────────────────────────────────────
+INSTALLED_SIZE_KB="$(du -sk "$PKG_ROOT" | cut -f1)"
 
- -- $MAINTAINER  $(date -R)
-CHANGELOG
-gzip -9n "$DOC_DIR/changelog.Debian"
+DEBIAN_DIR="$PKG_ROOT/DEBIAN"
+mkdir -p "$DEBIAN_DIR"
 
-# ── Installierte Größe berechnen (in KiB) ────────────────────────────────────
-INSTALLED_SIZE="$(du -sk "$STAGE" | cut -f1)"
-
-# ── DEBIAN/control + Maintainer-Skripte ──────────────────────────────────────
-echo "[INFO] Schreibe DEBIAN/control ..."
-mkdir -p "$STAGE/DEBIAN"
-cat >"$STAGE/DEBIAN/control" <<CONTROL
+cat > "$DEBIAN_DIR/control" <<CONTROL
 Package: $PKG_NAME
 Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
-Installed-Size: $INSTALLED_SIZE
-Depends: python3 (>= 3.10),
- python3-pyside6.qtwidgets,
- python3-pyside6.qtgui,
- python3-pyside6.qtcore,
- python3-psutil,
- python3-yaml
-Recommends: stress-ng,
- fio,
- smartmontools,
- jq,
- lshw,
- pciutils,
- nvme-cli,
- hdparm,
- lm-sensors,
- util-linux,
- polkitd | policykit-1
-Suggests: btop,
- fastfetch,
- edac-utils,
- memtest86+
-Description: GUI für CPU-, RAM- und Festplatten-Stresstests
+Installed-Size: $INSTALLED_SIZE_KB
+Depends: python3, python3-venv, python3-pip, stress-ng, fio, btop, libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libxkbcommon-x11-0, libgl1, libegl1
+Recommends: smartmontools, jq, curl, lshw, pciutils, polkitd | policykit-1
+Suggests: lm-sensors, edac-utils, nvme-cli
+Description: GUI für Hardware-Stresstests (CPU, RAM, Festplatten)
  PySide6-Anwendung zum Starten von Hardware-Stresstests für CPU, RAM und
- Festplatten - optimiert für HPE ProLiant Server. Nutzt bewährte Werkzeuge
- wie stress-ng, Prime95 (mprime) und fio.
+ Festplatten, optimiert für HPE ProLiant Server. Nutzt stress-ng, Prime95
+ (mprime) und fio mit automatischer Pass/Fail-Erkennung, Temperatur- und
+ ECC/EDAC-Überwachung sowie SMART-Diagnose.
  .
- Enthält Disk-Tests (Datei, Geräte, destruktiv), SMART-/EDAC-Auswertung,
- Temperatur-Monitoring und automatische Pass/Fail-Erkennung.
+ Beim ersten Setup wird unter $INSTALL_DIR/.venv automatisch eine
+ Python-Umgebung mit PySide6 angelegt. Start über den Befehl "hardwaretest"
+ oder den Desktop-Eintrag.
 CONTROL
 
-# Konfigurationsdateien als conffiles markieren? Keine in /etc -> entfällt.
+# Konfigurationsdateien, die bei Updates nicht ueberschrieben werden sollen
+cat > "$DEBIAN_DIR/conffiles" <<CONFFILES
+$INSTALL_DIR/profiles/default.yaml
+CONFFILES
 
-# postinst: Desktop-Datenbank und Icon-Cache aktualisieren
-cat >"$STAGE/DEBIAN/postinst" <<'POSTINST'
+# ── 5. Maintainer-Skripte ────────────────────────────────────────────────────
+cat > "$DEBIAN_DIR/postinst" <<POSTINST
 #!/bin/sh
 set -e
 
-if [ "$1" = "configure" ]; then
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database -q /usr/share/applications 2>/dev/null || true
+INSTALL_DIR="$INSTALL_DIR"
+VENV_DIR="\$INSTALL_DIR/.venv"
+LAUNCHER="/usr/bin/hardwaretest"
+
+case "\$1" in
+    configure)
+        echo "Richte Python-Umgebung unter \$VENV_DIR ein (kann einige Minuten dauern)..."
+        if [ ! -x "\$VENV_DIR/bin/python" ]; then
+            python3 -m venv "\$VENV_DIR"
+        fi
+        "\$VENV_DIR/bin/python" -m pip install --upgrade pip wheel >/dev/null 2>&1 || true
+        if ! "\$VENV_DIR/bin/pip" install -e "\$INSTALL_DIR"; then
+            echo "WARNUNG: pip-Installation fehlgeschlagen. Bitte Internetverbindung pruefen" >&2
+            echo "         und manuell ausfuehren: \$VENV_DIR/bin/pip install -e \$INSTALL_DIR" >&2
+        fi
+
+        # CLI-Starter anlegen
+        cat > "\$LAUNCHER" <<'LAUNCH'
+#!/bin/sh
+# Hardwaretest-Starter – nutzt die dedizierte venv unter /opt/hardwaretest.
+exec /opt/hardwaretest/.venv/bin/python -m hardwaretest "\$@"
+LAUNCH
+        chmod 0755 "\$LAUNCHER"
+
+        # Fastfetch wird im Info-Panel fuer die Systemuebersicht genutzt.
+        # Installation ueber PPA – optional, darf postinst nicht abbrechen.
+        # Da bei grafischer Installation (aptk, GNOME Software, ...) die
+        # apt-Sperre waehrend des gesamten postinst gehalten wird, wird
+        # ein vollstaendig entkoppelter Prozess (setsid) gestartet, der
+        # auf die Freigabe wartet und dann fastfetch installiert.
+        if command -v fastfetch >/dev/null 2>&1; then
+            echo "Fastfetch bereits installiert."
+        else
+            echo "Fastfetch wird nach Freigabe der apt-Sperre im Hintergrund installiert..."
+            echo "(Log: /var/log/hardwaretest-fastfetch-install.log)"
+            FF_SCRIPT=\$(mktemp /tmp/hardwaretest-ff-XXXXXX.sh)
+            cat > "\$FF_SCRIPT" <<'FFSCRIPT'
+#!/bin/sh
+LOG=/var/log/hardwaretest-fastfetch-install.log
+echo "\$(date): Fastfetch-Hintergrundinstallation gestartet (PID \$\$)" >> "\$LOG"
+# Warte bis apt-Sperre frei ist (max. 5 Minuten)
+_tries=0
+while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    if [ "\$_tries" -ge 150 ]; then
+        echo "\$(date): Timeout – apt-Sperre nicht freigegeben." >> "\$LOG"
+        rm -f "\$0"
+        exit 1
     fi
-    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+    sleep 2
+    _tries=\$((\$_tries + 1))
+done
+echo "\$(date): apt-Sperre frei, starte Installation..." >> "\$LOG"
+if command -v add-apt-repository >/dev/null 2>&1; then
+    add-apt-repository -y --no-update ppa:zhangsongcui3371/fastfetch >> "\$LOG" 2>&1
+    apt-get update -qq >> "\$LOG" 2>&1
+    apt-get install -y fastfetch >> "\$LOG" 2>&1
+    if command -v fastfetch >/dev/null 2>&1; then
+        echo "\$(date): Fastfetch erfolgreich installiert." >> "\$LOG"
+    else
+        echo "\$(date): Fastfetch Installation fehlgeschlagen." >> "\$LOG"
     fi
+else
+    echo "\$(date): add-apt-repository nicht verfuegbar." >> "\$LOG"
 fi
+rm -f "\$0"
+FFSCRIPT
+            chmod +x "\$FF_SCRIPT"
+            setsid "\$FF_SCRIPT" </dev/null >/dev/null 2>&1 &
+        fi
+
+        # Icon-/Desktop-Caches aktualisieren (falls Tools vorhanden)
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database -q /usr/share/applications || true
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+        fi
+
+        echo "Hardwaretest installiert. Start mit: hardwaretest"
+        ;;
+esac
 
 exit 0
 POSTINST
-chmod 755 "$STAGE/DEBIAN/postinst"
 
-# postrm: Caches nach Entfernung aktualisieren
-cat >"$STAGE/DEBIAN/postrm" <<'POSTRM'
+cat > "$DEBIAN_DIR/prerm" <<PRERM
 #!/bin/sh
 set -e
 
-if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database -q /usr/share/applications 2>/dev/null || true
-    fi
-    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
-    fi
-fi
+INSTALL_DIR="$INSTALL_DIR"
+
+case "\$1" in
+    remove|upgrade|deconfigure)
+        rm -f /usr/bin/hardwaretest
+        # venv wird beim Entfernen geloescht (sie wurde im postinst erzeugt
+        # und ist nicht Teil der Paketdateien).
+        rm -rf "\$INSTALL_DIR/.venv"
+        ;;
+esac
+
+exit 0
+PRERM
+
+cat > "$DEBIAN_DIR/postrm" <<POSTRM
+#!/bin/sh
+set -e
+
+INSTALL_DIR="$INSTALL_DIR"
+
+case "\$1" in
+    purge|remove)
+        # Bei vollstaendiger Deinstallation generierte Reste entfernen.
+        rm -f /usr/bin/hardwaretest
+        rm -rf "\$INSTALL_DIR/.venv"
+        # Leeres Installationsverzeichnis aufraeumen (nur falls leer).
+        rmdir "\$INSTALL_DIR" 2>/dev/null || true
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database -q /usr/share/applications || true
+        fi
+        ;;
+esac
 
 exit 0
 POSTRM
-chmod 755 "$STAGE/DEBIAN/postrm"
 
-# ── Berechtigungen normalisieren ─────────────────────────────────────────────
-# Alle Verzeichnisse auf 755 (mktemp-Root ist 700, umask kann 775 erzeugen).
-chmod 755 "$STAGE"
-find "$STAGE" -path "$STAGE/DEBIAN" -prune -o -type d -exec chmod 755 {} + 2>/dev/null || true
-chmod 644 "$STAGE/usr/share/applications/$PKG_NAME.desktop"
-# Shell-Skripte ausführbar lassen
-find "$STAGE/opt/$PKG_NAME/scripts" -type f -name '*.sh' -exec chmod 755 {} + 2>/dev/null || true
+chmod 0755 "$DEBIAN_DIR/postinst" "$DEBIAN_DIR/prerm" "$DEBIAN_DIR/postrm"
 
-# ── Paket bauen ──────────────────────────────────────────────────────────────
-mkdir -p "$OUTPUT_DIR"
-DEB_FILE="$OUTPUT_DIR/${PKG_NAME}_${VERSION}_${ARCH}.deb"
-echo "[INFO] Baue $DEB_FILE ..."
-dpkg-deb --root-owner-group --build "$STAGE" "$DEB_FILE" >/dev/null
+# ── 6. Rechte normalisieren & Paket bauen ────────────────────────────────────
+find "$PKG_ROOT" -type d -exec chmod 0755 {} +
+# Ausfuehrbare Dateien
+[[ -f "$APP_DEST/vendor/prime95/mprime" ]] && chmod 0755 "$APP_DEST/vendor/prime95/mprime"
+find "$APP_DEST/scripts" -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true
 
+rm -f "$OUTPUT"
+dpkg-deb --root-owner-group --build "$PKG_ROOT" "$OUTPUT" >/dev/null
+
+SIZE="$(du -h "$OUTPUT" | cut -f1)"
+ok "Erstellt: $OUTPUT ($SIZE)"
 echo ""
-echo "═══ Fertig ═══"
-echo "  Paket: $DEB_FILE"
-echo "  Größe: $(du -h "$DEB_FILE" | cut -f1)"
-echo ""
-echo "Installieren mit:"
-echo "  sudo apt install $DEB_FILE"
+info "Installation:   sudo apt install $OUTPUT"
+info "Deinstallation: sudo apt remove $PKG_NAME"

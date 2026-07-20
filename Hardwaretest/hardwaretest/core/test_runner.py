@@ -103,6 +103,7 @@ class BaseTestRunner:
         self._work_dir = str(work_dir) if work_dir else None
         self._collected_errors: List[str] = []
         self._result: Optional[TestResult] = None
+        self._aborted = False
 
     def build_command(self) -> List[str]:  # pragma: no cover - abstract hook
         raise NotImplementedError
@@ -112,6 +113,7 @@ class BaseTestRunner:
             raise TestExecutionError("Test läuft bereits")
         self._collected_errors = []
         self._result = None
+        self._aborted = False
         cmd = self.build_command()
         self._log(f"Starte: {' '.join(cmd)}")
         self._start_time = time.time()
@@ -132,12 +134,11 @@ class BaseTestRunner:
             )
             self._watchdog_thread.start()
 
-    def stop(self) -> None:
+    def stop(self, aborted: bool = False) -> None:
+        if aborted:
+            self._aborted = True
         self._watchdog_cancel.set()
         if self._watchdog_thread is not None:
-            # Auf das Watchdog-Ende warten, damit es nicht nebenläufig auf
-            # self._process zugreift, nachdem dieses unten auf None gesetzt wurde.
-            self._watchdog_thread.join(timeout=1)
             self._watchdog_thread = None
         if self._process and self._process.poll() is None:
             self._log("Stoppe Test...")
@@ -146,7 +147,6 @@ class BaseTestRunner:
                 self._process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self._process.kill()
-                self._process.wait()
         self._finalize_result()
         self._process = None
         self._start_time = None
@@ -179,6 +179,11 @@ class BaseTestRunner:
         exit_code = self._process.returncode if self._process else None
         # Nicht-Null Exit-Code als Fehler werten
         non_zero_exit = exit_code is not None and exit_code != 0
+        # Bei bewusstem Abbruch durch den Benutzer wurde der Prozess von uns
+        # per Signal beendet (z. B. SIGTERM). Dieses Beenden-Signal nicht als
+        # echten Fehler werten – nur tatsaechlich erkannte Fehler zaehlen.
+        if self._aborted:
+            non_zero_exit = False
         has_errors = len(self._collected_errors) > 0 or non_zero_exit
         if non_zero_exit and not self._collected_errors:
             self._collected_errors.append(f"Prozess beendet mit Exit-Code {exit_code}")
@@ -204,7 +209,6 @@ class BaseTestRunner:
             except subprocess.TimeoutExpired:
                 self._log("Prozess reagiert nicht auf SIGTERM – sende SIGKILL.")
                 self._process.kill()
-                self._process.wait()
 
     def _stream_output(self) -> None:
         if not self._process or not self._process.stdout:

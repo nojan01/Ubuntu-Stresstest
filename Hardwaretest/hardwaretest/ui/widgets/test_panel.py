@@ -30,12 +30,13 @@ from hardwaretest.core.system_info import (
     check_memtest86_installed,
     check_swapoff_safe,
     disable_swap,
+    enable_swap,
     needs_password_for_swap,
     read_system_info,
 )
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.stress_ng import STRESS_NG_MODES, StressNgRunner
-from hardwaretest.ui.utils import launch_command_in_terminal
+from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 
 
@@ -59,9 +60,33 @@ class _SwapWorker(QThread):
         super().__init__(parent)
         self._password = password
 
-    def run(self) -> None:  # noqa: D401 – QThread override
+    def run(self) -> None:
         try:
             disable_swap(password=self._password)
+            self.finished_ok.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class _SwapOnWorker(QThread):
+    """Runs ``swapon -a`` in a background thread.
+
+    Signals
+    -------
+    finished_ok : emitted when swap was enabled successfully.
+    failed      : str – emitted with an error message on failure.
+    """
+
+    finished_ok = Signal()
+    failed = Signal(str)
+
+    def __init__(self, password: Optional[str] = None, parent=None):
+        super().__init__(parent)
+        self._password = password
+
+    def run(self) -> None:
+        try:
+            enable_swap(password=self._password)
             self.finished_ok.emit()
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -90,7 +115,7 @@ class TestPanel(QWidget):
         for key, info in STRESS_NG_MODES.items():
             self.mode_box.addItem(info["label"], userData=key)
             idx = self.mode_box.count() - 1
-            self.mode_box.setItemData(idx, info["description"], role=Qt.ToolTipRole)
+            self.mode_box.setItemData(idx, info["description"], role=Qt.ItemDataRole.ToolTipRole)
         # Standard: combined
         combined_idx = list(STRESS_NG_MODES.keys()).index("combined")
         self.mode_box.setCurrentIndex(combined_idx)
@@ -132,6 +157,13 @@ class TestPanel(QWidget):
         )
         self.swap_btn.clicked.connect(self._disable_swap)
 
+        self.swap_on_btn = QPushButton("Swap aktivieren")
+        self.swap_on_btn.setToolTip(
+            "Aktiviert den Swap wieder (swapon -a), z.B. nachdem er fuer den "
+            "RAM-Test deaktiviert wurde."
+        )
+        self.swap_on_btn.clicked.connect(self._enable_swap)
+
         # --- memtest86+ Hinweis ---
         self.memtest_btn = QPushButton("memtest86+ pruefen")
         self.memtest_btn.setToolTip(
@@ -142,7 +174,7 @@ class TestPanel(QWidget):
 
         # --- Ergebnis-Anzeige ---
         self.result_label = QLabel("")
-        self.result_label.setAlignment(Qt.AlignCenter)
+        self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.progress = QLabel("Bereit")
         self.progress_bar = QProgressBar()
@@ -186,6 +218,7 @@ class TestPanel(QWidget):
 
         util_row = QHBoxLayout()
         util_row.addWidget(self.swap_btn)
+        util_row.addWidget(self.swap_on_btn)
         util_row.addWidget(self.memtest_btn)
 
         layout = QVBoxLayout()
@@ -230,7 +263,16 @@ class TestPanel(QWidget):
             )
         cpu_mask = self._build_cpu_mask(usable_cores)
         if cpu_mask:
-            self._append_log(f"CPU-Affinitaet (taskset): {cpu_mask}")
+            try:
+                allowed = bin(int(cpu_mask, 16)).count("1")
+                total = self._system_info.cpu_cores
+                self._append_log(
+                    f"CPU-Affinitaet (taskset): {cpu_mask} – "
+                    f"{allowed}/{total} logische CPUs erlaubt "
+                    f"(reservierte Kerne inkl. HT-Geschwister freigehalten)"
+                )
+            except ValueError:
+                self._append_log(f"CPU-Affinitaet (taskset): {cpu_mask}")
         params = TestParameters(
             duration_seconds=duration_seconds,
             cpu_cores=usable_cores,
@@ -391,6 +433,51 @@ class TestPanel(QWidget):
         )
         self._swap_worker = None
 
+    # -- slots for the background swap-on worker -----------------------------
+
+    def _enable_swap(self) -> None:
+        """Aktiviert Swap wieder – im Hintergrund-Thread."""
+        password: Optional[str] = None
+        if needs_password_for_swap():
+            pw, ok = QInputDialog.getText(
+                self,
+                "Swap aktivieren – Passwort erforderlich",
+                "sudo-Passwort eingeben:",
+                QLineEdit.EchoMode.Password,
+            )
+            if not ok or not pw:
+                self._append_log("Swap-Aktivierung abgebrochen (kein Passwort).")
+                return
+            password = pw
+
+        self.swap_on_btn.setEnabled(False)
+        self.swap_on_btn.setText("Swap wird aktiviert …")
+        self._append_log("Swap-Aktivierung laeuft (Hintergrund-Thread) …")
+
+        worker = _SwapOnWorker(password=password, parent=self)
+        self._swap_on_worker = worker
+        worker.finished_ok.connect(self._on_swap_on_done)
+        worker.failed.connect(self._on_swap_on_failed)
+        worker.start()
+
+    def _on_swap_on_done(self) -> None:
+        """Called (on the main thread) when swapon succeeded."""
+        self._append_log("✓ Swap erfolgreich aktiviert.")
+        self._refresh_system_info(update_memory_value=False)
+        self._swap_on_worker = None
+
+    def _on_swap_on_failed(self, error_msg: str) -> None:
+        """Called (on the main thread) when swapon failed."""
+        self._append_log(f"Swap-Aktivierung fehlgeschlagen: {error_msg}")
+        self._refresh_system_info(update_memory_value=False)
+        QMessageBox.warning(
+            self,
+            "Swap-Aktivierung",
+            f"Swap konnte nicht aktiviert werden:\n{error_msg}\n\n"
+            "Manuell ausfuehren: sudo swapon -a",
+        )
+        self._swap_on_worker = None
+
 
     def _check_memtest(self) -> None:
         """Prueft ob memtest86+ installiert ist und zeigt Hinweis."""
@@ -449,16 +536,23 @@ class TestPanel(QWidget):
         else:
             self.swap_btn.setText("Swap deaktivieren")
 
+        # Swap-aktivieren-Button: nur sinnvoll wenn Swap aktuell aus ist
+        self.swap_on_btn.setEnabled(not info.swap_enabled)
+        if info.swap_enabled:
+            self.swap_on_btn.setText("Swap bereits aktiv")
+        else:
+            self.swap_on_btn.setText("Swap aktivieren")
+
     def _launch_btop(self) -> None:
-        if not launch_command_in_terminal(["btop"]):
+        if not launch_command_in_terminal(["btop"], geometry=(110, 44)):
             self._append_log("btop konnte nicht gestartet werden. Bitte Installation pruefen.")
 
     def _launch_klogs(self) -> None:
-        if not launch_command_in_terminal(["journalctl", "-kf"]):
-            self._append_log("journalctl konnte nicht gestartet werden. Bitte Installation pruefen.")
+        if not launch_command_in_terminal(build_klog_command()):
+            self._append_log("Kernel-Logs konnten nicht gestartet werden. Bitte Installation pruefen.")
 
     def _launch_mcelog(self) -> None:
-        if not launch_command_in_terminal(["journalctl", "-kf", "-g", "MCE"]):
+        if not launch_command_in_terminal(build_mcelog_command()):
             self._append_log("MCE-Logs konnten nicht gestartet werden. Bitte Installation pruefen.")
 
     def _total_duration_seconds(self) -> int:
@@ -477,13 +571,80 @@ class TestPanel(QWidget):
         self.duration_seconds.setValue(secs)
 
     def _build_cpu_mask(self, cpu_count: int) -> Optional[str]:
+        """Bilde eine taskset-Maske, die ganze *physische* Kerne reserviert.
+
+        Bei aktivem Hyperthreading reicht es nicht, nur einzelne logische
+        CPUs aus der Maske zu nehmen – der jeweilige HT-Sibling liefe sonst
+        weiter auf demselben physischen Kern. Diese Methode liest die HT-
+        Topologie aus ``/sys/devices/system/cpu/cpuN/topology/thread_siblings_list``
+        und entfernt komplette physische Kerne (inkl. aller Geschwister).
+        """
         total = self._system_info.cpu_cores
         if cpu_count <= 0 or cpu_count >= total:
             return None
+
+        cores = self._physical_core_groups(total)
+        # Reservierte logische CPUs:
+        reserved_logical_target = total - cpu_count
+        # Physische Kerne von hinten reservieren, bis genug logische CPUs
+        # entfernt sind. So ist mindestens ein voller Kern (alle HT-Threads)
+        # garantiert frei.
+        allowed_cores = list(cores)
+        removed = 0
+        # Mindestens ein physischer Kern muss erlaubt bleiben.
+        while len(allowed_cores) > 1 and removed < reserved_logical_target:
+            removed += len(allowed_cores.pop())
+        if not allowed_cores:
+            return None
+
+        allowed_cpus = [cpu for group in allowed_cores for cpu in group]
         mask = 0
-        for cpu in range(cpu_count):
+        for cpu in allowed_cpus:
             mask |= 1 << cpu
+        if mask == 0:
+            return None
         return hex(mask)
+
+    def _physical_core_groups(self, total: int) -> list[tuple[int, ...]]:
+        """Gibt sortierte Gruppen logischer CPUs pro physischem Kern zurück.
+
+        Nutzt ``thread_siblings_list`` aus sysfs. Fällt auf eine 1-zu-1-
+        Zuordnung zurück, falls die Topologie nicht lesbar ist (z. B.
+        Container ohne sysfs-CPU-Mounts).
+        """
+        from pathlib import Path
+
+        seen: set[int] = set()
+        groups: list[tuple[int, ...]] = []
+        for cpu in range(total):
+            if cpu in seen:
+                continue
+            sibs_path = Path(f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list")
+            siblings: tuple[int, ...]
+            try:
+                raw = sibs_path.read_text().strip()
+                ids: set[int] = set()
+                for part in raw.split(","):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    if "-" in part:
+                        a, b = part.split("-", 1)
+                        ids.update(range(int(a), int(b) + 1))
+                    else:
+                        ids.add(int(part))
+                # Auf vorhandene logische CPUs begrenzen
+                ids = {i for i in ids if 0 <= i < total}
+                if not ids:
+                    ids = {cpu}
+                siblings = tuple(sorted(ids))
+            except OSError:
+                siblings = (cpu,)
+            seen.update(siblings)
+            groups.append(siblings)
+        # Sortierung: nach kleinster CPU-ID der Gruppe (deterministisch)
+        groups.sort(key=lambda g: g[0])
+        return groups
 
     def _effective_core_limit(self) -> int:
         total = max(1, self._system_info.cpu_cores)

@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardwaretest import __version__
+
 
 # ---------------------------------------------------------------------------
 # Hilfe-Texte
@@ -34,6 +36,7 @@ _HELP_DE = """\
 </style>
 
 <h1>🛠️ Hardwaretest – Hilfe</h1>
+<p style="color:#888;">Version __VERSION__</p>
 
 <h2>Übersicht</h2>
 <p>
@@ -319,6 +322,17 @@ Nutzt <code>lshw</code>, <code>fastfetch</code> und <code>lspci</code>.
   <li>Bei ECC-RAM: <b>EDAC-Anzeige</b> auf Fehler beobachten.</li>
   <li>Optional: <b>memtest86+</b> über Nacht laufen lassen (außerhalb des OS).</li>
 </ol>
+
+<hr>
+
+<h2>Lizenz</h2>
+<p>
+Diese Software steht unter der <b>MIT-Lizenz</b>.
+Sie darf frei verwendet, verändert und weitergegeben werden, sofern der
+Copyright-Hinweis und der Lizenztext erhalten bleiben. Die Software wird
+„wie besehen" ohne jegliche Gewährleistung bereitgestellt.
+</p>
+<p style="color:#888;">© 2026 Norbert Jander · Hardwaretest v__VERSION__</p>
 """
 
 # -------------------------------------------------------------------------
@@ -338,6 +352,7 @@ _HELP_EN = """\
 </style>
 
 <h1>🛠️ Hardware Test – Help</h1>
+<p style="color:#888;">Version __VERSION__</p>
 
 <h2>Overview</h2>
 <p>
@@ -621,6 +636,17 @@ Uses <code>lshw</code>, <code>fastfetch</code>, and <code>lspci</code>.
   <li>With ECC RAM: monitor the <b>EDAC display</b> for errors.</li>
   <li>Optional: run <b>memtest86+</b> overnight (outside the OS).</li>
 </ol>
+
+<hr>
+
+<h2>License</h2>
+<p>
+This software is released under the <b>MIT License</b>.
+You may freely use, modify, and distribute it, provided that the copyright
+notice and license text are retained. The software is provided "as is",
+without warranty of any kind.
+</p>
+<p style="color:#888;">© 2026 Norbert Jander · Hardwaretest v__VERSION__</p>
 """
 
 
@@ -671,6 +697,6 @@ class HelpPanel(QWidget):
     def _switch_language(self) -> None:
         lang = self._lang_box.currentData() or "de"
         if lang == "en":
-            self._content.setText(_HELP_EN)
+            self._content.setText(_HELP_EN.replace("__VERSION__", __version__))
         else:
-            self._content.setText(_HELP_DE)
+            self._content.setText(_HELP_DE.replace("__VERSION__", __version__))

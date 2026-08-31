@@ -1,7 +1,7 @@
 # Hardwaretest – Installationsanleitung
 
 Diese Anleitung beschreibt die Installation der **Hardwaretest GUI** auf
-Ubuntu/Debian-Derivaten (Ubuntu 22.04 / 24.04, FunOS 24.04.4). Das beigelegte
+Ubuntu/Debian-Derivaten (Ubuntu 22.04 / 24.04 / 26.04, FunOS 24.04.4). Das beigelegte
 Installationsscript erledigt alle Schritte automatisch und fragt vor jeder
 Aktion nach.
 
@@ -11,10 +11,10 @@ Aktion nach.
 
 | Anforderung           | Wert                                                |
 |-----------------------|-----------------------------------------------------|
-| Betriebssystem        | Ubuntu 22.04 / 24.04, Debian, FunOS 24.04.4         |
+| Betriebssystem        | Ubuntu 22.04 / 24.04 / 26.04, Debian, FunOS 24.04.4 |
 | Architektur           | x86_64 (64-Bit)                                     |
 | Rechte                | `sudo` (für APT-Pakete und Systemintegration)       |
-| Python                | 3.10 – 3.13 (wird vom Script geprüft)               |
+| Python                | 3.10 – 3.14                                          |
 | Internetverbindung    | Nur für APT-Pakete erforderlich                     |
 | Plattenplatz          | ca. 250 MB (inkl. venv und Prime95)                 |
 

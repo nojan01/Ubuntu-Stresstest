@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QRect
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QMainWindow, QTabWidget
+from PySide6.QtGui import QAction, QGuiApplication
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget
 
 from hardwaretest import __version__
 from hardwaretest.ui.widgets.test_panel import TestPanel
@@ -59,7 +59,26 @@ class MainWindow(QMainWindow):
         tabs.addTab(help_panel, "Hilfe / Help")
 
         self.setCentralWidget(tabs)
+        self._add_about_action()
         self._apply_initial_geometry(compact_mode, available_geom)
+
+    def _add_about_action(self) -> None:
+        """Add a visible application and license notice to the Help menu."""
+        help_menu = self.menuBar().addMenu("Hilfe / Help")
+        about_action = QAction("Über Hardwaretest / About", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "Über Hardwaretest",
+            f"<h3>Hardwaretest {__version__}</h3>"
+            "<p>GUI für CPU-, RAM- und Festplatten-Stresstests.</p>"
+            "<p>Diese Software steht unter der <b>MIT-Lizenz</b>. "
+            "Den vollständigen Lizenztext finden Sie in der Datei <code>LICENSE</code>.</p>"
+            "<p>© 2026 Norbert Jander</p>",
+        )
 
     @staticmethod
     def _should_use_compact_mode(available_geom: Optional[QRect]) -> bool:

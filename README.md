@@ -2,6 +2,11 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **CPU, RAM und Festplatten** – optimiert für **HPE ProLiant Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Unterstützt Ubuntu 22.04 / 24.04 / 26.04 sowie FunOS 24.04.4 (X11/Wayland, GNOME, KDE Plasma, XFCE, Cinnamon, MATE, FVWM).
 
+## Lizenz
+
+Hardwaretest ist unter der [MIT-Lizenz](LICENSE) veröffentlicht. Der vollständige
+Lizenztext befindet sich in der Datei `LICENSE`.
+
 ## Installation
 
 ### Variante A – Debian-Paket (empfohlen)

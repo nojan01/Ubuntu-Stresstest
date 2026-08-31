@@ -59,7 +59,7 @@ mkdir -p "$APP_DEST"
 
 COPY_PATHS=(
     hardwaretest assets autoinstall docs profiles scripts tests
-    vendor README.md INSTALL.md pyproject.toml
+    vendor LICENSE README.md INSTALL.md pyproject.toml
 )
 for path in "${COPY_PATHS[@]}"; do
     [[ -e "$path" ]] || continue

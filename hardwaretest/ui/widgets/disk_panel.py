@@ -45,6 +45,7 @@ from hardwaretest.tests.fio_runner import (
 	FioRunner,
 )
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
+from hardwaretest.ui.i18n import language_manager
 
 
 @dataclass
@@ -414,7 +415,7 @@ class FileDiskPanel(QWidget):
 		self.start_btn.setEnabled(False)
 		self.stop_btn.setEnabled(True)
 		self.progress_bar.setValue(0)
-		self.progress_label.setText("Fortschritt: 0%")
+		self.progress_label.setText(language_manager.tr("Fortschritt: 0%"))
 		self.result_label.setText("")
 		self.result_label.setStyleSheet("")
 		self.timer.start()
@@ -435,17 +436,17 @@ class FileDiskPanel(QWidget):
 		running = self.runner.is_running()
 		if running:
 			self.progress_bar.setValue(progress)
-			self.progress_label.setText(f"Fortschritt: {progress}%")
+			self.progress_label.setText(language_manager.tr("Fortschritt: {progress}%", progress=progress))
 		else:
 			self._on_run_finished()
 
 	def _on_run_finished(self, manual: bool = False) -> None:
 		self.timer.stop()
 		if manual:
-			self.progress_label.setText("Abgebrochen")
+			self.progress_label.setText(language_manager.tr("Abgebrochen"))
 			self._show_result(aborted=True)
 		else:
-			self.progress_label.setText("Test fertig")
+			self.progress_label.setText(language_manager.tr("Test fertig"))
 			self.progress_bar.setValue(100)
 			self._show_result()
 		self.start_btn.setEnabled(True)
@@ -703,7 +704,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.start_btn.setEnabled(False)
 		self.stop_btn.setEnabled(True)
 		self.progress_bar.setValue(0)
-		self.progress_label.setText("Heuristischer Fortschritt: 0%")
+		self.progress_label.setText(language_manager.tr("Heuristischer Fortschritt: 0%"))
 		self.result_label.setText("")
 		self.result_label.setStyleSheet("")
 		self.timer.start()
@@ -725,17 +726,17 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.progress_bar.setValue(display)
 		if running:
 			suffix = " (läuft)" if display >= 99 else ""
-			self.progress_label.setText(f"Heuristischer Fortschritt: {display}%{suffix}")
+			self.progress_label.setText(language_manager.tr("Heuristischer Fortschritt: {progress}%{suffix}", progress=display, suffix=suffix))
 		else:
 			self._on_run_finished()
 
 	def _on_run_finished(self, manual: bool = False) -> None:
 		self.timer.stop()
 		if manual:
-			self.progress_label.setText("Abgebrochen")
+			self.progress_label.setText(language_manager.tr("Abgebrochen"))
 			self._show_result(aborted=True)
 		else:
-			self.progress_label.setText("Rohgeräte-Lesetest fertig (heuristisch)")
+			self.progress_label.setText(language_manager.tr("Rohgeräte-Lesetest fertig (heuristisch)"))
 			self.progress_bar.setValue(100)
 			self._show_result()
 		self.start_btn.setEnabled(True)
@@ -1033,7 +1034,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.start_btn.setEnabled(False)
 		self.stop_btn.setEnabled(True)
 		self.progress_bar.setValue(0)
-		self.progress_label.setText("Fortschritt (Write+Verify): 0%")
+		self.progress_label.setText(language_manager.tr("Fortschritt (Write+Verify): 0%"))
 		self.result_label.setText("")
 		self.result_label.setStyleSheet("")
 		self.timer.start()
@@ -1054,17 +1055,17 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		display = min(progress, 99) if running else 100
 		self.progress_bar.setValue(display)
 		if running:
-			self.progress_label.setText(f"Fortschritt (Write+Verify): {display}%")
+			self.progress_label.setText(language_manager.tr("Fortschritt (Write+Verify): {progress}%", progress=display))
 		else:
 			self._on_run_finished()
 
 	def _on_run_finished(self, manual: bool = False) -> None:
 		self.timer.stop()
 		if manual:
-			self.progress_label.setText("Abgebrochen")
+			self.progress_label.setText(language_manager.tr("Abgebrochen"))
 			self._show_result(aborted=True)
 		else:
-			self.progress_label.setText("Destruktiver Test fertig")
+			self.progress_label.setText(language_manager.tr("Destruktiver Test fertig"))
 			self.progress_bar.setValue(100)
 			self._show_result()
 		self.start_btn.setEnabled(True)

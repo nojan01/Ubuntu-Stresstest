@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from hardwaretest.core.system_info import SystemInfo, read_system_info, is_running_as_root
 from hardwaretest.ui.report_html import json_to_html_report
 from hardwaretest.ui.utils import launch_command_in_terminal
+from hardwaretest.ui.i18n import language_manager
 
 
 SystemInfoProvider = Callable[[], SystemInfo]
@@ -106,13 +107,13 @@ class InfoPanel(QWidget):
     def _update_summary(self) -> None:
         info = self.system_info_provider()
         lines = [
-            f"RAM gesamt: {info.total_memory_bytes // (1024 * 1024)} MB",
-            f"RAM verfuegbar: {info.available_memory_mb} MB",
-            f"Swap aktiv: {'ja' if info.swap_enabled else 'nein'}",
-            f"Kerne logisch: {info.cpu_cores}",
+            language_manager.tr("RAM gesamt: {memory} MB", memory=info.total_memory_bytes // (1024 * 1024)),
+            language_manager.tr("RAM verfuegbar: {memory} MB", memory=info.available_memory_mb),
+            language_manager.tr("Swap aktiv: {state}", state=language_manager.tr("ja" if info.swap_enabled else "nein")),
+            language_manager.tr("Kerne logisch: {cores}", cores=info.cpu_cores),
         ]
         if info.physical_cpu_cores:
-            lines.append(f"Kerne physisch: {info.physical_cpu_cores}")
+            lines.append(language_manager.tr("Kerne physisch: {cores}", cores=info.physical_cpu_cores))
         self.summary.setPlainText("\n".join(lines))
         self._update_fastfetch_output()
 
@@ -305,4 +306,3 @@ class InfoPanel(QWidget):
     def _strip_ansi(text: str) -> str:
         ansi_pattern = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
         return ansi_pattern.sub("", text)
-

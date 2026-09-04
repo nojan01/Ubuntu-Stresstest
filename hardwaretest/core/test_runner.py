@@ -46,7 +46,16 @@ _FAILURE_PATTERNS = [
     re.compile(r"SCSI\s+error", re.IGNORECASE),
     re.compile(r"drive\s+(?:fault|failure)", re.IGNORECASE),
     re.compile(r"predictive\s+failure", re.IGNORECASE),
+    # Deutschsprachige Ausgaben der integrierten Speichertests
+    re.compile(r"^(?!.*keine\s+fehler\s+gefunden).*fehler\s+gefunden", re.IGNORECASE),
+    re.compile(r"verifikationsfehler", re.IGNORECASE),
+    re.compile(r"speicherfehler", re.IGNORECASE),
 ]
+
+
+# Rückgabecodes, die bei einem ausdrücklich vom Bediener abgebrochenen
+# Subprozess entstehen können (direktes Signal oder 128 + Signalnummer).
+_TERMINATED_EXIT_CODES = {-15, -9, -2, 143, 137, 130}
 
 
 @dataclass
@@ -182,7 +191,9 @@ class BaseTestRunner:
         # Bei bewusstem Abbruch durch den Benutzer wurde der Prozess von uns
         # per Signal beendet (z. B. SIGTERM). Dieses Beenden-Signal nicht als
         # echten Fehler werten – nur tatsaechlich erkannte Fehler zaehlen.
-        if self._aborted:
+        if self._aborted and (
+            exit_code is None or exit_code == 0 or exit_code in _TERMINATED_EXIT_CODES
+        ):
             non_zero_exit = False
         has_errors = len(self._collected_errors) > 0 or non_zero_exit
         if non_zero_exit and not self._collected_errors:

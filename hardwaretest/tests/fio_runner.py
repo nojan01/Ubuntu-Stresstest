@@ -13,8 +13,10 @@ import os
 import shutil
 import subprocess
 import tempfile
+import json
 from pathlib import Path
-from typing import List, Optional
+import re
+from typing import List, Optional, Sequence
 
 from hardwaretest.core.test_runner import BaseTestRunner, TestExecutionError, TestParameters
 
@@ -317,6 +319,236 @@ class FioDeviceSweepRunner(_FioJobFileRunner):
                 ]
             )
         return lines
+
+
+class FioNvmeReadBenchmarkRunner(_FioJobFileRunner):
+    """Timed, read-only fio benchmark for one NVMe namespace.
+
+    It never writes to the drive.  The JSON result is retained so the UI can
+    report throughput and IOPS instead of merely showing fio's raw log.
+    """
+
+    def __init__(
+        self,
+        params: TestParameters,
+        device: str | Sequence[str],
+        rw: str = "read",
+        block_size: str = "1m",
+        io_depth: int = 32,
+        log_fn=None,
+        use_pkexec: bool = False,
+        ioengine: Optional[str] = None,
+    ) -> None:
+        if rw not in {"read", "randread"}:
+            raise TestExecutionError("Nur lesende NVMe-Benchmarks sind erlaubt")
+        raw_devices = [device] if isinstance(device, str) else list(device)
+        if not raw_devices:
+            raise TestExecutionError("Keine NVMe-Laufwerke ausgewählt")
+        self.devices = [str(Path(item).expanduser()) for item in raw_devices]
+        self.device = self.devices[0]
+        self.rw = rw
+        self.block_size = block_size or "1m"
+        self.io_depth = max(1, io_depth)
+        self.output_lines: List[str] = []
+        super().__init__(params, log_fn=log_fn, use_pkexec=use_pkexec, ioengine=ioengine)
+
+    def _job_lines(self) -> List[str]:
+        lines = [
+            "[global]",
+            f"rw={self.rw}",
+            f"bs={self.block_size}",
+            "direct=1",
+            f"ioengine={self.ioengine}",
+            f"iodepth={self.io_depth}",
+            "numjobs=1",
+            "group_reporting=0",
+            "time_based=1",
+            f"runtime={max(1, self.params.duration_seconds)}",
+            "size=100%",
+            "continue_on_error=read",
+            "error_dump=1",
+        ]
+        for index, device in enumerate(self.devices):
+            lines.extend([
+                "",
+                f"[nvme_read_benchmark_{index + 1}_{Path(device).name}]",
+                f"filename={device}",
+            ])
+        return lines
+
+    def build_command(self) -> List[str]:
+        """Request JSON through fio's CLI for fio 3.x compatibility."""
+        command = super().build_command()
+        return [*command[:-1], "--output-format=json", command[-1]]
+
+    def _stream_output(self) -> None:
+        if not self._process or not self._process.stdout:
+            return
+        for line in self._process.stdout:
+            stripped = line.rstrip()
+            self.output_lines.append(stripped)
+            self._log(stripped)
+            self._check_line_for_errors(stripped)
+        self._process.wait()
+        self._finalize_result()
+        self._cleanup_job_file()
+
+    def summary(self) -> Optional[dict[str, float]]:
+        summaries = self.device_summaries()
+        if not summaries:
+            return None
+        total_ios = sum(item["total_ios"] for item in summaries)
+        if total_ios:
+            latency_ms = sum(
+                item["latency_ms"] * item["total_ios"] for item in summaries
+            ) / total_ios
+        else:
+            latency_ms = sum(item["latency_ms"] for item in summaries) / len(summaries)
+        return {
+            "throughput_mib_s": sum(item["throughput_mib_s"] for item in summaries),
+            "iops": sum(item["iops"] for item in summaries),
+            "latency_ms": latency_ms,
+        }
+
+    def device_summaries(self) -> list[dict[str, float | str]]:
+        """Return one benchmark result per selected namespace."""
+        try:
+            payload = json.loads("\n".join(self.output_lines))
+            summaries: list[dict[str, float | str]] = []
+            for index, job in enumerate(payload["jobs"]):
+                read = job["read"]
+                device = self.devices[index] if index < len(self.devices) else str(job.get("jobname", "NVMe"))
+                summaries.append({
+                    "device": device,
+                    "throughput_mib_s": float(read.get("bw_bytes", 0)) / (1024 * 1024),
+                    "iops": float(read.get("iops", 0)),
+                    "latency_ms": float(read.get("lat_ns", {}).get("mean", 0)) / 1_000_000,
+                    "total_ios": float(read.get("total_ios", 0)),
+                })
+            return summaries
+        except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return []
+
+
+class FioNvmeFullReadRunner(_FioJobFileRunner):
+    """Read every block of exactly one NVMe namespace, without writing data.
+
+    This deliberately does not reuse a generic disk-workload runner.  Its job
+    file has a fixed ``rw=read`` setting and contains no verification options,
+    so a UI change cannot accidentally turn this into a write operation.
+    """
+
+    def __init__(
+        self,
+        params: TestParameters,
+        device: str | Sequence[str],
+        block_size: str = "1m",
+        io_depth: int = 32,
+        log_fn=None,
+        use_pkexec: bool = False,
+        ioengine: Optional[str] = None,
+        total_bytes: int = 0,
+    ) -> None:
+        raw_devices = [device] if isinstance(device, str) else list(device)
+        if not raw_devices:
+            raise TestExecutionError("Keine NVMe-Laufwerke ausgewählt")
+        self.devices = [str(Path(item).expanduser()) for item in raw_devices]
+        self.device = self.devices[0]
+        self.block_size = block_size or "1m"
+        self.io_depth = max(1, io_depth)
+        self._reported_progress = 0.0
+        self._total_bytes = max(0, total_bytes)
+        self._current_group = 0
+        self._bytes_by_group: dict[int, int] = {}
+        super().__init__(params, log_fn=log_fn, use_pkexec=use_pkexec, ioengine=ioengine)
+
+    def build_command(self) -> List[str]:
+        """Ask fio for periodic, newline-terminated progress reports."""
+        command = super().build_command()
+        return [
+            *command[:-1],
+            "--eta=always",
+            "--eta-interval=1000",
+            "--status-interval=1",
+            command[-1],
+        ]
+
+    def progress(self) -> float:
+        if self.get_result() is not None and not self.is_running():
+            return 1.0
+        return self._reported_progress
+
+    def _record_progress(self, output: str) -> None:
+        """Extract progress from fio ETA or periodic per-job byte counters."""
+        group = re.search(r"\bgroupid=(\d+)", output)
+        if group:
+            self._current_group = int(group.group(1))
+
+        byte_values = re.findall(
+            r"\((\d+(?:\.\d+)?)([KMGTPE]?i?[bB])/\d", output
+        )
+        if byte_values and self._total_bytes:
+            value, unit = byte_values[-1]
+            self._bytes_by_group[self._current_group] = _fio_size_to_bytes(float(value), unit)
+            byte_progress = sum(self._bytes_by_group.values()) / self._total_bytes
+            self._reported_progress = max(
+                self._reported_progress, max(0.0, min(1.0, byte_progress))
+            )
+
+        for match in re.finditer(r"\[\s*(\d+(?:\.\d+)?)%\s*(?:done)?\]", output):
+            value = max(0.0, min(100.0, float(match.group(1)))) / 100.0
+            self._reported_progress = max(self._reported_progress, value)
+
+    def _stream_output(self) -> None:
+        if not self._process or not self._process.stdout:
+            return
+        for line in self._process.stdout:
+            # fio updates its ETA line with carriage returns.  Periodic status
+            # reports add newlines, so both forms can arrive in one chunk.
+            self._record_progress(line)
+            for fragment in line.replace("\r", "\n").splitlines():
+                stripped = fragment.rstrip()
+                if stripped:
+                    self._log(stripped)
+                    self._check_line_for_errors(stripped)
+        self._process.wait()
+        self._finalize_result()
+        if self._result and self._result.passed:
+            self._reported_progress = 1.0
+        self._cleanup_job_file()
+
+    def _job_lines(self) -> List[str]:
+        lines = [
+            "[global]",
+            "rw=read",
+            f"bs={self.block_size}",
+            "direct=1",
+            f"ioengine={self.ioengine}",
+            f"iodepth={self.io_depth}",
+            "numjobs=1",
+            "group_reporting=0",
+            "time_based=0",
+            "size=100%",
+            "continue_on_error=read",
+            "error_dump=1",
+        ]
+        for index, device in enumerate(self.devices):
+            lines.extend([
+                "",
+                f"[nvme_full_read_{index + 1}_{Path(device).name}]",
+                f"filename={device}",
+            ])
+        return lines
+
+
+def _fio_size_to_bytes(value: float, unit: str) -> int:
+    normalized = unit.lower()
+    if normalized == "b":
+        factor = 1
+    else:
+        exponent = "kmgtpe".index(normalized[0]) + 1
+        factor = (1024 if "i" in normalized else 1000) ** exponent
+    return int(value * factor)
 
 
 class FioDestructiveRunner(_FioJobFileRunner):

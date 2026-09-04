@@ -31,6 +31,7 @@ from hardwaretest.core.system_info import (
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.memory_fill import MemoryFillRunner
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
+from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 
 
@@ -302,7 +303,7 @@ class MemoryFillPanel(QWidget):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.progress_bar.setValue(0)
-        self.progress.setText("Fortschritt: 0%")
+        self.progress.setText(language_manager.tr("Fortschritt: 0%"))
         self.result_label.setText("")
         self.result_label.setStyleSheet("")
         self._append_log("Zyklischer RAM-Fuelltest gestartet …")
@@ -316,7 +317,7 @@ class MemoryFillPanel(QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setValue(0)
-        self.progress.setText("Manuell gestoppt")
+        self.progress.setText(language_manager.tr("Manuell gestoppt"))
         self._show_result()
         self._append_log("Test manuell gestoppt.")
 
@@ -335,14 +336,14 @@ class MemoryFillPanel(QWidget):
             return
         progress = int(self.runner.progress() * 100)
         self.progress_bar.setValue(progress)
-        self.progress.setText(f"Fortschritt: {progress}%")
+        self.progress.setText(language_manager.tr("Fortschritt: {progress}%", progress=progress))
         if not self.runner.is_running():
             self.timer.stop()
             self.temp_widget.stop_monitoring()
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
             self.progress_bar.setValue(100)
-            self.progress.setText("Fertig")
+            self.progress.setText(language_manager.tr("Fertig"))
             self._show_result()
 
     def _show_result(self) -> None:
@@ -353,9 +354,9 @@ class MemoryFillPanel(QWidget):
         if result is None:
             return
         if result.passed:
-            self.result_label.setText(
-                f"✓ BESTANDEN – Keine Fehler gefunden ({result.duration_actual:.0f}s)"
-            )
+            self.result_label.setText(language_manager.tr(
+                "✓ BESTANDEN – Keine Fehler gefunden ({seconds:.0f}s)", seconds=result.duration_actual
+            ))
             self.result_label.setStyleSheet(
                 "color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
             )
@@ -363,7 +364,7 @@ class MemoryFillPanel(QWidget):
             error_summary = "; ".join(result.errors[:3])
             if len(result.errors) > 3:
                 error_summary += f" … (+{len(result.errors) - 3} weitere)"
-            self.result_label.setText(f"✗ FEHLER GEFUNDEN – {error_summary}")
+            self.result_label.setText(language_manager.tr("✗ FEHLER GEFUNDEN – {error}", error=error_summary))
             self.result_label.setStyleSheet(
                 "color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
             )
@@ -392,16 +393,16 @@ class MemoryFillPanel(QWidget):
         # Swap-Button Status
         self.swap_btn.setEnabled(info.swap_enabled)
         if not info.swap_enabled:
-            self.swap_btn.setText("Swap bereits deaktiviert")
+            self.swap_btn.setText(language_manager.tr("Swap bereits deaktiviert"))
         else:
-            self.swap_btn.setText("Swap deaktivieren")
+            self.swap_btn.setText(language_manager.tr("Swap deaktivieren"))
 
         # Swap-aktivieren-Button: nur sinnvoll wenn Swap aktuell aus ist
         self.swap_on_btn.setEnabled(not info.swap_enabled)
         if info.swap_enabled:
-            self.swap_on_btn.setText("Swap bereits aktiv")
+            self.swap_on_btn.setText(language_manager.tr("Swap bereits aktiv"))
         else:
-            self.swap_on_btn.setText("Swap aktivieren")
+            self.swap_on_btn.setText(language_manager.tr("Swap aktivieren"))
 
     # --------------------------------------------------------------------- #
     #  Hilfsfunktionen                                                       #
@@ -500,7 +501,7 @@ class MemoryFillPanel(QWidget):
             password = pw
 
         self.swap_btn.setEnabled(False)
-        self.swap_btn.setText("Swap wird deaktiviert \u2026")
+        self.swap_btn.setText(language_manager.tr("Swap wird deaktiviert …"))
         self._append_log("Swap-Deaktivierung laeuft (Hintergrund-Thread) \u2026")
 
         worker = _SwapWorker(password=password, parent=self)
@@ -541,7 +542,7 @@ class MemoryFillPanel(QWidget):
             password = pw
 
         self.swap_on_btn.setEnabled(False)
-        self.swap_on_btn.setText("Swap wird aktiviert \u2026")
+        self.swap_on_btn.setText(language_manager.tr("Swap wird aktiviert …"))
         self._append_log("Swap-Aktivierung laeuft (Hintergrund-Thread) \u2026")
 
         worker = _SwapOnWorker(password=password, parent=self)

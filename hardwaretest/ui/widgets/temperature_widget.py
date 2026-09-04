@@ -7,7 +7,7 @@ bietet ein aufklappbares Detail-Panel fuer alle Einzel-Cores.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QScrollArea,
     QToolButton,
     QVBoxLayout,
@@ -30,6 +31,7 @@ from hardwaretest.core.system_info import (
     read_edac_info,
     summarize_cpu_temperatures,
 )
+from hardwaretest.ui.i18n import language_manager
 
 
 # ---------------------------------------------------------------------------
@@ -69,10 +71,10 @@ def _temp_emoji(temp: float, high: float = 0.0, critical: float = 0.0) -> str:
 # Aufklappbares Core-Detail-Panel
 # ---------------------------------------------------------------------------
 class _CollapsibleCoreDetail(QWidget):
-    """Aufklappbarer Bereich, der alle Einzel-Core-Temperaturen zeigt."""
+    """Bounded, paginated view of individual core temperatures."""
 
-    # Spalten im Grid (beschraenkt die Breite bei vielen Cores)
-    COLUMNS = 6
+    COLUMNS = 4
+    PAGE_SIZE = 24
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -80,14 +82,15 @@ class _CollapsibleCoreDetail(QWidget):
         self._toggle_btn.setStyleSheet("QToolButton { border: none; }")
         self._toggle_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toggle_btn.setArrowType(Qt.ArrowType.RightArrow)
-        self._toggle_btn.setText("Alle Cores anzeigen")
+        self._toggle_btn.setText(language_manager.tr("Core-Details anzeigen"))
         self._toggle_btn.setCheckable(True)
         self._toggle_btn.toggled.connect(self._on_toggled)
 
         self._content = QScrollArea()
         self._content.setWidgetResizable(True)
         self._content.setVisible(False)
-        self._content.setMaximumHeight(200)
+        self._content.setMinimumHeight(100)
+        self._content.setMaximumHeight(165)
         self._content.setFrameShape(QFrame.Shape.NoFrame)
 
         self._grid_widget = QWidget()
@@ -97,13 +100,31 @@ class _CollapsibleCoreDetail(QWidget):
         self._grid_widget.setLayout(self._grid_layout)
         self._content.setWidget(self._grid_widget)
 
-        self._core_labels: Dict[str, QLabel] = {}
+        self._core_labels: List[QLabel] = []
+        self._temps: List[CpuTemperature] = []
+        self._page_index = 0
+
+        self._previous_btn = QPushButton(language_manager.tr("Vorherige"))
+        self._next_btn = QPushButton(language_manager.tr("Nächste"))
+        self._page_label = QLabel("")
+        self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._previous_btn.clicked.connect(lambda: self._change_page(-1))
+        self._next_btn.clicked.connect(lambda: self._change_page(1))
+        page_layout = QHBoxLayout()
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(self._previous_btn)
+        page_layout.addWidget(self._page_label, 1)
+        page_layout.addWidget(self._next_btn)
+        self._page_widget = QWidget()
+        self._page_widget.setLayout(page_layout)
+        self._page_widget.setVisible(False)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         layout.addWidget(self._toggle_btn)
         layout.addWidget(self._content)
+        layout.addWidget(self._page_widget)
         self.setLayout(layout)
 
     def _on_toggled(self, checked: bool) -> None:
@@ -111,37 +132,91 @@ class _CollapsibleCoreDetail(QWidget):
         self._toggle_btn.setArrowType(
             Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
         )
-        count = len(self._core_labels)
+        count = len(self._temps)
         if checked:
-            self._toggle_btn.setText(f"Alle Cores ausblenden ({count})")
+            self._toggle_btn.setText(language_manager.tr(
+                "Core-Details ausblenden ({count}, max. {page_size}/Seite)",
+                count=count,
+                page_size=self.PAGE_SIZE,
+            ))
         else:
-            self._toggle_btn.setText(f"Alle Cores anzeigen ({count})")
+            self._toggle_btn.setText(language_manager.tr(
+                "Core-Details anzeigen ({count}, max. {page_size}/Seite)",
+                count=count,
+                page_size=self.PAGE_SIZE,
+            ))
+        self._render_page()
 
     def update_cores(self, temps: List[CpuTemperature]) -> None:
-        """Aktualisiert die Core-Detail-Anzeige."""
-        # Labels erstellen/aktualisieren
-        for idx, t in enumerate(temps):
-            key = t.label or f"#{idx}"
-            if key not in self._core_labels:
-                lbl = QLabel()
-                lbl.setStyleSheet("font-size: 11px;")
-                row = len(self._core_labels) // self.COLUMNS
-                col = len(self._core_labels) % self.COLUMNS
-                self._grid_layout.addWidget(lbl, row, col)
-                self._core_labels[key] = lbl
-            lbl = self._core_labels[key]
-            emoji = _temp_emoji(t.current, t.high, t.critical)
-            lbl.setText(f"{emoji}{key}: {t.current:.0f}°C")
-            lbl.setStyleSheet(
-                f"font-size: 11px; {_temp_css(t.current, t.high, t.critical)}"
+        """Update data while keeping at most one page of labels visible."""
+        self._temps = list(temps)
+        last_page = max(0, (len(self._temps) - 1) // self.PAGE_SIZE)
+        self._page_index = min(self._page_index, last_page)
+        while len(self._core_labels) < min(self.PAGE_SIZE, len(self._temps)):
+            label = QLabel()
+            position = len(self._core_labels)
+            self._grid_layout.addWidget(
+                label, position // self.COLUMNS, position % self.COLUMNS
             )
+            self._core_labels.append(label)
+        self._render_page()
 
         # Toggle-Button Text aktualisieren
-        count = len(self._core_labels)
+        count = len(self._temps)
         if self._toggle_btn.isChecked():
-            self._toggle_btn.setText(f"Alle Cores ausblenden ({count})")
+            self._toggle_btn.setText(language_manager.tr(
+                "Core-Details ausblenden ({count}, max. {page_size}/Seite)",
+                count=count,
+                page_size=self.PAGE_SIZE,
+            ))
         else:
-            self._toggle_btn.setText(f"Alle Cores anzeigen ({count})")
+            self._toggle_btn.setText(language_manager.tr(
+                "Core-Details anzeigen ({count}, max. {page_size}/Seite)",
+                count=count,
+                page_size=self.PAGE_SIZE,
+            ))
+
+    def _change_page(self, offset: int) -> None:
+        page_count = max(1, (len(self._temps) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        self._page_index = max(0, min(page_count - 1, self._page_index + offset))
+        self._render_page()
+
+    def _render_page(self) -> None:
+        count = len(self._temps)
+        page_count = max(1, (count + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        start = self._page_index * self.PAGE_SIZE
+        visible = self._temps[start:start + self.PAGE_SIZE]
+        for position, label in enumerate(self._core_labels):
+            if position >= len(visible):
+                label.setVisible(False)
+                continue
+            temperature = visible[position]
+            name = temperature.label or f"Core {start + position}"
+            emoji = _temp_emoji(
+                temperature.current, temperature.high, temperature.critical
+            )
+            label.setText(f"{emoji}{name}: {temperature.current:.0f}°C")
+            label.setStyleSheet(
+                f"font-size: 11px; "
+                f"{_temp_css(temperature.current, temperature.high, temperature.critical)}"
+            )
+            label.setVisible(True)
+
+        # Den Seitenstatus auch bei kleinen CPUs anzeigen. So ist unmittelbar
+        # erkennbar, dass die Ansicht auf großen Systemen begrenzt bleibt.
+        self._page_widget.setVisible(bool(count) and self._toggle_btn.isChecked())
+        self._previous_btn.setEnabled(self._page_index > 0)
+        self._next_btn.setEnabled(self._page_index + 1 < page_count)
+        first = start + 1 if count else 0
+        last = min(start + len(visible), count)
+        self._page_label.setText(language_manager.tr(
+            "Seite {page}/{pages} – Cores {first}–{last} von {count}",
+            page=self._page_index + 1,
+            pages=page_count,
+            first=first,
+            last=last,
+            count=count,
+        ))
 
 
 # ---------------------------------------------------------------------------
@@ -224,14 +299,14 @@ class TemperatureWidget(QWidget):
 
     # ----- Qt events -----
 
-    def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+    def showEvent(self, event) -> None:
         """Startet das Leerlauf-Polling, sobald das Widget sichtbar wird."""
         super().showEvent(event)
         if not self._timer.isActive():
             self._timer.start()
         self._refresh()
 
-    def hideEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+    def hideEvent(self, event) -> None:
         """Pausiert das Polling, wenn das Widget nicht sichtbar ist."""
         super().hideEvent(event)
         self._timer.stop()
@@ -245,7 +320,7 @@ class TemperatureWidget(QWidget):
     def _update_temperature(self) -> None:
         raw_temps = read_cpu_temperatures()
         if not raw_temps:
-            self._temp_summary_label.setText("Keine Sensoren gefunden")
+            self._temp_summary_label.setText(language_manager.tr("Keine Sensoren gefunden"))
             self._temp_summary_label.setStyleSheet(_CSS_GREY)
             self._core_detail.setVisible(False)
             return
@@ -277,7 +352,7 @@ class TemperatureWidget(QWidget):
                 parts.append(f"krit {t.critical:.0f}°C")
             lines.append(" / ".join(parts))
 
-        self._temp_summary_label.setText("\n".join(lines))
+        self._temp_summary_label.setText(language_manager.tr("\n".join(lines)))
         if any_critical:
             self._temp_summary_label.setStyleSheet(_CSS_RED)
         elif max_temp > _WARN_TEMP:
@@ -350,7 +425,7 @@ class TemperatureWidget(QWidget):
         )
         lines.insert(0, header)
 
-        self._temp_summary_label.setText("<br>".join(lines))
+        self._temp_summary_label.setText(language_manager.tr("<br>".join(lines)))
 
         if any_critical:
             self._temp_summary_label.setStyleSheet(_CSS_RED)
@@ -370,7 +445,7 @@ class TemperatureWidget(QWidget):
     def _update_edac(self) -> None:
         edac = read_edac_info()
         text = format_edac_info(edac)
-        self._edac_label.setText(text)
+        self._edac_label.setText(language_manager.tr(text))
 
         if not edac.available:
             self._edac_label.setStyleSheet(_CSS_GREY)

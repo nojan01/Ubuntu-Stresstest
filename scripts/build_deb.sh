@@ -120,13 +120,14 @@ Architecture: $ARCH
 Maintainer: $MAINTAINER
 Installed-Size: $INSTALLED_SIZE_KB
 Depends: python3, python3-venv, python3-pip, stress-ng, fio, btop, libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libxkbcommon-x11-0, libgl1, libegl1
-Recommends: smartmontools, jq, curl, lshw, pciutils, polkitd | policykit-1
-Suggests: lm-sensors, edac-utils, nvme-cli
-Description: GUI für Hardware-Stresstests (CPU, RAM, Festplatten)
+Recommends: smartmontools, jq, curl, lshw, pciutils, iperf3, iputils-ping, nvme-cli, polkitd | policykit-1
+Suggests: lm-sensors, edac-utils, datacenter-gpu-manager-4-cuda12 | datacenter-gpu-manager-4-cuda13
+Description: GUI für Hardware-Stresstests (CPU, RAM, Festplatten, NVIDIA-GPUs)
  PySide6-Anwendung zum Starten von Hardware-Stresstests für CPU, RAM und
- Festplatten, optimiert für HPE ProLiant Server. Nutzt stress-ng, Prime95
- (mprime) und fio mit automatischer Pass/Fail-Erkennung, Temperatur- und
- ECC/EDAC-Überwachung sowie SMART-Diagnose.
+ Festplatten und optional NVIDIA-GPUs, optimiert für HPE ProLiant Server.
+ Nutzt stress-ng, Prime95 (mprime), fio und optional NVIDIA DCGM mit
+ automatischer Pass/Fail-Erkennung, Temperatur- und ECC/EDAC-Überwachung
+ sowie SMART-Diagnose.
  .
  Beim ersten Setup wird unter $INSTALL_DIR/.venv automatisch eine
  Python-Umgebung mit PySide6 angelegt. Start über den Befehl "hardwaretest"

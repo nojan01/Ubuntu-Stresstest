@@ -6,8 +6,6 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox,
-    QHBoxLayout,
     QLabel,
     QScrollArea,
     QVBoxLayout,
@@ -15,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from hardwaretest import __version__
+from hardwaretest.ui.i18n import language_manager
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +54,8 @@ Alle Tests laufen unter Linux und nutzen bewährte Werkzeuge wie
       physische Speicher getestet wird und nicht auf die Festplatte ausgewichen wird.</li>
   <li><b>Temperatur-Monitor:</b> Zeigt pro CPU-Socket eine Zusammenfassung
       (Min/Ø/Max). Bei Dual-Socket-Systemen mit vielen Cores wird die Anzeige
-      automatisch kompakt. Klicken Sie auf „Alle Cores anzeigen" für Details.</li>
+      automatisch kompakt. Die Detailansicht zeigt höchstens 24 Cores pro Seite;
+      weitere Cores sind über „Vorherige/Nächste“ erreichbar.</li>
   <li><b>ECC/EDAC:</b> Zeigt korrigierbare und unkorrigierbare Speicherfehler an
       (nur bei ECC-RAM und geladenem EDAC-Kernelmodul).</li>
   <li><b>Pass/Fail:</b> Nach dem Test wird automatisch anhand der Ausgabe und des
@@ -296,6 +296,60 @@ SCSI-Errors oder HPE RAID-Fehlern.
 
 <hr>
 
+<h2>Tab: Netzwerk</h2>
+<p>
+Der Tab zeigt alle erkannten Netzwerkadapter mit Verbindungsstatus, Treiber,
+PCI-Adresse, Linkgeschwindigkeit, Duplex, MTU, MAC sowie IPv4/IPv6-Adressen.
+Mit „Automatisch (Routing)“ bestimmt Linux den Übertragungsweg. Wird ein Adapter
+ausgewählt, bindet Hardwaretest Ping und iperf3 gezielt an diese Schnittstelle.
+</p>
+<ul>
+  <li><b>Ping</b> misst Paketverlust, minimale/mittlere/maximale Latenz und Jitter.</li>
+  <li><b>iperf3</b> misst TCP-Durchsatz und Retransmits; auf dem Ziel muss
+      <code>iperf3 -s</code> laufen.</li>
+  <li>Grenzwerte bestimmen unabhängig vom Programm-Exitcode, ob der Test bestanden ist.</li>
+</ul>
+
+<hr>
+
+<h2>Tab: NVIDIA GPU</h2>
+<p>
+Für Inventar- und Gesundheitsdaten muss ein geeigneter NVIDIA-Treiber installiert
+sein und <code>nvidia-smi</code> funktionieren. Aktive Tests benötigen zusätzlich
+NVIDIA DCGM 4 mit dem zur Treiberversion passenden Paket
+<code>datacenter-gpu-manager-4-cuda12</code> oder <code>-cuda13</code> sowie den
+gestarteten Dienst <code>nvidia-dcgm</code>. CUDA Toolkit, PyTorch und Docker sind
+nicht erforderlich. DCGM-Stufe 1 ist ein kurzer Bereitschaftstest; die Stufen 2–4
+prüfen zunehmend Speicher, PCIe, Rechenlast und weitere Hardwarefunktionen.
+Das Inventar zeigt außerdem aktuelle GPU-/SM-/Speichertakte sowie die aktuelle
+und maximal mögliche PCIe-Generation und Linkbreite. Die Liveüberwachung liest
+im gewählten Intervall Auslastung, Temperatur, VRAM, Leistungsaufnahme und Takte
+der markierten GPUs. Beim Start einer DCGM-Diagnose wird sie automatisch aktiviert.
+Die vollständige Installationsanleitung liegt unter
+<code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
+</p>
+
+<hr>
+
+<h2>Tab: Gesamttest</h2>
+<p>
+Der Gesamttest führt die markierten, nicht-destruktiven Prüfungen nacheinander aus.
+CPU- und RAM-Dauer, verwendeter RAM-Anteil, Netzwerkziel sowie optionale NVIDIA-
+und DCGM-Prüfungen lassen sich vor dem Start festlegen. „Bei erstem Fehler
+abbrechen“ beendet den Ablauf nach einem fehlgeschlagenen Schritt. Ein manueller
+Abbruch stoppt den aktuell laufenden Prozess und speichert die bis dahin
+vorliegenden Ergebnisse.
+</p>
+<p>
+Nach jedem Lauf entstehen ein Klartext- und ein eigenständiges HTML-Protokoll mit
+Zeitstempeln, Zusammenfassungen und Detailausgaben. Das HTML-Protokoll kann im
+Browser geöffnet und über die Druckfunktion als PDF gespeichert werden.
+Ping und iperf3 werden darin ausschließlich als Summenwerte protokolliert;
+Einzelpakete und sekündliche iperf3-Intervalle werden nicht übernommen.
+</p>
+
+<hr>
+
 <h2>Tab: Informationen</h2>
 <p>
 Zeigt Systeminformationen an: CPU, RAM, Mainboard, installierte Hardware.
@@ -370,7 +424,8 @@ using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>, and <b>fio
       memory is tested rather than swapping to disk.</li>
   <li><b>Temperature Monitor:</b> Shows a per-socket summary (Min/Avg/Max). On
       dual-socket systems with many cores the display automatically becomes
-      compact. Click "Show all cores" for details.</li>
+      compact. The detail view shows at most 24 cores per page; use
+      “Previous/Next” to browse additional cores.</li>
   <li><b>ECC/EDAC:</b> Displays correctable and uncorrectable memory errors
       (only with ECC RAM and the EDAC kernel module loaded).</li>
   <li><b>Pass/Fail:</b> After the test, the result is automatically evaluated
@@ -610,6 +665,58 @@ SCSI errors, or HPE RAID errors.
 
 <hr>
 
+<h2>Tab: Network</h2>
+<p>
+This tab lists all detected network adapters with link state, driver, PCI address,
+link speed, duplex, MTU, MAC and IPv4/IPv6 addresses. With “Automatic (routing)”,
+Linux chooses the route. Selecting an adapter binds ping and iperf3 to that interface.
+</p>
+<ul>
+  <li><b>Ping</b> measures packet loss, minimum/average/maximum latency and jitter.</li>
+  <li><b>iperf3</b> measures TCP throughput and retransmits; the target must run
+      <code>iperf3 -s</code>.</li>
+  <li>Configurable thresholds determine pass/fail independently of the process exit code.</li>
+</ul>
+
+<hr>
+
+<h2>Tab: NVIDIA GPU</h2>
+<p>
+An appropriate NVIDIA driver must be installed and <code>nvidia-smi</code> must
+work for inventory and health data. Active tests additionally require NVIDIA
+DCGM 4 using the package matching the driver, such as
+<code>datacenter-gpu-manager-4-cuda12</code> or <code>-cuda13</code>, with the
+<code>nvidia-dcgm</code> service running. CUDA Toolkit, PyTorch and Docker are not
+required. DCGM level 1 is a quick readiness check; levels 2–4 increasingly test
+memory, PCIe, compute load and other hardware functions.
+The inventory also shows current GPU/SM/memory clocks and the current and maximum
+PCIe generation and link width. Live monitoring samples utilization, temperature,
+VRAM, power and clocks of the selected GPUs at the configured interval. It starts
+automatically with a DCGM diagnostic.
+The complete installation guide is available at
+<code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
+</p>
+
+<hr>
+
+<h2>Tab: Test plan</h2>
+<p>
+The test plan runs the selected non-destructive checks sequentially. CPU and RAM
+duration, the memory share, network target, and optional NVIDIA/DCGM checks can
+be configured before starting. “Stop on first failure” ends the plan after a
+failed step. Manual cancellation stops the current process and saves all results
+collected up to that point.
+</p>
+<p>
+Each run creates a plain-text report and a self-contained HTML report with
+timestamps, summaries, and detailed output. Open the HTML report in a browser
+and use the print function to save it as PDF.
+Ping and iperf3 are recorded as aggregate values only; individual packets and
+per-second iperf3 intervals are not copied into the report.
+</p>
+
+<hr>
+
 <h2>Tab: Information</h2>
 <p>
 Shows system information: CPU, RAM, mainboard, installed hardware.
@@ -655,24 +762,17 @@ without warranty of any kind.
 # ---------------------------------------------------------------------------
 
 class HelpPanel(QWidget):
-    """Zweisprachiges Hilfe-Panel (Deutsch / English)."""
+    """Help content controlled by the application's global language choice."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
 
-        # Sprachwahl
-        self._lang_box = QComboBox()
-        self._lang_box.addItem("🇩🇪  Deutsch", userData="de")
-        self._lang_box.addItem("🇬🇧  English", userData="en")
-        self._lang_box.currentIndexChanged.connect(self._switch_language)
-
-        lang_row = QHBoxLayout()
-        lang_row.addWidget(QLabel("Sprache / Language:"))
-        lang_row.addWidget(self._lang_box)
-        lang_row.addStretch()
-
         # Scrollbarer Inhalt
         self._content = QLabel()
+        # The complete HTML document is switched by ``_switch_language``.
+        # It must not be treated as an ordinary, one-line widget caption by
+        # the generic UI retranslator in MainWindow.
+        self._content._hardwaretest_skip_tree = True
         self._content.setWordWrap(True)
         self._content.setTextFormat(Qt.TextFormat.RichText)
         self._content.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -687,15 +787,14 @@ class HelpPanel(QWidget):
         scroll.setWidget(self._content)
 
         layout = QVBoxLayout()
-        layout.addLayout(lang_row)
         layout.addWidget(scroll)
         self.setLayout(layout)
 
-        # Standard: Deutsch
+        language_manager.language_changed.connect(self._switch_language)
         self._switch_language()
 
-    def _switch_language(self) -> None:
-        lang = self._lang_box.currentData() or "de"
+    def _switch_language(self, _language: str | None = None) -> None:
+        lang = language_manager.language
         if lang == "en":
             self._content.setText(_HELP_EN.replace("__VERSION__", __version__))
         else:

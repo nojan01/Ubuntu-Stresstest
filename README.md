@@ -92,7 +92,20 @@ sudo bash scripts/install_hardwaretest.sh --yes
 - **Disk (Destruktiv)** – Write+Verify-Tests mit optimiertem `verify_backlog` für große RAID-Volumes. Deutliche Sicherheitsabfragen.
 - **I/O-Engine** – Automatische Erkennung von `io_uring` (NVMe auf Gen10+) mit Fallback auf `libaio`.
 - **SMART-Info** – Gesundheitsstatus, Temperatur, Betriebsstunden, Reallocated/Pending Sectors via `smartctl`.
+- **NVMe-Diagnose** – Modell, Seriennummer, Firmware und NVMe-SMART-Werte; kurze oder erweiterte Selbsttests mit Protokollauswertung als bestanden/fehlgeschlagen.
+- **NVMe-Lesetests** – Nicht-destruktiver sequenzieller oder zufälliger Lese-Benchmark sowie ein vollständiger Lese-Test über jedes Block des ausgewählten NVMe-Namespace.
+- **NVIDIA-GPU-Diagnose** – Erkennt mehrere NVIDIA-GPUs, zeigt Treiber, CUDA-Kompatibilität, VRAM, Temperatur, Leistung, ECC, Taktraten und PCIe-Anbindung. Eine Liveüberwachung erfasst Auslastung, Temperatur, Leistung, VRAM und Taktraten auch während optionaler NVIDIA-DCGM-Diagnosen.
+- **Netzwerkdiagnose** – Zeigt Adapter, Treiber, PCI-Adresse, Linkstatus/-geschwindigkeit, Duplex, MTU und IP-Adressen. Ping ermittelt Paketverlust, Latenz und Jitter; iperf3 misst Durchsatz und Retransmits. Alle Messwerte können gegen Pass/Fail-Grenzen geprüft werden.
+- **Gesamttestplan** – Führt frei auswählbare CPU-, RAM-, NVMe-, Netzwerk- und NVIDIA/DCGM-Prüfungen automatisch nacheinander aus. Jeder Lauf erzeugt ein Klartext- und ein druckoptimiertes HTML-Protokoll; der Browser kann dieses zusätzlich als PDF speichern. Netzwerk-Dauerläufe werden kompakt mit Summenwerten statt einzelner Ping-Pakete oder iperf3-Intervalle protokolliert.
 - **HPE RAID-Info** – SmartArray-Controller-Status via `ssacli` / `hpssacli`.
+
+Für NVIDIA-Inventardaten muss ein geeigneter NVIDIA-Treiber installiert sein und
+`nvidia-smi` funktionieren. Aktive GPU-Diagnosen benötigen zusätzlich NVIDIA DCGM
+(`datacenter-gpu-manager-4-cuda12` bzw. `-cuda13`, passend zur von `nvidia-smi`
+gemeldeten CUDA-Hauptversion) und den gestarteten Dienst `nvidia-dcgm`. CUDA Toolkit,
+PyTorch und Docker werden nicht benötigt.
+Eine vollständige Installations- und Prüfanleitung steht in
+[`docs/NVIDIA_GPU.md`](docs/NVIDIA_GPU.md).
 
 ### Monitoring & Diagnose
 - **Temperatur-Widget** – Pro-Socket-Zusammenfassung (Min/Ø/Max), kompakte Ansicht ab 8+ Sensoren, optimiert für Dual-Socket mit 90+ Cores.

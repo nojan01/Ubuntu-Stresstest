@@ -476,7 +476,7 @@ def run_cycles(
 # CLI
 # ---------------------------------------------------------------------------
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Zyklischer RAM-Fuelltest: vollschreiben, verifizieren, "
                     "freigeben, wiederholen.",
@@ -507,7 +507,7 @@ def main() -> int:
         help="Pause zwischen den Zyklen in Sekunden, waehrend der der "
              "Speicher freigegeben bleibt (Standard: 3). 0 = keine Pause.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         return run_cycles(
             duration_seconds=args.duration,

@@ -45,6 +45,7 @@ class NvmeSelfTestStatus:
     active: bool
     completion_percent: Optional[int] = None
     result_code: Optional[int] = None
+    raw_log: str = ""
 
     @property
     def passed(self) -> Optional[bool]:
@@ -191,6 +192,7 @@ def parse_self_test_status(raw_json: str) -> NvmeSelfTestStatus:
         active=operation != 0,
         completion_percent=completion,
         result_code=_latest_self_test_result(data),
+        raw_log=json.dumps(data, ensure_ascii=False, indent=2),
     )
 
 

@@ -38,14 +38,20 @@ class MemoryFillRunner(BaseTestRunner):
         self.pause_seconds = pause_seconds
 
     def build_command(self) -> List[str]:
-        script = str(Path(__file__).with_name("memory_fill_script.py"))
         # Skript-Dauer leicht unter Runner-Watchdog setzen, damit das Script
         # geordnet beendet (Freigabe, Zusammenfassung) bevor der Watchdog
         # SIGTERM sendet. Fallback: bei sehr kurzen Tests gleicher Wert.
         duration = self.params.duration_seconds
         script_duration = duration - 5 if duration > 10 else duration
-        cmd = [
-            sys.executable, script,
+        if getattr(sys, "frozen", False):
+            # Im PyInstaller-Build ist sys.executable das Hardwaretest-
+            # Programm und kein allgemeiner Python-Interpreter. Der interne
+            # Worker-Schalter startet den RAM-Test im gleichen Bundle.
+            cmd = [sys.executable, "--memory-fill-worker"]
+        else:
+            script = str(Path(__file__).with_name("memory_fill_script.py"))
+            cmd = [sys.executable, script]
+        cmd += [
             "--duration", str(script_duration),
             "--reserve-mb", str(self.reserve_mb),
             "--chunk-mb", str(self.chunk_mb),

@@ -1,0 +1,2 @@
+# Nur auf dem Build-System erforderlich; nicht auf dem Zielsystem.
+pyinstaller==6.22.0

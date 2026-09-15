@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardwaretest.core.paths import resource_path
 from hardwaretest.core.system_info import SystemInfo, read_system_info, is_running_as_root
 from hardwaretest.ui.report_html import json_to_html_report
 from hardwaretest.ui.utils import launch_command_in_terminal
@@ -128,7 +129,7 @@ class InfoPanel(QWidget):
         self._launch_report_script(target)
 
     def _launch_report_script(self, target: Path) -> None:
-        script_path = Path(__file__).resolve().parents[3] / "scripts" / "collect_system_report.sh"
+        script_path = resource_path("scripts", "collect_system_report.sh")
         if not script_path.exists():
             QMessageBox.critical(
                 self,

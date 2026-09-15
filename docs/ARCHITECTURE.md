@@ -1,5 +1,21 @@
 # Architekturüberblick
 
+## Portable Auslieferung
+
+Für DEB und AppImage bündelt PyInstaller den Python-Interpreter, PySide6 und die
+Python-Module in einem eigenständigen Programmverzeichnis. Zur Laufzeit werden
+Ressourcen über `hardwaretest.core.paths.resource_path()` aufgelöst; die Funktion
+arbeitet sowohl im Quellbaum als auch im entpackten PyInstaller-Verzeichnis.
+Das Zielsystem benötigt deshalb weder eine Python-venv noch `pip` oder eine
+bestimmte System-Python-Version.
+
+Systemnahe Testprogramme und Bibliotheken bleiben externe Paketabhängigkeiten.
+Beim DEB installiert APT diese aus den Paketquellen der jeweiligen Ubuntu-
+Version. Beim distributionsübergreifenden AppImage stellt der Administrator sie
+über die Paketverwaltung der Ziel-Distribution bereit. Dadurch bleiben Werkzeuge
+wie `fio`, `stress-ng`, `nvme-cli` und die NVIDIA-Treiber passend zum Kernel und
+zur Distribution aktualisierbar.
+
 ```
 hardwaretest/
 ├── core/          # Systeminfos, generische Runner-Abstraktionen

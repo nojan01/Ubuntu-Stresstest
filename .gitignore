@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.build-tools/
 .eggs/
 
 # Virtual Environment
@@ -55,4 +56,5 @@ Hardwaretest-v*.zip
 
 # Debian-Paket (per scripts/build_deb.sh erzeugt)
 hardwaretest_*.deb
-
+Hardwaretest-*.AppImage
+Hardwaretest-installieren.sh

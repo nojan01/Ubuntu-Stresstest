@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import os
 import shutil
 from typing import Callable, Optional
@@ -306,6 +307,10 @@ class NvmePanel(QWidget):
         if not device:
             return
         self._set_runtime_text(self.status, "NVMe-Selbsttest-Protokoll wird gelesen …")
+        self._set_runtime_text(self.result, "⌛ NVMe-Selbsttest-Protokoll wird gelesen …")
+        self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.self_test_progress.setRange(0, 0)
+        self.self_test_progress.setVisible(True)
         self._set_device_actions_enabled(False)
         self._run_worker(
             lambda: read_nvme_self_test_status(device, self._privilege_prefix()),
@@ -372,6 +377,7 @@ class NvmePanel(QWidget):
     def _show_self_test_status(self, value: object) -> None:
         if not isinstance(value, NvmeSelfTestStatus):
             return
+        self._render_self_test_log(value)
         if value.active:
             self._set_self_test_active(value.completion_percent)
         else:
@@ -379,6 +385,51 @@ class NvmePanel(QWidget):
             self._status_timer.stop()
             self.self_test_progress.setVisible(False)
             self._show_self_test_result(value)
+
+    def _render_self_test_log(self, status: NvmeSelfTestStatus) -> None:
+        """Show a visible, durable result instead of only changing a label."""
+        device = self._selected_device()
+        lines = [
+            language_manager.tr("NVMe-Selbsttest-Protokoll"),
+            language_manager.tr("Gerät: {device}", device=device),
+            language_manager.tr(
+                "Gelesen: {timestamp}",
+                timestamp=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
+            ),
+            "",
+        ]
+        if status.active:
+            lines.append(language_manager.tr("Aktueller Selbsttest: läuft"))
+            if status.completion_percent is None:
+                lines.append(language_manager.tr("Fortschritt: vom Laufwerk nicht gemeldet"))
+            else:
+                lines.append(
+                    language_manager.tr(
+                        "Fortschritt: {progress}%", progress=status.completion_percent
+                    )
+                )
+        else:
+            lines.append(language_manager.tr("Aktueller Selbsttest: keiner"))
+
+        if status.passed is True:
+            lines.append(language_manager.tr("Letztes Ergebnis: BESTANDEN (Code 0)"))
+        elif status.passed is False:
+            lines.append(
+                language_manager.tr(
+                    "Letztes Ergebnis: FEHLGESCHLAGEN (Code {code})",
+                    code=status.result_code,
+                )
+            )
+        else:
+            lines.append(language_manager.tr("Letztes Ergebnis: nicht vorhanden oder nicht auswertbar"))
+        lines.extend(
+            [
+                "",
+                language_manager.tr("Vollständige Protokolldaten (nvme-cli):"),
+                status.raw_log or language_manager.tr("Keine Protokolldaten geliefert."),
+            ]
+        )
+        self.details.setPlainText("\n".join(lines))
 
     def _start_benchmark(self) -> None:
         """Start a timed, raw-device NVMe read benchmark."""
@@ -580,6 +631,8 @@ class NvmePanel(QWidget):
     def _worker_failed(self, message: str, show_failure: bool = True) -> None:
         self._worker = None
         self._set_device_actions_enabled(self.device_box.count() > 0)
+        if not self._self_test_active:
+            self.self_test_progress.setVisible(False)
         if is_self_test_in_progress_error(message):
             self._set_self_test_active(None)
             return

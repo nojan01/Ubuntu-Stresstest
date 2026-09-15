@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 from typing import Dict, List, Optional
 
+from hardwaretest.core.paths import resource_path
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 
 
@@ -17,9 +18,8 @@ def _default_mprime_path() -> str:
     2. ``~/Prime95/mprime``                 (Legacy-Pfad)
     3. ``mprime`` im System-PATH
     """
-    # 1. Im Projektverzeichnis (vendor/prime95/)
-    project_root = Path(__file__).resolve().parent.parent.parent
-    bundled = project_root / "vendor" / "prime95" / "mprime"
+    # 1. Im Projekt beziehungsweise im gebündelten PyInstaller-Verzeichnis.
+    bundled = resource_path("vendor", "prime95", "mprime")
     if bundled.is_file():
         return str(bundled)
 

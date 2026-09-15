@@ -1,9 +1,9 @@
 # Hardwaretest – Installationsanleitung
 
 Diese Anleitung beschreibt die Installation der **Hardwaretest GUI** auf
-Ubuntu/Debian-Derivaten (Ubuntu 22.04 / 24.04 / 26.04, FunOS 24.04.4). Das beigelegte
-Installationsscript erledigt alle Schritte automatisch und fragt vor jeder
-Aktion nach.
+Ubuntu/Debian-Derivaten. Die empfohlene Auslieferung ist eine einzelne DEB-Datei
+mit eingebettetem Python und PySide6. Die weiter unten beschriebene ZIP-Installation
+ist eine ältere Alternative für den Quellcode.
 
 ---
 
@@ -14,34 +14,36 @@ Aktion nach.
 | Betriebssystem        | Ubuntu 22.04 / 24.04 / 26.04, Debian, FunOS 24.04.4 |
 | Architektur           | x86_64 (64-Bit)                                     |
 | Rechte                | `sudo` (für APT-Pakete und Systemintegration)       |
-| Python                | 3.10 – 3.14                                          |
+| Python                | Im DEB eingebettet; keine separate Installation nötig |
 | Internetverbindung    | Nur für APT-Pakete erforderlich                     |
-| Plattenplatz          | ca. 250 MB (inkl. venv und Prime95)                 |
+| Plattenplatz          | ca. 250 MB für die App, zusätzlich Systemabhängigkeiten |
 
 > **Hinweis:** Die `mprime`-Binary (Prime95) ist im Zip enthalten und muss
 > **nicht** nachgeladen werden. Eine Internetverbindung ist nur nötig, falls
-> APT-Pakete (z. B. `stress-ng`, `fio`, `python3-venv`) noch fehlen.
+> Systempakete (z. B. `stress-ng`, `fio`) noch fehlen.
 
 ---
 
 ## 2. Installation per .deb-Paket (empfohlen)
 
-Am einfachsten ist die Installation über das fertige Debian-Paket. APT zieht
-dabei alle System-Abhängigkeiten (stress-ng, fio, libxcb-*, python3-venv …)
-automatisch mit:
+1. `hardwaretest_0.2.25_amd64.deb` herunterladen.
+2. Die Datei im Dateimanager doppelt anklicken.
+3. Im Paketinstallationsprogramm **Installieren** wählen und das
+   Administratorkennwort eingeben.
+4. **Hardwaretest** im Anwendungsmenü starten.
 
-```bash
-sudo apt install ./hardwaretest_0.2.1_amd64.deb
-```
+Linux Mint bringt einen grafischen Paketinstaller mit. Unter Ubuntu benötigt
+dieser Ablauf einen installierten grafischen Installer für lokale DEB-Dateien.
+Ein zusätzliches Hardwaretest-Skript wird nicht benötigt.
 
-Beim Setup wird unter `/opt/hardwaretest/.venv` automatisch eine Python-Umgebung
-mit PySide6 angelegt, der Befehl `hardwaretest` sowie ein Desktop-Eintrag
-eingerichtet. Danach Start über `hardwaretest` oder das Anwendungsmenü.
+Die Paketverwaltung installiert benötigte Systempakete wie stress-ng und fio
+aus den eingerichteten Paketquellen. Python und PySide6 sind im DEB enthalten.
+Der Befehl `hardwaretest` und ein Desktop-Eintrag werden eingerichtet.
 
 Deinstallation:
 
 ```bash
-sudo apt remove hardwaretest      # entfernt App + venv
+sudo apt remove hardwaretest
 ```
 
 > Das `.deb` wird aus dem Repo mit `bash scripts/build_deb.sh` erzeugt

@@ -11,24 +11,51 @@ Lizenztext befindet sich in der Datei `LICENSE`.
 
 ### Variante A – Debian-Paket (empfohlen)
 
-```bash
-sudo apt install ./hardwaretest_0.2.1_amd64.deb
-```
+Für die Installation wird nur die Datei `hardwaretest_0.2.25_amd64.deb` benötigt.
 
-APT installiert alle System-Abhängigkeiten automatisch. Das Setup legt unter
-`/opt/hardwaretest/.venv` eine Python-Umgebung mit PySide6 an und richtet den
-Befehl `hardwaretest` sowie einen Desktop-Eintrag ein. Deinstallation mit
-`sudo apt remove hardwaretest`.
+1. Die DEB-Datei herunterladen.
+2. Im Dateimanager doppelt anklicken und im Paketinstallationsprogramm
+   **Installieren** wählen.
+3. Das Administratorkennwort eingeben. Danach **Hardwaretest** im Anwendungsmenü starten.
+
+Linux Mint hat dafür bereits ein Paketinstallationsprogramm. Unter Ubuntu muss
+ein grafischer Installer für lokale DEB-Dateien vorhanden sein. Falls sich beim
+Doppelklick ein Archivprogramm öffnet, über **Öffnen mit** den Paketinstaller wählen,
+sofern er installiert ist.
+
+APT installiert die nativen System-Abhängigkeiten wie `stress-ng`, `fio` und
+`btop` automatisch aus den eingerichteten Ubuntu-Paketquellen. Python, PySide6
+und die Python-Module sind bereits im Programm enthalten: Auf dem Zielsystem
+werden weder eine venv angelegt noch `pip` oder eine bestimmte System-Python-
+Version benötigt. Das Paket richtet den Befehl `hardwaretest` und einen
+Desktop-Eintrag ein. Deinstallation mit `sudo apt remove hardwaretest`.
+
+Ein zusätzliches Installationsskript gehört nicht zur DEB-Auslieferung.
 
 > Das Paket wird aus dem Repo mit `bash scripts/build_deb.sh` erzeugt
-> (benötigt `dpkg-dev`).
+> (benötigt `dpkg-dev`, PyInstaller und die Entwicklungsumgebung nur auf dem
+> Build-System).
 
-### Variante B – Zip + Installationsscript
+### Variante B – AppImage
+
+Das AppImage enthält ebenfalls Python, PySide6 und alle Python-Module. Es kann
+ohne Installation einer Python-Laufzeit gestartet werden:
+
+```bash
+chmod +x Hardwaretest-0.2.25-x86_64.AppImage
+./Hardwaretest-0.2.25-x86_64.AppImage
+```
+
+Native Diagnoseprogramme müssen auf der jeweiligen Distribution weiterhin über
+deren Paketverwaltung installiert werden. Das AppImage wird mit
+`bash scripts/build_appimage.sh` erzeugt.
+
+### Variante C – Zip + Installationsscript (Legacy)
 
 #### 1. Zip entpacken nach `/opt/hardwaretest`
 
 ```bash
-sudo unzip Hardwaretest-v0.2.1.zip -d /opt/hardwaretest
+sudo unzip Hardwaretest-v0.2.25.zip -d /opt/hardwaretest
 ```
 
 ### 2. In das Verzeichnis wechseln
@@ -51,7 +78,7 @@ Das Script durchläuft **6 Schritte** und fragt vor jeder Aktion nach:
 |---|---|
 | **1/6** | **APT-Pakete prüfen** – zeigt fehlende Pflicht- und optionale Pakete an, installiert auf Bestätigung |
 | **2/6** | **Prime95 (mprime)** – prüft ob vorhanden, bietet Download an |
-| **3/6** | **Python venv** – erstellt `.venv/`, installiert PySide6, psutil etc. |
+| **3/6** | **Python venv** – nur diese Legacy-Variante erstellt `.venv/` und installiert PySide6, psutil etc. |
 | **4/6** | **CLI-Starter** – legt `/usr/local/bin/hardwaretest` an |
 | **5/6** | **Desktop-Starter** – `.desktop`-Datei + SVG-Icon + Verknüpfung auf dem Desktop |
 | **6/6** | **Zusammenfassung** mit HPE ssacli-Hinweis |
@@ -137,6 +164,24 @@ python -m hardwaretest
 ```
 
 Zusätzlich empfohlen: Prime95 (`~/Prime95/mprime`), btop, lm-sensors, edac-utils, nvme-cli. Auf HPE ProLiant: `ssacli` aus dem [HPE SDR Repository](https://downloads.linux.hpe.com/SDR/project/mcp/).
+
+## Portabler Build ohne Python auf dem Zielsystem
+
+Nur der Build-Rechner benötigt Python, eine venv und PyInstaller. Ein fertiges
+DEB oder AppImage bringt seine eigene Python-Laufzeit und PySide6 mit. Die
+Build-Werkzeuge werden einmalig mit `requirements-build.txt` ergänzt:
+
+```bash
+source .venv/bin/activate
+python -m pip install -r requirements-build.txt -e .
+bash scripts/build_deb.sh
+bash scripts/build_appimage.sh
+```
+
+Der eingebaute Test `hardwaretest --self-check` zeigt die eingebetteten
+Versionen und prüft, ob die wichtigen Ressourcen im Programmbündel vorhanden
+sind. Native Hardwarewerkzeuge bleiben bewusst APT-/Distributionspakete, damit
+Treiber und systemnahe Programme zur jeweiligen Linux-Version passen.
 
 ## Tests & Code-Qualität
 

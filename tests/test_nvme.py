@@ -45,6 +45,7 @@ def test_self_test_status_parses_current_operation_and_completion():
     }))
     assert status.active
     assert status.completion_percent == 37
+    assert '"Current Device Self-Test Operation": "0x2"' in status.raw_log
 
 
 def test_self_test_status_reads_completed_result_from_log_entry():
@@ -55,6 +56,7 @@ def test_self_test_status_reads_completed_result_from_log_entry():
     assert not status.active
     assert status.result_code == 0
     assert status.passed is True
+    assert '"self_test_results"' in status.raw_log
 
 
 def test_self_test_in_progress_message_variants_are_detected():

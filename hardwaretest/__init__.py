@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from importlib import metadata
-
-try:
-    __version__ = metadata.version("hardwaretest-gui")
-except metadata.PackageNotFoundError:  # pragma: no cover - läuft aus Quelltext ohne Installation
-    __version__ = "0.2.22"
+# Diese Angabe bleibt absichtlich unabhängig von installierten Paket-Metadaten.
+# Sonst könnte eine ältere Build-venv ihre Versionsnummer in das portable
+# PyInstaller-Programm übertragen.
+__version__ = "0.2.25"
 
 __all__ = ["__version__"]

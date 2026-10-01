@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QRect
+from PySide6.QtCore import QRect, QThread
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget
 
@@ -24,6 +24,9 @@ from hardwaretest.ui.widgets.network_panel import NetworkPanel
 from hardwaretest.ui.widgets.nvme_panel import NvmePanel
 from hardwaretest.ui.widgets.nvidia_panel import NvidiaPanel
 from hardwaretest.ui.widgets.test_plan_panel import TestPlanPanel
+from hardwaretest.ui.widgets.filesystem_panel import FilesystemPanel
+from hardwaretest.ui.widgets.monitoring_panel import MonitoringPanel
+from hardwaretest.ui.widgets.zfs_panel import ZfsPanel
 from hardwaretest.ui.i18n import language_manager
 
 
@@ -68,6 +71,30 @@ class MainWindow(QMainWindow):
         test_plan_panel = TestPlanPanel()
         self._tabs.addTab(test_plan_panel, "Gesamttest")
 
+        self.filesystem_panel = FilesystemPanel()
+        self.zfs_panel = ZfsPanel()
+        filesystem_tabs = QTabWidget()
+        filesystem_tabs.addTab(self.filesystem_panel, "Partitionen")
+        filesystem_tabs.addTab(self.zfs_panel, "ZFS-Pools")
+        self._tabs.addTab(filesystem_tabs, "Dateisystem")
+        self.monitoring_panel = MonitoringPanel()
+        self._tabs.addTab(self.monitoring_panel, "Langzeitmonitoring")
+        self._test_panels = [ram_panel, prime_panel, mem_ctrl_panel, mem_fill_panel,
+                             file_disk_panel, device_disk_panel, destructive_disk_panel,
+                             nvme_panel, nvidia_panel, network_panel, test_plan_panel]
+        self._stop_callbacks = [panel.stop_test for panel in self._test_panels[:7]] + [
+            nvme_panel._stop_io_test, nvidia_panel._stop_diagnostic,
+            network_panel._stop, test_plan_panel._stop,
+        ]
+        self._filesystem_active = False
+        self._temperature_lock = False
+        self.filesystem_panel.can_start = self._can_check_filesystem
+        self.zfs_panel.can_start = self._can_check_filesystem
+        self.filesystem_panel.busy_changed.connect(self._filesystem_busy)
+        self.zfs_panel.busy_changed.connect(self._filesystem_busy)
+        self.monitoring_panel.safety_stop.connect(self._safety_stop)
+        self.monitoring_panel.guard_released.connect(self._release_temperature_lock)
+
         info_panel = InfoPanel(compact_mode=compact_mode)
         self._tabs.addTab(info_panel, "Informationen")
 
@@ -79,6 +106,58 @@ class MainWindow(QMainWindow):
         language_manager.language_changed.connect(self._retranslate)
         self._retranslate()
         self._apply_initial_geometry(compact_mode, available_geom)
+
+    def _can_check_filesystem(self) -> bool:
+        if self.filesystem_panel.is_busy() or self.zfs_panel.is_busy() or self._temperature_lock:
+            return False
+        for panel in self._test_panels:
+            for name in ("runner", "_runner", "_io_runner"):
+                runner = getattr(panel, name, None)
+                if runner is not None and runner.is_running():
+                    return False
+            if getattr(panel, "_self_test_active", False):
+                return False
+            if any(thread.isRunning() for thread in panel.findChildren(QThread)):
+                return False
+        return True
+
+    def _filesystem_busy(self, busy: bool) -> None:
+        self._filesystem_active = self.filesystem_panel.is_busy() or self.zfs_panel.is_busy()
+        self.filesystem_panel.setEnabled(not self.zfs_panel.is_busy())
+        self.zfs_panel.setEnabled(not self.filesystem_panel.is_busy())
+        self._update_test_lock()
+
+    def _update_test_lock(self) -> None:
+        for panel in self._test_panels:
+            panel.setEnabled(not (self._filesystem_active or self._temperature_lock))
+
+    def _safety_stop(self) -> None:
+        self._temperature_lock = True
+        self._update_test_lock()
+        for callback in self._stop_callbacks:
+            callback()
+        # Firmware NVMe self-tests cannot be stopped by killing a user process;
+        # filesystem repair must never be interrupted by this thermal guard.
+
+    def _release_temperature_lock(self) -> None:
+        self._temperature_lock = False
+        self._update_test_lock()
+
+    def closeEvent(self, event) -> None:
+        if self.filesystem_panel.is_busy() or self.zfs_panel.is_busy() or self.monitoring_panel.is_busy():
+            QMessageBox.information(self, language_manager.tr("Aktion läuft"), language_manager.tr(
+                "Bitte das Monitoring zuerst stoppen und laufende Dateisystem-Aktionen abschließen lassen."
+            ))
+            event.ignore()
+            return
+        # Test plan/scan workers must not be destroyed while their thread runs.
+        if any(thread.isRunning() for thread in self.findChildren(QThread)):
+            QMessageBox.information(self, language_manager.tr("Aktion läuft"), language_manager.tr(
+                "Bitte laufende Tests beenden und warten, bis die Hintergrundaktion abgeschlossen ist."
+            ))
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _add_menus(self) -> None:
         """Add the global language selector and the application notice."""

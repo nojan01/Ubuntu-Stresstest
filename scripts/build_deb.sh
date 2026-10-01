@@ -74,9 +74,9 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
 Installed-Size: $INSTALLED_SIZE_KB
-Depends: stress-ng, fio, btop, libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libxkbcommon-x11-0, libgl1, libegl1
+Depends: stress-ng, fio, btop, e2fsprogs, util-linux, pkexec, libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libxkbcommon-x11-0, libgl1, libegl1
 Recommends: smartmontools, jq, curl, lshw, pciutils, iperf3, iputils-ping, nvme-cli, polkitd | policykit-1
-Suggests: lm-sensors, edac-utils, datacenter-gpu-manager-4-cuda12 | datacenter-gpu-manager-4-cuda13
+Suggests: lm-sensors, edac-utils, zfsutils-linux, datacenter-gpu-manager-4-cuda12 | datacenter-gpu-manager-4-cuda13
 Description: Eigenständige GUI für Hardware-Stresstests
  Enthält Python, PySide6 und alle Python-Module bereits vollständig. Bei der
  Installation werden weder eine Python-venv angelegt noch Pakete mit pip aus

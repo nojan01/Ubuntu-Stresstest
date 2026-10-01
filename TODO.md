@@ -12,7 +12,8 @@ entspricht der derzeitigen Priorität.
 - Ping-, Latenz-, Jitter- und Paketverlustmessung – umgesetzt
 - Pass/Fail-Grenzwerte für Paketverlust, Latenz, Jitter und Durchsatz – umgesetzt
 - Adapterauswahl und Bindung des Tests an eine konkrete Schnittstelle – umgesetzt
-- Dauerlauf mit Protokoll und Pass/Fail-Grenzwerten
+- Wiederholte Ping-/iperf3-Läufe im Gesamttestplan mit kompakter Zusammenfassung und CSV – umgesetzt in 0.2.29.
+- Frei konfigurierbare Netzwerk-Grenzwerte auch im Gesamttestplan – umgesetzt in 0.2.30.
 - Übersicht der Netzwerkadapter, Link-Geschwindigkeit und Treiber – umgesetzt
 
 ### NVMe-Test und -Diagnose
@@ -20,8 +21,9 @@ entspricht der derzeitigen Priorität.
 - Status: umgesetzt: Erkennung mit Modell, Seriennummer und Firmware,
   SMART-/Gesundheitsdaten, Selbsttest-Protokoll mit bestanden/fehlgeschlagen,
   zeitbegrenzter Lese-Benchmark sowie vollständiger nicht-destruktiver Lese-Test.
-- Noch offen: Integration der Ergebnisse in den gemeinsamen Langzeit- und
-  Systemreport.
+- Vollständige NVMe-Lesetests mit Auswahl und SMART-Vergleich vorher/nachher im
+  Gesamttestplan und gemeinsamen Text-/HTML-/CSV-Bericht – umgesetzt in 0.2.29.
+- Noch offen: zeitlicher SMART-Verlauf auch im eigenständigen Langzeitmonitoring.
 
 ### GPU-Test – NVIDIA für KI, AI und Virtual Desktop
 
@@ -46,19 +48,37 @@ entspricht der derzeitigen Priorität.
 - Abbruch beim ersten fehlgeschlagenen Teiltest oder manueller Abbruch – umgesetzt
 - Zusammenfassender Klartext- und HTML-Report mit Ergebnissen, Details und
   Zeitstempeln – umgesetzt
-- Noch offen: gemeinsamer Grenzwertwächter für kritische Temperaturen und die
-  Einbindung vollständiger Laufwerks-Lesetests in mehrstündige Testpläne
+- Begleitmonitoring mit Temperatur-/ECC-Sicherheitsabbruch und CSV-/Text-/HTML-Bericht – umgesetzt in 0.2.26
+- Vollständige NVMe-Lesetests sowie 1–10.000 Wiederholungen des gesamten Plans mit
+  kompaktem Bericht und fortlaufender CSV – umgesetzt in 0.2.29.
+- Noch offen: SATA/SAS-/USB-Lesetests im Gesamttestplan und zeitgesteuerte Endzeit.
 
 ### Langzeitmonitoring
 
-- Zeitverlauf für Temperatur, Lüfter, ECC/EDAC, SMART und GPU-Werte
-- Erfassung relevanter Kernel- und Hardwarefehler
-- Konfigurierbare Messintervalle und Laufzeit
-- Export als CSV und Einbindung in den HTML-Systemreport
+- Status: erste Ausbaustufe umgesetzt in 0.2.26 (Temperaturen, Lüfter, ECC/EDAC,
+  ext4-Fehlerzähler, NVIDIA-Messwerte, neue Kernelmeldungen, CSV und kompakte
+  Text-/HTML-Berichte; im Gesamttestplan integriert).
+- Individuelle, gespeicherte Temperaturgrenzen sowie kompakte Live-/HTML-Diagramme
+  mit Min/Max/Mittelwert und Messlücken – umgesetzt in 0.2.30, auch im Begleitmonitoring.
+- Noch offen: zeitlicher SMART-Verlauf, Grenzwerte für weitere Messgrößen und
+  zusätzliche Diagrammauswahl im HTML-Bericht.
+
+### Dateisystemprüfung und Reparatur
+
+- Offline-Prüfung ext2/ext3/ext4 und separat bestätigte konservative Reparatur – umgesetzt in 0.2.26.
+- Eingehängte Dateisysteme bleiben gesperrt; Live-USB-Hinweise und erneute
+  Geräte-/Mount-Prüfung vor dem privilegierten Start – umgesetzt.
+- Noch offen: separat abgesicherte Prüfpfade für XFS, Btrfs, NTFS und exFAT.
+- ZFS-Poolstatus, geführter Scrub mit Fortschritt/Stop und Text-/HTML-/CSV-Protokoll – umgesetzt in 0.2.28.
+- Noch offen: echte ZFS-Pool-Validierung auf Ubuntu 24.04/26.04 und Einbindung
+  von ZFS-Scrubs in den Gesamttestplan.
 
 ## Nachrangig / bei passendem System sinnvoll
 
 ### Netzteil- und Server-Hardware-Test
+
+- HPE iLO/Redfish, ProLiant-Health und Smart-Array-Prüfungen immer ausdrücklich
+  als HPE-spezifisch markieren; fehlende HPE-Hardware niemals als PC-Fehler werten.
 
 - Prüfung verfügbarer Netzteil-, Spannungs- und Redundanzdaten über
   IPMI, `lm-sensors` oder HPE-Werkzeuge

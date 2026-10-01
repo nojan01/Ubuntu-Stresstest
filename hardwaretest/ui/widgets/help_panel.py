@@ -332,6 +332,24 @@ Die vollständige Installationsanleitung liegt unter
 <hr>
 
 <h2>Tab: Gesamttest</h2>
+<p><b>Netzwerk-Grenzwerte:</b> Maximalen Paketverlust, mittlere Latenz, Jitter und
+minimalen Durchsatz vor dem Start einstellen. Die Bewertung gilt für jeden
+Durchlauf. Mindestdurchsatz 0 = ausgeschaltet, andere Null-Grenzwerte sind strikt.
+Fehlende oder ungültige Messwerte sind kein bestandener Test. Ein Grenzwertfehler
+kann auch bei Exit-Code 0 auftreten und bleibt im Gesamtbericht erhalten.</p>
+<p><b>Langzeitläufe:</b> Unter „Durchläufe“ 1–10.000 Wiederholungen des gesamten
+Plans wählen. Für NVMe zuerst „NVMe-Auswahl aktualisieren“ und Laufwerke per
+Checkbox auswählen. „Vollständiger NVMe-Lesetest“ liest jeden ausgewählten
+Namespace parallel und ohne Schreibzugriffe; SMART wird vorher/nachher geprüft.
+Keine Dateisystemreparatur und kein ZFS-Import im Plan. Ein kompletter Lesetest
+kann Stunden dauern. Administratorabfragen sind pro privilegiertem Schritt möglich;
+dies ist keine Zusicherung eines völlig unbeaufsichtigten Laufs.</p>
+<p>Die CSV enthält eine Zeile je Teiltest/Durchlauf; Text und HTML bleiben kompakt
+mit Ergebniszählern, letztem Ergebnis und erstem Fehler. „Durchläufe vollständig“
+zählt auch vollständig ausgeführte fehlerhafte Durchläufe, nicht nur bestandene.
+Begleitmonitoring gilt über alle Durchläufe. Der Lesetest erkennt Lesefehler, prüft
+aber keine Dateiinhalte oder Dateisystem-Prüfsummen. Ausreichend freien Speicher
+und Kühlung vorsehen. Der Plan läuft nur, solange die App geöffnet bleibt.</p>
 <p>
 Der Gesamttest führt die markierten, nicht-destruktiven Prüfungen nacheinander aus.
 CPU- und RAM-Dauer, verwendeter RAM-Anteil, Netzwerkziel sowie optionale NVIDIA-
@@ -700,6 +718,22 @@ The complete installation guide is available at
 <hr>
 
 <h2>Tab: Test plan</h2>
+<p><b>Network thresholds:</b> Configure maximum packet loss, average latency,
+jitter and minimum throughput before starting. Each round is evaluated.
+Minimum throughput 0 = disabled; other zero limits are strict. Missing/invalid
+measurements cannot pass. A threshold failure may occur even with exit code 0
+and remains in the overall report.</p>
+<p><b>Long runs:</b> Select 1–10,000 repetitions of the entire plan under “Rounds”.
+For NVMe, refresh the selection and tick the desired drives. The optional full
+read test reads each selected namespace in parallel without writing; SMART is
+compared before/after. No filesystem repairs or ZFS imports are included.
+Full reads may take hours. Each privileged step may request authentication;
+fully unattended execution is not guaranteed.</p>
+<p>CSV contains one row per step/round. Text and HTML remain compact with status
+counts, the latest result and first failure. “Completed rounds” counts all fully
+executed rounds, including failed ones. Background monitoring covers all rounds.
+The read test detects read errors, not file-content or filesystem checksum errors.
+Provide cooling and sufficient report storage. The app must remain open.</p>
 <p>
 The test plan runs the selected non-destructive checks sequentially. CPU and RAM
 duration, the memory share, network target, and optional NVIDIA/DCGM checks can
@@ -796,6 +830,93 @@ class HelpPanel(QWidget):
     def _switch_language(self, _language: str | None = None) -> None:
         lang = language_manager.language
         if lang == "en":
-            self._content.setText(_HELP_EN.replace("__VERSION__", __version__))
+            self._content.setText(_HELP_EN.replace("__VERSION__", __version__) + """
+<h2>Filesystem check and repair</h2>
+<p><b>Filesystem → ZFS pools:</b> pool health and read/write/checksum errors;
+start/resume/stop a scrub with progress and TXT/HTML/CSV reports. Scrub verifies data
+checksums online and may automatically repair damage from redundant copies.
+Requires zfsutils-linux and ZFS kernel support. Only imported pools are offered.
+Stopping monitoring leaves the kernel scrub running. Scrub/resilver already in
+progress, cancelled scans and old results are not treated as successful new tests.</p>
+<p>The Filesystem tab provides a read-only <b>status diagnosis for mounted filesystems</b>,
+including ext2/3/4, Btrfs, XFS, FAT/exFAT and NTFS: mount state, space and available
+error indications. It is not a complete integrity check.</p>
+<p>Full integrity checking uses e2fsck -f -n for <b>offline ext2/ext3/ext4</b>.
+Mounted filesystems are blocked for integrity checking and repair; use a live USB for the system partition.
+Repair is a separate confirmed action (e2fsck -f -p, never forced yes).
+Back up first. With failing hardware, create an image before attempting repair.
+Do not allow other programs to mount/access the device during the operation.
+Do not power off or interrupt a repair. Recheck afterward.
+Unsupported filesystems are listed but not changed. No repairs in automated plans.</p>
+<h2>Long-term monitoring</h2>
+<p><b>Individual temperature limits:</b> Only checked sensors override the default.
+Limits are saved per user and shared with test-plan monitoring. Follow hardware
+specifications; recheck exact sensor keys after hardware changes. Missing sensors
+are not monitored. Editing is disabled during a run.</p>
+<p><b>Charts:</b> Select a live series. Compacted time buckets preserve measured
+min/max and sample-weighted means. Missing data break lines, not become zero.
+Elapsed time is independent of wall-clock changes. Up to 256 histories of 240
+buckets and up to 24 embedded HTML charts keep memory/report sizes bounded.
+All recorded metrics remain in CSV; no external chart library or internet needed.
+SMART time-series acquisition is not included yet.</p>
+<p>Records available sensors, EDAC/ext4 counters, NVIDIA data and new kernel errors.
+CSV is written continuously; stopping creates compact text/HTML summaries.
+The default 90 °C limit applies unless individually overridden: adjust it for the hardware,
+especially SSDs. Missing sensors/journal access leave gaps in coverage.
+This does not replace hardware thermal protection.</p>
+<p>The optional safety guard stops this app's stress tests on the temperature limit,
+new uncorrectable ECC errors or monitoring failure. It never interrupts filesystem
+repairs or firmware self-tests. New individual tests stay locked until monitoring
+ends. Test plans offer accompanying monitoring and include the result in their report.</p>
+<h2>HPE-specific features</h2>
+<p>HPE Smart Array RAID information requires a compatible HPE controller and its
+optional HPE tools. It is not required for ordinary PCs. Remote iLO/Redfish diagnostics
+and power supply redundancy checks are not included yet.</p>
+""")
         else:
-            self._content.setText(_HELP_DE.replace("__VERSION__", __version__))
+            self._content.setText(_HELP_DE.replace("__VERSION__", __version__) + """
+<h2>Dateisystemprüfung und Reparatur</h2>
+<p><b>Dateisystem → ZFS-Pools:</b> Poolzustand und Lese-/Schreib-/Prüfsummenfehler;
+Scrub starten/fortsetzen/stoppen mit Fortschritt und Text-/HTML-/CSV-Bericht.
+Ein Scrub prüft Datenprüfsummen online und kann Schäden mit redundanten Kopien
+automatisch korrigieren. Benötigt zfsutils-linux und ZFS-Kernelunterstützung.
+Nur importierte Pools werden angeboten. Das Beenden der Überwachung lässt den
+Scrub im Kernel weiterlaufen. Vorhandene Scrubs/Resilver, abgebrochene Läufe und
+alte Ergebnisse werden nicht als erfolgreicher neuer Test gewertet.</p>
+<p>Der Dateisystem-Tab bietet eine lesende <b>Statusdiagnose für eingehängte Dateisysteme</b>,
+auch ext2/3/4, Btrfs, XFS, FAT/exFAT und NTFS: Einhängezustand, Speicherplatz und verfügbare
+Fehlerhinweise. Dies ist keine vollständige Strukturprüfung.</p>
+<p>Die vollständige Strukturprüfung verwendet e2fsck -f -n für <b>ext2/ext3/ext4 offline</b>.
+Für Strukturprüfung und Reparatur bleiben eingehängte Dateisysteme gesperrt; für die Systempartition ein Live-USB verwenden.
+Reparatur ist eine separat bestätigte Aktion (e2fsck -f -p, keine erzwungene Ja-Antwort).
+Vorher sichern; bei Hardwaredefekten zuerst ein Abbild anlegen.
+Währenddessen keine Zugriffe und kein Einhängen durch andere Programme zulassen.
+Nicht ausschalten oder eine Reparatur unterbrechen. Anschließend erneut prüfen.
+Andere Dateisysteme werden angezeigt, aber nicht verändert. Keine Reparatur im Gesamttestplan.</p>
+<h2>Langzeitmonitoring</h2>
+<p><b>Individuelle Temperaturgrenzen:</b> Nur aktivierte Sensorzeilen überschreiben
+den Standardwert. Grenzen werden pro Benutzer gespeichert und auch im Gesamttest
+genutzt. Herstellerangaben beachten; nach Hardwarewechsel exakte Sensorschlüssel
+erneut kontrollieren. Fehlende Sensoren werden nicht überwacht. Während eines
+Laufs sind die Grenzen nicht veränderbar.</p>
+<p><b>Diagramme:</b> Live-Messreihe wählen. Verdichtete Zeitabschnitte erhalten
+gemessene Min/Max und nach Messanzahl gewichtete Mittelwerte. Fehlende Werte
+unterbrechen Linien, statt als Null zu erscheinen. Verstrichene Zeit bleibt von
+Systemuhränderungen unabhängig. Maximal 256 Messreihen mit 240 Abschnitten und
+24 eingebettete HTML-Diagramme begrenzen Speicher und Bericht; CSV erfasst alle
+Messwerte. Keine externe Chart-Bibliothek oder Internet nötig. SMART-Verläufe
+sind noch nicht enthalten.</p>
+<p>Erfasst verfügbare Sensoren, EDAC-/ext4-Zähler, NVIDIA-Werte und neue Kernel-Fehler.
+CSV wird fortlaufend geschrieben; beim Stoppen entstehen kompakte Text-/HTML-Berichte.
+Die vorbelegte Grenze von 90 °C gilt ohne individuelle Überschreibung und muss an die Hardware angepasst
+werden, insbesondere bei SSDs. Fehlende Sensoren/Journalrechte bedeuten Überwachungslücken.
+Kein Ersatz für den thermischen Schutz der Hardware.</p>
+<p>Der optionale Wächter stoppt App-Stresstests bei Temperaturgrenze, neuen unkorrigierbaren
+ECC-Fehlern oder Monitoring-Ausfall. Dateisystemreparaturen und Firmware-Selbsttests werden
+nicht unterbrochen. Neue Einzeltests bleiben bis zum Beenden des Monitorings gesperrt.
+Der Gesamttestplan bietet Begleitmonitoring mit Ergebnis im gemeinsamen Bericht.</p>
+<h2>HPE-spezifische Funktionen</h2>
+<p>HPE Smart Array RAID-Informationen benötigen einen passenden HPE-Controller und die
+optionalen HPE-Werkzeuge. Für normale PCs sind sie nicht erforderlich. Remote-iLO/Redfish
+und Netzteilredundanz-Prüfungen sind noch nicht enthalten.</p>
+""")

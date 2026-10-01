@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hardwaretest-gui"
-version = "0.2.25"
+version = "0.2.30"
 description = "GUI launcher for RAM/CPU/Disk stress tests on Ubuntu"
 authors = ["Norbert Jander <n.jander@posteo.de>"]
 readme = "README.md"

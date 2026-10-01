@@ -603,7 +603,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.klog_btn = QPushButton("Kernel-Logs")
 		self.mce_btn = QPushButton("MCE-Logs")
 		self.smart_btn = QPushButton("SMART-Info")
-		self.raid_btn = QPushButton("HPE RAID-Info")
+		self.raid_btn = QPushButton("HPE Smart Array – RAID-Info (nur HPE-Controller)")
 
 		device_hint = QLabel(
 			"Hinweis: Der Test liest alle Blöcke mit pkexec/fio, schreibt aber nichts. Passwortabfrage möglich."
@@ -917,7 +917,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.klog_btn = QPushButton("Kernel-Logs")
 		self.mce_btn = QPushButton("MCE-Logs")
 		self.smart_btn = QPushButton("SMART-Info")
-		self.raid_btn = QPushButton("HPE RAID-Info")
+		self.raid_btn = QPushButton("HPE Smart Array – RAID-Info (nur HPE-Controller)")
 
 		button_row = QHBoxLayout()
 		button_row.addWidget(self.scan_btn)

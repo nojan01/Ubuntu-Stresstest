@@ -33,6 +33,14 @@ def _portable_self_check() -> int:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["--zfs-worker"]:
+        from hardwaretest.core.zfs import worker_main
+
+        return worker_main(sys.argv[2:])
+    if sys.argv[1:2] == ["--filesystem-worker"]:
+        from hardwaretest.core.filesystem_check import worker_main
+
+        return worker_main(sys.argv[2:])
     if sys.argv[1:2] == ["--memory-fill-worker"]:
         from hardwaretest.tests.memory_fill_script import main as memory_fill_main
 

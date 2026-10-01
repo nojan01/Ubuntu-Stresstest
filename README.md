@@ -1,6 +1,57 @@
 # Hardwaretest GUI
 
-PySide6-Anwendung zum Starten von Hardware-Stresstests für **CPU, RAM und Festplatten** – optimiert für **HPE ProLiant Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Unterstützt Ubuntu 22.04 / 24.04 / 26.04 sowie FunOS 24.04.4 (X11/Wayland, GNOME, KDE Plasma, XFCE, Cinnamon, MATE, FVWM).
+PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
+
+### Neu in 0.2.30
+
+- **Gesamttest**: Netzwerk-Grenzwerte für Paketverlust, mittlere Latenz, Jitter und
+  Mindestdurchsatz; Auswertung in jedem Durchlauf, fehlende Werte sind kein „bestanden“.
+- **Langzeitmonitoring**: gespeicherte individuelle Temperaturgrenzen, gemeinsam
+  auch im Begleitmonitoring nutzbar. Allgemeiner Standardwert für übrige Sensoren.
+- Live-Verlaufsdiagramm mit Sensorauswahl sowie eingebettete Diagramme im HTML-Bericht;
+  verdichtete Zeitabschnitte mit Min/Max/Mittelwert erhalten gemessene Spitzen.
+  CSV bleibt vollständig, keine zusätzliche Chart- oder Python-Installation nötig.
+- Zielplattformen bleiben Ubuntu 24.04/26.04, ohne venv auf dem Zielsystem.
+
+### Neu in 0.2.29
+
+- **Gesamttest**: 1–10.000 Durchläufe des gewählten Plans, getrennte Fortschrittsanzeige
+  für Ablauf und aktuellen Teiltest; fortlaufende CSV mit einer Zeile je Teiltest.
+- Optionaler vollständiger **NVMe-Lesetest** im Plan: Checkbox-Auswahl der Laufwerke,
+  erneute Identitätsprüfung, paralleles Lesen der ausgewählten Namespaces, zusätzliche
+  fio-Schreibsperre und SMART-Vergleich vorher/nachher.
+- Kompakte Text-/HTML-Berichte mit Ergebniszählern, letztem Ergebnis und erstem Fehler;
+  Bildschirmprotokoll und Lesetest-Ausgaben bleiben begrenzt.
+- Keine unbeaufsichtigten Dateisystemreparaturen oder ZFS-Imports. Details und Grenzen:
+  [Langzeittestpläne](docs/LONG_TEST_PLANS.md).
+
+### Neu in 0.2.28
+
+- **Dateisystem → ZFS-Pools**: Auswahl importierter Pools, Status mit Lese-/Schreib-/
+  Prüfsummenfehlern, Scrub starten/fortsetzen/stoppen, Fortschritt und abschließendes
+  Text-/HTML-Protokoll; Messverlauf als CSV.
+- Scrubs prüfen Daten und Prüfsummen im laufenden Betrieb und können Schäden mit
+  redundanten Kopien automatisch korrigieren. Optional: `zfsutils-linux` und passende
+  ZFS-Kernelunterstützung. Es werden keine Pools importiert oder erzeugt.
+
+### Neu in 0.2.27
+
+- Eingehängte Dateisysteme, einschließlich ext4 und FAT/EFI, können jetzt eine
+  lesende Statusdiagnose mit Speicherbelegung und verfügbaren Fehlerhinweisen ausführen.
+  Vollständige Strukturprüfung und Reparatur bleiben Offline-Aktionen.
+- HTML-Berichte öffnen einen installierten Webbrowser unabhängig von der
+  HTML-Dateizuordnung (z.B. ChatGPT).
+
+### Neu in 0.2.26
+
+- Langzeitmonitoring mit fortlaufender CSV-Aufzeichnung, kompaktem Text-/HTML-Bericht,
+  Temperaturgrenze und Erkennung neuer ECC-/Kernel-/ext4-Fehler; auch im Gesamttestplan.
+- Optionaler Sicherheitsabbruch laufender App-Stresstests bei Temperaturgrenze,
+  neuen unkorrigierbaren ECC-Fehlern oder Ausfall des Monitorings.
+- Separater Dateisystem-Tab: Offline-Prüfung für ext2/ext3/ext4 sowie ausdrücklich
+  bestätigte konservative Reparatur. Keine Reparatur eingehängter Dateisysteme,
+  kein automatisches Aushängen und keine Reparatur im unbeaufsichtigten Testplan.
+- Details, Grenzen und Vorgehen: [Dateisystem und Monitoring](docs/FILESYSTEM_MONITORING.md).
 
 ## Lizenz
 
@@ -11,7 +62,7 @@ Lizenztext befindet sich in der Datei `LICENSE`.
 
 ### Variante A – Debian-Paket (empfohlen)
 
-Für die Installation wird nur die Datei `hardwaretest_0.2.25_amd64.deb` benötigt.
+Für die Installation wird nur die Datei `hardwaretest_0.2.30_amd64.deb` benötigt.
 
 1. Die DEB-Datei herunterladen.
 2. Im Dateimanager doppelt anklicken und im Paketinstallationsprogramm
@@ -42,8 +93,8 @@ Das AppImage enthält ebenfalls Python, PySide6 und alle Python-Module. Es kann
 ohne Installation einer Python-Laufzeit gestartet werden:
 
 ```bash
-chmod +x Hardwaretest-0.2.25-x86_64.AppImage
-./Hardwaretest-0.2.25-x86_64.AppImage
+chmod +x Hardwaretest-0.2.30-x86_64.AppImage
+./Hardwaretest-0.2.30-x86_64.AppImage
 ```
 
 Native Diagnoseprogramme müssen auf der jeweiligen Distribution weiterhin über
@@ -55,7 +106,7 @@ deren Paketverwaltung installiert werden. Das AppImage wird mit
 #### 1. Zip entpacken nach `/opt/hardwaretest`
 
 ```bash
-sudo unzip Hardwaretest-v0.2.25.zip -d /opt/hardwaretest
+sudo unzip Hardwaretest-v0.2.30.zip -d /opt/hardwaretest
 ```
 
 ### 2. In das Verzeichnis wechseln

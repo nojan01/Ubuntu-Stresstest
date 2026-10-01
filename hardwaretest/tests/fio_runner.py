@@ -8,6 +8,7 @@ Alle Schreib-Workloads nutzen --verify fuer Datenintegritaet.
 from __future__ import annotations
 
 import contextlib
+from collections import deque
 import functools
 import os
 import shutil
@@ -453,6 +454,9 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
         if not raw_devices:
             raise TestExecutionError("Keine NVMe-Laufwerke ausgewählt")
         self.devices = [str(Path(item).expanduser()) for item in raw_devices]
+        if any(not re.fullmatch(r"/dev/nvme\d+n\d+", path) for path in self.devices):
+            raise TestExecutionError("Nur NVMe-Namespace-Geräte sind erlaubt")
+        self.output_lines = deque(maxlen=80)
         self.device = self.devices[0]
         self.block_size = block_size or "1m"
         self.io_depth = max(1, io_depth)
@@ -467,6 +471,7 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
         command = super().build_command()
         return [
             *command[:-1],
+            "--readonly",
             "--eta=always",
             "--eta-interval=1000",
             "--status-interval=1",
@@ -477,6 +482,13 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
         if self.get_result() is not None and not self.is_running():
             return 1.0
         return self._reported_progress
+
+    def _check_line_for_errors(self, line: str) -> None:
+        super()._check_line_for_errors(line)
+        # Preserve both the first and most recent errors without keeping a line
+        # for every failed block of a large, failing drive in memory.
+        if len(self._collected_errors) > 200:
+            del self._collected_errors[100]
 
     def _record_progress(self, output: str) -> None:
         """Extract progress from fio ETA or periodic per-job byte counters."""
@@ -509,6 +521,7 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
             for fragment in line.replace("\r", "\n").splitlines():
                 stripped = fragment.rstrip()
                 if stripped:
+                    self.output_lines.append(stripped)
                     self._log(stripped)
                     self._check_line_for_errors(stripped)
         self._process.wait()
@@ -521,6 +534,7 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
         lines = [
             "[global]",
             "rw=read",
+            "allow_file_create=0",
             f"bs={self.block_size}",
             "direct=1",
             f"ioengine={self.ioengine}",

@@ -36,3 +36,32 @@ def test_destructive_runner_rejects_mounted(monkeypatch):
             block_size="1m",
             io_depth=1,
         )
+
+
+class Test_FioBusyDetection:
+    def test_lsblk_member_fstype_marks_parent_busy(self, monkeypatch):
+        payload = {
+            "blockdevices": [
+                {
+                    "name": "sda",
+                    "children": [{"name": "sda2", "fstype": "LVM2_member"}],
+                }
+            ]
+        }
+
+        class Result:
+            stdout = __import__("json").dumps(payload)
+
+        monkeypatch.setattr(fio_runner.subprocess, "run", lambda *a, **k: Result())
+        busy = fio_runner._mounted_devices(proc_root="/does-not-exist", sys_root="/does-not-exist")
+        assert "/dev/sda" in busy
+        assert "/dev/sda2" in busy
+
+    def test_exclusive_open_ebusy_blocks_device(self, monkeypatch):
+        def fake_open(_path, _flags):
+            raise OSError(fio_runner.errno.EBUSY, "busy")
+
+        monkeypatch.setattr(fio_runner, "_mounted_devices", lambda: set())
+        monkeypatch.setattr(fio_runner.os, "open", fake_open)
+        with pytest.raises(TestExecutionError, match="busy"):
+            fio_runner._check_devices_not_mounted(["/dev/sdz"])

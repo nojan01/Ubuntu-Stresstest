@@ -300,7 +300,6 @@ _EN: dict[str, str] = {
     "Ping misst Erreichbarkeit, Latenz, Jitter und Paketverlust. Für den Durchsatztest muss auf dem Ziel ein iperf3-Server laufen.": "Ping measures reachability, latency, jitter and packet loss. An iperf3 server must run on the target for the throughput test.",
     "Zielhost fehlt": "Target host missing",
     "Bitte einen Zielhost oder eine IP-Adresse angeben.": "Please enter a target host or IP address.",
-    "Werkzeug nicht installiert": "Tool not installed",
     "Netzwerktest konnte nicht starten": "Could not start network test",
     "{binary} ist nicht installiert. Bitte das Paket {package} installieren.": "{binary} is not installed. Please install the {package} package.",
     "Keine IPv4-Adresse": "No IPv4 address",
@@ -336,8 +335,16 @@ _EN: dict[str, str] = {
     "Schreib-/Lesedurchläufe": "Write/read passes",
     "Speicher": "Memory",
     "Abgebrochen": "Cancelled",
-    "Alle auswählen": "Select all",
     "Alle abwählen": "Clear selection",
+    "Datenträger aushängen…": "Unmount drive…",
+    "Nach Updates suchen": "Check for updates",
+    "Update-Prüfung fehlgeschlagen: {error}": "Update check failed: {error}",
+    "Hardwaretest {version} ist aktuell.": "Hardwaretest {version} is up to date.",
+    "Update verfügbar": "Update available",
+    "Hardwaretest {new} ist verfügbar (installiert: {current}).": "Hardwaretest {new} is available (installed: {current}).",
+    "Herunterladen": "Download",
+    "Später": "Later",
+    "Diese Version nicht mehr anzeigen": "Don't show this version again",
     "Alle Cores anzeigen": "Show all cores",
     "Alle Cores ausblenden": "Hide all cores",
     "Core-Details anzeigen": "Show core details",
@@ -354,7 +361,6 @@ _EN: dict[str, str] = {
     "Bereit": "Ready",
     "Bereit (destruktiv)": "Ready (destructive)",
     "Bereit (heuristisch)": "Ready (estimated)",
-    "BESTANDEN": "PASSED",
     "btop starten": "Start btop",
     "CPU-Kerne": "CPU cores",
     "Datenträger scannen": "Scan drives",
@@ -551,14 +557,14 @@ class LanguageManager(QObject):
 
     def _translate_tabs(self, tabs: QTabWidget) -> None:
         if not hasattr(tabs, "_hardwaretest_tabs_de"):
-            setattr(tabs, "_hardwaretest_tabs_de", [tabs.tabText(i) for i in range(tabs.count())])
-        for index, text in enumerate(getattr(tabs, "_hardwaretest_tabs_de")):
+            tabs._hardwaretest_tabs_de = [tabs.tabText(i) for i in range(tabs.count())]
+        for index, text in enumerate(tabs._hardwaretest_tabs_de):
             tabs.setTabText(index, self.tr(text))
 
     def _translate_combo(self, combo: QComboBox) -> None:
         if not hasattr(combo, "_hardwaretest_items_de"):
-            setattr(combo, "_hardwaretest_items_de", [combo.itemText(i) for i in range(combo.count())])
-        for index, text in enumerate(getattr(combo, "_hardwaretest_items_de")):
+            combo._hardwaretest_items_de = [combo.itemText(i) for i in range(combo.count())]
+        for index, text in enumerate(combo._hardwaretest_items_de):
             combo.setItemText(index, self.tr(text))
 
 

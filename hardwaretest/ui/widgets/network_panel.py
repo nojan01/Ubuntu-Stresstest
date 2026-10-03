@@ -107,6 +107,7 @@ class NetworkPanel(QWidget):
         self.status = QLabel("Bereit")
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.document().setMaximumBlockCount(5000)
 
         test_form = QFormLayout()
         test_form.addRow("Zielhost oder IP-Adresse", self.target)

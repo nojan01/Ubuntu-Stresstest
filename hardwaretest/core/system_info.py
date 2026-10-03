@@ -387,6 +387,21 @@ def _is_polkit_agent_running() -> bool:
 # Timeout (seconds) for privilege-escalation subprocess calls so the
 # application can never hang indefinitely.
 _PKEXEC_TIMEOUT = 120
+_LAST_DISABLED_SWAPS: List[str] = []
+
+
+def _active_swap_devices() -> List[str]:
+    devices: List[str] = []
+    try:
+        with open("/proc/swaps", encoding="utf-8") as f:
+            next(f, None)
+            for line in f:
+                parts = line.split()
+                if parts:
+                    devices.append(parts[0])
+    except OSError:
+        pass
+    return devices
 
 
 def check_swapoff_safe(info: "SystemInfo") -> Tuple[bool, str]:
@@ -502,6 +517,8 @@ def disable_swap(*, password: Optional[str] = None) -> None:
        long time when lots of data is in swap.  **Never call this on the
        main / GUI thread.**
     """
+    global _LAST_DISABLED_SWAPS
+    _LAST_DISABLED_SWAPS = _active_swap_devices()
     cmd, stdin_data = _build_swapoff_cmd(password=password)
     try:
         proc = subprocess.run(
@@ -570,6 +587,24 @@ def enable_swap(*, password: Optional[str] = None) -> None:
     .. warning::
        Call this from a worker thread, never on the main / GUI thread.
     """
+    if _LAST_DISABLED_SWAPS:
+        failures: List[str] = []
+        for device in _LAST_DISABLED_SWAPS:
+            cmd, stdin_data = _build_swapon_cmd(password=password)
+            if cmd[-1] == "-a":
+                cmd = [*cmd[:-1], device]
+            try:
+                proc = subprocess.run(
+                    cmd, input=stdin_data, capture_output=True, text=True, timeout=_PKEXEC_TIMEOUT
+                )
+            except subprocess.TimeoutExpired:
+                failures.append(f"{device}: Timeout")
+                continue
+            if proc.returncode != 0:
+                failures.append(f"{device}: {proc.stderr.strip()}")
+        if not failures:
+            return
+
     cmd, stdin_data = _build_swapon_cmd(password=password)
     try:
         proc = subprocess.run(

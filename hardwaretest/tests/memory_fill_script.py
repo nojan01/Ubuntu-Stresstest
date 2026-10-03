@@ -21,6 +21,7 @@ Exit-Codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gc
 import mmap
 import random
@@ -133,10 +134,8 @@ def _free_chunks(chunks: List[Chunk]) -> None:
     for m, size in chunks:
         # 1. Physische Seiten sofort zurueckgeben.
         if hasattr(m, "madvise") and hasattr(mmap, "MADV_DONTNEED"):
-            try:
+            with contextlib.suppress(OSError, ValueError, BufferError):
                 m.madvise(mmap.MADV_DONTNEED, 0, size)
-            except (OSError, ValueError, BufferError):
-                pass
         # 2. Mapping schliessen (munmap).
         try:
             m.close()
@@ -349,6 +348,8 @@ def run_cycles(
     start = time.monotonic()
     cycle = 0
     total_errors = 0
+    verified_cycles = 0
+    verified_mb = 0
 
     print("=== Zyklischer RAM-Fuelltest gestartet ===")
     print(f"Dauer: {duration_seconds}s | Reserve: {reserve_mb} MB | "
@@ -380,7 +381,14 @@ def run_cycles(
         remaining_time = duration_seconds - elapsed
 
         if memory_mb > 0:
-            target_mb = memory_mb
+            avail = _available_memory_mb()
+            target_mb = max(0, min(memory_mb, avail - reserve_mb))
+            if target_mb < memory_mb:
+                print(
+                    f"Begrenze angeforderte {memory_mb} MB auf {target_mb} MB "
+                    f"(verfügbar {avail} MB, Reserve {reserve_mb} MB).",
+                    flush=True,
+                )
         else:
             avail = _available_memory_mb()
             target_mb = max(64, avail - reserve_mb)
@@ -429,6 +437,8 @@ def run_cycles(
                 else:
                     print(f" OK ({verify_time:.1f}s, {speed:.0f} MB/s)",
                           flush=True)
+                    verified_cycles += 1
+                    verified_mb += actual_mb
         finally:
             print(f"  Freigabe {actual_mb} MB ...", end="", flush=True)
             t0 = time.monotonic()
@@ -464,10 +474,14 @@ def run_cycles(
     total_time = time.monotonic() - start
     print("=== Fuelltest beendet ===")
     print(f"Zyklen: {cycle} | Dauer: {total_time:.0f}s | "
-          f"Fehler gesamt: {total_errors}")
+          f"Fehler gesamt: {total_errors} | Verifiziert: "
+          f"{verified_cycles} Zyklen / {verified_mb} MB")
     if total_errors > 0:
         print(f"ERGEBNIS: FEHLER GEFUNDEN – {total_errors} Verifikationsfehler")
         return 1
+    if verified_cycles == 0 or verified_mb == 0:
+        print("ERGEBNIS: NICHT AUSSAGEKRÄFTIG – keine verifizierten Zyklen")
+        return 2
     print("ERGEBNIS: BESTANDEN – Keine Fehler gefunden")
     return 0
 

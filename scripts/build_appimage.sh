@@ -52,9 +52,12 @@ cp "$REPO_DIR/assets/hardwaretest.svg" "$APPDIR/hardwaretest.svg"
 cp "$REPO_DIR/assets/hardwaretest.svg" \
     "$APPDIR/usr/share/icons/hicolor/scalable/apps/hardwaretest.svg"
 
+CUSTOM_TOOLS="${APPIMAGETOOL:-}${APPIMAGE_RUNTIME_FILE:-}"
 APPIMAGETOOL="${APPIMAGETOOL:-$REPO_DIR/.build-tools/appimagetool-x86_64.AppImage}"
 RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-$REPO_DIR/.build-tools/runtime-x86_64}"
-if [[ ! -x "$APPIMAGETOOL" || ! -s "$RUNTIME_FILE" ]]; then
+# Standard-Cache immer gegen die festen SHA256 pruefen lassen.
+if [[ -z "$CUSTOM_TOOLS" ]] \
+    || [[ ! -x "$APPIMAGETOOL" || ! -s "$RUNTIME_FILE" ]]; then
     "$SCRIPT_DIR/fetch_appimage_tool.sh" >/dev/null
 fi
 [[ -x "$APPIMAGETOOL" ]] || {

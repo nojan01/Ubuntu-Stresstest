@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 from collections import deque
+import errno
 import functools
 import os
 import shutil
@@ -44,15 +45,59 @@ def _best_ioengine() -> str:
     return "libaio"
 
 
-def _mounted_devices() -> set[str]:
-    """Liefert die Menge der aktuell eingehaengten Block-Devices.
+_BUSY_FSTYPES = {"zfs_member", "linux_raid_member", "LVM2_member", "crypto_LUKS", "swap"}
 
-    Liest /proc/mounts und expandiert symbolische Links, sodass
-    ``/dev/sda1`` und ``/dev/disk/by-uuid/...`` korrekt erkannt werden.
-    """
+
+def _sys_block_name(path: str, *, sys_root: str = "/sys") -> str:
+    name = os.path.basename(os.path.realpath(path))
+    parent = os.path.join(sys_root, "class", "block", name, "..")
+    with contextlib.suppress(OSError):
+        parent_name = os.path.basename(os.path.realpath(parent))
+        if parent_name and parent_name != "block":
+            return parent_name
+    return name
+
+
+def _add_with_parents(devices: set[str], dev: str, *, sys_root: str = "/sys") -> None:
+    if not dev:
+        return
+    for candidate in {dev, os.path.realpath(dev)}:
+        devices.add(candidate)
+        if candidate.startswith("/dev/"):
+            parent = _sys_block_name(candidate, sys_root=sys_root)
+            devices.add(f"/dev/{parent}")
+
+
+def _add_holders(devices: set[str], name: str, *, sys_root: str = "/sys") -> None:
+    holder_dir = os.path.join(sys_root, "class", "block", name, "holders")
+    with contextlib.suppress(OSError):
+        for holder in os.listdir(holder_dir):
+            devices.add(f"/dev/{name}")
+            holder_path = f"/dev/{holder}"
+            _add_with_parents(devices, holder_path, sys_root=sys_root)
+            _add_holders(devices, holder, sys_root=sys_root)
+
+
+def _walk_lsblk_busy(
+    node: dict, devices: set[str], *, sys_root: str = "/sys", parents: tuple[str, ...] = ()
+) -> None:
+    name = node.get("name") or ""
+    path = f"/dev/{name}" if name else ""
+    mountpoints = node.get("mountpoints") or []
+    if isinstance(mountpoints, str):
+        mountpoints = [mountpoints]
+    if path and ((node.get("fstype") in _BUSY_FSTYPES) or any(mountpoints)):
+        _add_with_parents(devices, path, sys_root=sys_root)
+        devices.update(parents)
+    for child in node.get("children", []) or []:
+        _walk_lsblk_busy(child, devices, sys_root=sys_root, parents=(*parents, path) if path else parents)
+
+
+def _mounted_devices(*, proc_root: str = "/proc", sys_root: str = "/sys") -> set[str]:
+    """Return block devices that are mounted, swapped or otherwise in use."""
     mounts: set[str] = set()
     try:
-        with open("/proc/mounts") as f:
+        with open(os.path.join(proc_root, "mounts")) as f:
             for line in f:
                 parts = line.split()
                 if not parts:
@@ -60,27 +105,63 @@ def _mounted_devices() -> set[str]:
                 dev = parts[0]
                 if not dev.startswith("/dev/"):
                     continue
-                mounts.add(dev)
-                try:
-                    real = os.path.realpath(dev)
-                    mounts.add(real)
-                except OSError:
-                    pass
+                _add_with_parents(mounts, dev, sys_root=sys_root)
     except OSError:
+        pass
+    try:
+        with open(os.path.join(proc_root, "swaps")) as f:
+            next(f, None)
+            for line in f:
+                parts = line.split()
+                if parts and parts[0].startswith("/dev/"):
+                    _add_with_parents(mounts, parts[0], sys_root=sys_root)
+    except OSError:
+        pass
+    with contextlib.suppress(OSError):
+        for name in os.listdir(os.path.join(sys_root, "block")):
+            _add_holders(mounts, name, sys_root=sys_root)
+            class_dir = os.path.join(sys_root, "class", "block")
+            with contextlib.suppress(OSError):
+                for child in os.listdir(os.path.join(class_dir, name)):
+                    if child.startswith(name):
+                        _add_holders(mounts, child, sys_root=sys_root)
+    try:
+        result = subprocess.run(
+            ["lsblk", "-J", "-o", "NAME,MOUNTPOINTS,FSTYPE"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        data = json.loads(result.stdout or "{}")
+        for node in data.get("blockdevices", []) or []:
+            _walk_lsblk_busy(node, mounts, sys_root=sys_root)
+    except (FileNotFoundError, subprocess.SubprocessError, json.JSONDecodeError):
         pass
     return mounts
 
 
-def _check_devices_not_mounted(devices: List[str]) -> None:
+def _device_busy_by_exclusive_open(dev: str) -> bool:
+    flags = os.O_RDONLY | getattr(os, "O_EXCL", 0)
+    try:
+        fd = os.open(dev, flags)
+    except OSError as exc:
+        return exc.errno == errno.EBUSY
+    else:
+        os.close(fd)
+    return False
+
+
+def _check_devices_not_mounted(devices: List[str], *, proc_root: str = "/proc", sys_root: str = "/sys") -> None:
     """Wirft TestExecutionError, falls eines der *devices* eingehaengt ist.
 
     Schuetzt vor versehentlichem Ueberschreiben aktiver Filesysteme im
     destruktiven Modus.
     """
-    mounted = _mounted_devices()
+    try:
+        mounted = _mounted_devices(proc_root=proc_root, sys_root=sys_root)
+    except TypeError:
+        mounted = _mounted_devices()
     blocked: List[str] = []
     for dev in devices:
-        candidates = {dev}
+        candidates = {dev, f"/dev/{_sys_block_name(dev, sys_root=sys_root)}"}
         with contextlib.suppress(OSError):
             candidates.add(os.path.realpath(dev))
         # Auch Partitionen pruefen: /dev/sda blockiert, falls /dev/sda1 mounted
@@ -93,6 +174,8 @@ def _check_devices_not_mounted(devices: List[str]) -> None:
         else:
             if candidates & mounted:
                 blocked.append(dev)
+        if _device_busy_by_exclusive_open(dev):
+            blocked.append(f"{dev} (Kernel meldet busy)")
     if blocked:
         raise TestExecutionError(
             "Destruktiver Test abgebrochen: folgende Datentraeger sind "
@@ -100,6 +183,18 @@ def _check_devices_not_mounted(devices: List[str]) -> None:
             + "\n  - ".join(blocked)
             + "\nBitte erst aushaengen (umount)."
         )
+
+
+# Startet fio als root und beendet es, sobald die stdin-Pipe der App schliesst
+# (Stopp ohne erneute pkexec-Autorisierung). sh leitet stdin von
+# Hintergrundjobs nach /dev/null um; deshalb die Pipe vorher auf fd 3 sichern.
+_FIO_ETA_PERCENT = re.compile(r"^Jobs:.*?\[(\d+(?:\.\d+)?)%\]")
+
+PKEXEC_STOP_WRAPPER = (
+    'exec 3<&0; fio "$@" </dev/null & pid=$!; '
+    '(read _ <&3; kill -TERM "$pid" 2>/dev/null) & stopper=$!; '
+    'wait "$pid"; status=$?; kill "$stopper" 2>/dev/null; exit "$status"'
+)
 
 
 class FioRunner(BaseTestRunner):
@@ -168,6 +263,9 @@ class FioRunner(BaseTestRunner):
 class _FioJobFileRunner(BaseTestRunner):
     """Helper base class for runners that create temporary fio job files."""
 
+    # Fortschritt aus fio-ETA-Zeilen statt aus einer Zeitschaetzung ableiten.
+    _eta_progress: bool = False
+
     def __init__(
         self,
         params: TestParameters,
@@ -177,6 +275,7 @@ class _FioJobFileRunner(BaseTestRunner):
     ) -> None:
         super().__init__(params, log_fn=log_fn)
         self._job_file: Optional[str] = None
+        self._eta_fraction = 0.0
         self._command_prefix: List[str] = []
         self._pkexec_path: Optional[str] = None
         self.ioengine = ioengine or _best_ioengine()
@@ -203,7 +302,16 @@ class _FioJobFileRunner(BaseTestRunner):
         ) as job_file:
             job_file.write("\n".join(lines))
             self._job_file = job_file.name
-        return [*self._command_prefix, "fio", self._job_file]
+        command = ["fio", *self._extra_fio_args(), self._job_file]
+        if self._pkexec_path:
+            script = PKEXEC_STOP_WRAPPER
+            return [self._pkexec_path, "sh", "-c", script, "hardwaretest-fio", *command[1:]]
+        return [*self._command_prefix, *command]
+
+    def start(self) -> None:
+        if hasattr(self, "devices"):
+            _check_devices_not_mounted(list(self.devices))
+        super().start()
 
     def _job_lines(self) -> List[str]:  # pragma: no cover - abstract helper
         raise NotImplementedError
@@ -217,8 +325,43 @@ class _FioJobFileRunner(BaseTestRunner):
             super().stop(aborted=aborted)
         self._cleanup_job_file()
 
+    def _extra_fio_args(self) -> List[str]:
+        if not self._eta_progress:
+            return []
+        return ["--eta=always"]
+
+    def progress(self) -> float:
+        if not self._eta_progress:
+            return super().progress()
+        if self.get_result() is not None and not self.is_running():
+            return 1.0
+        return self._eta_fraction
+
     def _stream_output(self) -> None:
-        super()._stream_output()
+        if not self._eta_progress:
+            super()._stream_output()
+            self._cleanup_job_file()
+            return
+        if not self._process or not self._process.stdout:
+            return
+        for line in self._process.stdout:
+            for fragment in line.replace("\r", "\n").splitlines():
+                stripped = fragment.rstrip()
+                if not stripped:
+                    continue
+                if stripped.startswith("Jobs:"):
+                    # ETA-Zeilen nur fuer den Fortschritt auswerten, nicht loggen.
+                    match = _FIO_ETA_PERCENT.search(stripped)
+                    if match:
+                        value = max(0.0, min(100.0, float(match.group(1)))) / 100.0
+                        self._eta_fraction = max(self._eta_fraction, value)
+                    continue
+                self._log(stripped)
+                self._check_line_for_errors(stripped)
+        self._process.wait()
+        self._finalize_result()
+        if self._result:
+            self._log(f"Test beendet – Ergebnis: {self._result.status_text}")
         self._cleanup_job_file()
 
     def _cleanup_job_file(self) -> None:
@@ -232,6 +375,20 @@ class _FioJobFileRunner(BaseTestRunner):
             self._process = None
             self._start_time = None
             return
+        if self._process.stdin:
+            with contextlib.suppress(OSError):
+                self._process.stdin.close()
+            try:
+                self._process.wait(timeout=10)
+                if self._stdout_thread is not None:
+                    self._stdout_thread.join(timeout=5)
+                if self._result is None:
+                    self._finalize_result()
+                self._process = None
+                self._start_time = None
+                return
+            except subprocess.TimeoutExpired:
+                pass
         self._log("Stoppe Test (pkexec)...")
         kill_cmd = [
             self._pkexec_path or "pkexec",
@@ -274,6 +431,8 @@ class FioDeviceSweepRunner(_FioJobFileRunner):
     I/O-Fehler.  Bei HPE ProLiant mit SmartArray RAID werden so
     defekte Sektoren und Parity-Fehler erkannt.
     """
+
+    _eta_progress = True
 
     def __init__(
         self,
@@ -572,6 +731,8 @@ class FioDestructiveRunner(_FioJobFileRunner):
     zurueck.  Optimiert fuer HPE ProLiant Server mit grossen RAID-Arrays
     (grosser verify_backlog fuer viele GB pro Disk).
     """
+
+    _eta_progress = True
 
     def __init__(
         self,

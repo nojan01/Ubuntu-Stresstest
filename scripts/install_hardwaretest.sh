@@ -648,6 +648,7 @@ fi
 header "2/7 – Prime95 (mprime)"
 
 PRIME_URL="https://www.mersenne.org/ftp_root/gimps/p95v308b17.linux64.tar.gz"
+PRIME_SHA256="${PRIME95_SHA256:-}"
 PRIME_DIR="$REPO_DIR/vendor/prime95"
 PRIME_BIN="$PRIME_DIR/mprime"
 
@@ -689,6 +690,15 @@ else
             warn "Prime95 uebersprungen – Blend-Tests nicht verfuegbar."
             cd "$REPO_DIR"
         else
+            if [[ -n "$PRIME_SHA256" ]]; then
+                printf '%s  %s\n' "$PRIME_SHA256" "$_prime_archive" | sha256sum -c - || {
+                    fail "Prime95-Pruefsumme stimmt nicht."
+                    cd "$REPO_DIR"
+                    exit 1
+                }
+            else
+                warn "Keine PRIME95_SHA256 gesetzt; Download wird ohne Pruefsumme verwendet."
+            fi
             mkdir -p "$PRIME_DIR"
             info "Entpacke nach $PRIME_DIR..."
             if ! tar -xzf "$_prime_archive" -C "$PRIME_DIR" 2>/dev/null; then
@@ -758,6 +768,7 @@ fi
 # von GitHub heruntergeladen.
 
 JLESS_BIN="/usr/local/bin/jless"
+JLESS_SHA256="${JLESS_SHA256:-}"
 
 if command -v jless &>/dev/null; then
     ok "JSON-Reader (jless) bereits installiert: $(command -v jless)"
@@ -790,6 +801,15 @@ else
             info "Lade jless herunter..."
             cd "$TMP_DIR"
             if curl -fsSL -o jless-release.zip "$JLESS_DL_URL" 2>/dev/null; then
+                if [[ -n "$JLESS_SHA256" ]]; then
+                    printf '%s  %s\n' "$JLESS_SHA256" jless-release.zip | sha256sum -c - || {
+                        fail "jless-Pruefsumme stimmt nicht."
+                        cd "$REPO_DIR"
+                        exit 1
+                    }
+                else
+                    warn "Keine JLESS_SHA256 gesetzt; Download wird ohne Pruefsumme verwendet."
+                fi
                 mkdir -p jless-extract
                 unzip -o jless-release.zip -d jless-extract &>/dev/null 2>&1 || \
                     tar -xzf jless-release.zip -C jless-extract 2>/dev/null || true

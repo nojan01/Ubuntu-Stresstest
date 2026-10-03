@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QRect, QThread
-from PySide6.QtGui import QAction, QActionGroup, QGuiApplication
-from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget
+from PySide6.QtCore import QObject, QRect, QSettings, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication
+from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox, QTabWidget
 
 from hardwaretest import __version__
+from hardwaretest.core.update_check import (
+    ReleaseInfo,
+    fetch_latest_release,
+    is_newer,
+    update_check_disabled,
+)
 from hardwaretest.ui.widgets.test_panel import TestPanel
 from hardwaretest.ui.widgets.mprime_panel import MprimePanel
 from hardwaretest.ui.widgets.memory_controller_panel import MemoryControllerPanel
@@ -28,6 +34,18 @@ from hardwaretest.ui.widgets.filesystem_panel import FilesystemPanel
 from hardwaretest.ui.widgets.monitoring_panel import MonitoringPanel
 from hardwaretest.ui.widgets.zfs_panel import ZfsPanel
 from hardwaretest.ui.i18n import language_manager
+
+
+class _UpdateWorker(QObject):
+    finished = Signal(object, str)
+
+    def run(self) -> None:
+        try:
+            release = fetch_latest_release()
+        except Exception as exc:  # Netzfehler duerfen die App nie stoeren
+            self.finished.emit(None, str(exc))
+            return
+        self.finished.emit(release, "")
 
 
 class MainWindow(QMainWindow):
@@ -106,6 +124,11 @@ class MainWindow(QMainWindow):
         language_manager.language_changed.connect(self._retranslate)
         self._retranslate()
         self._apply_initial_geometry(compact_mode, available_geom)
+        self._update_thread: Optional[QThread] = None
+        self._update_worker: Optional[_UpdateWorker] = None
+        self._update_manual = False
+        if not update_check_disabled():
+            QTimer.singleShot(3000, lambda: self._check_for_updates(manual=False))
 
     def _can_check_filesystem(self) -> bool:
         if self.filesystem_panel.is_busy() or self.zfs_panel.is_busy() or self._temperature_lock:
@@ -144,6 +167,25 @@ class MainWindow(QMainWindow):
         self._update_test_lock()
 
     def closeEvent(self, event) -> None:
+        active_runners = []
+        for panel in self._test_panels:
+            for name in ("runner", "_runner", "_io_runner"):
+                runner = getattr(panel, name, None)
+                if runner is not None and runner.is_running():
+                    active_runners.append(runner)
+        if active_runners:
+            reply = QMessageBox.question(
+                self,
+                language_manager.tr("Tests laufen"),
+                language_manager.tr("Es laufen noch Tests. Wirklich abbrechen und Hardwaretest schließen?"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            for runner in active_runners:
+                runner.stop(aborted=True)
         if self.filesystem_panel.is_busy() or self.zfs_panel.is_busy() or self.monitoring_panel.is_busy():
             QMessageBox.information(self, language_manager.tr("Aktion läuft"), language_manager.tr(
                 "Bitte das Monitoring zuerst stoppen und laufende Dateisystem-Aktionen abschließen lassen."
@@ -175,6 +217,9 @@ class MainWindow(QMainWindow):
         self._about_action = QAction("Über Hardwaretest / About", self)
         self._about_action.triggered.connect(self._show_about)
         self._help_menu.addAction(self._about_action)
+        self._update_action = QAction("Nach Updates suchen", self)
+        self._update_action.triggered.connect(lambda: self._check_for_updates(manual=True))
+        self._help_menu.addAction(self._update_action)
 
     def _retranslate(self, _language: str | None = None) -> None:
         language_manager.retranslate_widget_tree(self)
@@ -184,6 +229,73 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"Hardwaretest-Starter v{__version__}")
         self._german_action.setChecked(language_manager.language == "de")
         self._english_action.setChecked(language_manager.language == "en")
+
+    def _check_for_updates(self, manual: bool) -> None:
+        if self._update_thread is not None:
+            return
+        thread = QThread(self)
+        worker = _UpdateWorker()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        self._update_manual = manual
+        # Gebundene Methode -> Queued Connection, Dialog entsteht im GUI-Thread.
+        worker.finished.connect(self._on_update_finished)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_update_thread)
+        self._update_thread = thread
+        self._update_worker = worker
+        thread.start()
+
+    def _clear_update_thread(self) -> None:
+        self._update_thread = None
+        self._update_worker = None
+
+    def _on_update_finished(self, release: Optional[ReleaseInfo], error: str) -> None:
+        self._on_update_result(release, error, self._update_manual)
+
+    def _on_update_result(self, release: Optional[ReleaseInfo], error: str, manual: bool) -> None:
+        title = language_manager.tr("Nach Updates suchen")
+        if release is None:
+            if manual:
+                QMessageBox.warning(
+                    self,
+                    title,
+                    language_manager.tr("Update-Prüfung fehlgeschlagen: {error}", error=error or "-"),
+                )
+            return
+        if not is_newer(release.version, __version__):
+            if manual:
+                QMessageBox.information(
+                    self,
+                    title,
+                    language_manager.tr("Hardwaretest {version} ist aktuell.", version=__version__),
+                )
+            return
+        settings = QSettings("Hardwaretest", "Hardwaretest")
+        if not manual and settings.value("update/skipped_version", "") == release.version:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(language_manager.tr("Update verfügbar"))
+        box.setText(
+            language_manager.tr(
+                "Hardwaretest {new} ist verfügbar (installiert: {current}).",
+                new=release.version,
+                current=__version__,
+            )
+        )
+        box.setInformativeText(f'<a href="{release.page_url}">{release.page_url}</a>')
+        download_btn = box.addButton(language_manager.tr("Herunterladen"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(language_manager.tr("Später"), QMessageBox.ButtonRole.RejectRole)
+        skip_box = QCheckBox(language_manager.tr("Diese Version nicht mehr anzeigen"))
+        box.setCheckBox(skip_box)
+        box.exec()
+        if skip_box.isChecked():
+            settings.setValue("update/skipped_version", release.version)
+        if box.clickedButton() is download_btn:
+            QDesktopServices.openUrl(QUrl(release.download_url))
 
     def _show_about(self) -> None:
         QMessageBox.about(

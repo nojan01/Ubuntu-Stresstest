@@ -261,6 +261,22 @@ mit SmartArray RAID-Controllern, SAS-/NVMe-Laufwerken.
   <li><span class="bad">Nur für leere/neue Datenträger verwenden!</span></li>
 </ul>
 
+<h3>Datenträgerauswahl &amp; Aushängen</h3>
+<ul>
+  <li>Laufwerke einzeln über das Häkchen auswählen; „Alle auswählen“ / „Alle abwählen“
+      wirken nur auf auswählbare Einträge.</li>
+  <li>Im Tab „Destruktiv“ ist anfangs <b>kein</b> Laufwerk ausgewählt.</li>
+  <li>Eingehängte oder belegte Laufwerke (Mounts, Swap, LVM/LUKS, mdraid, ZFS) sind
+      dort mit „belegt“ markiert und <b>gesperrt</b>. Im Tab „Geräte“ (nur lesen)
+      bleiben sie auswählbar.</li>
+  <li><b>Datenträger aushängen…</b>: hängt alle Partitionen eines gewählten Laufwerks
+      per <code>udisksctl</code> aus (Fallback <code>pkexec umount</code>) und scannt neu.
+      Der Systemdatenträger (<code>/</code>, <code>/boot</code>, <code>/home</code>, Swap …)
+      wird nicht angeboten.</li>
+  <li>Unmittelbar vor dem Start wird erneut geprüft, ob die Laufwerke frei und
+      unverändert (Seriennummer/WWN) sind.</li>
+</ul>
+
 <h3>I/O-Engine</h3>
 <p>
 Das Tool erkennt automatisch, ob <b>io_uring</b> verfügbar ist (Linux ≥ 5.1,
@@ -396,6 +412,16 @@ Nutzt <code>lshw</code>, <code>fastfetch</code> und <code>lspci</code>.
 </ol>
 
 <hr>
+
+<h2>Update-Prüfung</h2>
+<p>
+Beim Start fragt Hardwaretest im Hintergrund das neueste Release auf GitHub ab.
+Ist eine neuere Version verfügbar, erscheint ein Hinweis mit Download-Link
+(AppImage bzw. .deb passend zur Installation). „Diese Version nicht mehr anzeigen“
+blendet den Hinweis für genau diese Version aus. Manuell: Menü
+<b>Hilfe / Help → Nach Updates suchen</b>. Ohne Internet bleibt die Prüfung stumm.
+Abschalten mit der Umgebungsvariable <code>HARDWARETEST_NO_UPDATE_CHECK=1</code>.
+</p>
 
 <h2>Lizenz</h2>
 <p>
@@ -648,6 +674,21 @@ with SmartArray RAID controllers, SAS/NVMe drives.
   <li><span class="bad">Only use for empty/new drives!</span></li>
 </ul>
 
+<h3>Drive Selection &amp; Unmounting</h3>
+<ul>
+  <li>Select drives individually via their checkbox; "Select all" / "Clear selection"
+      only affect selectable entries.</li>
+  <li>In the "Destructive" tab <b>no</b> drive is selected initially.</li>
+  <li>Mounted or busy drives (mounts, swap, LVM/LUKS, mdraid, ZFS) are marked "belegt"
+      there and <b>locked</b>. In the "Device" (read-only) tab they remain selectable.</li>
+  <li><b>Unmount drive…</b>: unmounts all partitions of the chosen drive via
+      <code>udisksctl</code> (fallback <code>pkexec umount</code>) and rescans.
+      The system drive (<code>/</code>, <code>/boot</code>, <code>/home</code>, swap …)
+      is not offered.</li>
+  <li>Right before starting, the drives are checked again to be free and
+      unchanged (serial/WWN).</li>
+</ul>
+
 <h3>I/O Engine</h3>
 <p>
 The tool automatically detects whether <b>io_uring</b> is available (Linux ≥ 5.1,
@@ -779,6 +820,16 @@ Uses <code>lshw</code>, <code>fastfetch</code>, and <code>lspci</code>.
 </ol>
 
 <hr>
+
+<h2>Update check</h2>
+<p>
+On startup Hardwaretest queries the latest GitHub release in the background.
+If a newer version is available, a notice with a download link is shown
+(AppImage or .deb depending on the installation). "Don't show this version again"
+hides the notice for that version. Manually: menu
+<b>Hilfe / Help → Check for updates</b>. Without internet the check stays silent.
+Disable it with the environment variable <code>HARDWARETEST_NO_UPDATE_CHECK=1</code>.
+</p>
 
 <h2>License</h2>
 <p>

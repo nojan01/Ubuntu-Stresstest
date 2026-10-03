@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
+import ctypes
+import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -56,6 +60,13 @@ _FAILURE_PATTERNS = [
 # Rückgabecodes, die bei einem ausdrücklich vom Bediener abgebrochenen
 # Subprozess entstehen können (direktes Signal oder 128 + Signalnummer).
 _TERMINATED_EXIT_CODES = {-15, -9, -2, 143, 137, 130}
+_MAX_STORED_ERRORS = 200
+
+
+def _child_preexec() -> None:
+    """Ask Linux to terminate child processes when the GUI process exits."""
+    with contextlib.suppress(Exception):
+        ctypes.CDLL(None).prctl(1, signal.SIGTERM)
 
 
 @dataclass
@@ -113,6 +124,7 @@ class BaseTestRunner:
         self._collected_errors: List[str] = []
         self._result: Optional[TestResult] = None
         self._aborted = False
+        self._dropped_error_count = 0
 
     def build_command(self) -> List[str]:  # pragma: no cover - abstract hook
         raise NotImplementedError
@@ -130,8 +142,10 @@ class BaseTestRunner:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE,
             text=True,
             cwd=self._work_dir,
+            preexec_fn=_child_preexec if os.name == "posix" else None,
         )
         self._stdout_thread = threading.Thread(target=self._stream_output, daemon=True)
         self._stdout_thread.start()
@@ -177,8 +191,21 @@ class BaseTestRunner:
         """Prueft eine Ausgabezeile auf bekannte Fehler-Keywords."""
         for pattern in _FAILURE_PATTERNS:
             if pattern.search(line):
-                self._collected_errors.append(line.strip())
+                self._remember_error(line.strip())
                 break
+
+    def _remember_error(self, line: str) -> None:
+        if len(self._collected_errors) < _MAX_STORED_ERRORS:
+            self._collected_errors.append(line)
+        else:
+            self._dropped_error_count += 1
+            keep_head = _MAX_STORED_ERRORS // 2
+            self._collected_errors = [
+                *self._collected_errors[:keep_head],
+                f"... {self._dropped_error_count} weitere Fehler unterdrueckt ...",
+                *self._collected_errors[keep_head + 2 :],
+                line,
+            ]
 
     def _finalize_result(self) -> None:
         """Erstellt das TestResult nach Abschluss des Tests."""
@@ -197,7 +224,7 @@ class BaseTestRunner:
             non_zero_exit = False
         has_errors = len(self._collected_errors) > 0 or non_zero_exit
         if non_zero_exit and not self._collected_errors:
-            self._collected_errors.append(f"Prozess beendet mit Exit-Code {exit_code}")
+            self._remember_error(f"Prozess beendet mit Exit-Code {exit_code}")
         self._result = TestResult(
             passed=not has_errors,
             errors=list(self._collected_errors),
@@ -214,12 +241,17 @@ class BaseTestRunner:
             self._log(
                 f"Testzeit ({duration}s) abgelaufen – Prozess wird automatisch beendet."
             )
-            self._process.terminate()
             try:
+                self._process.terminate()
                 self._process.wait(timeout=10)
+            except PermissionError:
+                self.stop(aborted=True)
             except subprocess.TimeoutExpired:
                 self._log("Prozess reagiert nicht auf SIGTERM – sende SIGKILL.")
-                self._process.kill()
+                try:
+                    self._process.kill()
+                except PermissionError:
+                    self.stop(aborted=True)
 
     def _stream_output(self) -> None:
         if not self._process or not self._process.stdout:

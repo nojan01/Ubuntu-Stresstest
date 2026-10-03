@@ -103,6 +103,7 @@ class MprimePanel(QWidget):
         self.progress_bar.setValue(0)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.document().setMaximumBlockCount(5000)
 
         # Temperatur-Widget
         self.temp_widget = TemperatureWidget()

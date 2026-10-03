@@ -183,6 +183,7 @@ class TestPanel(QWidget):
         self.progress_bar.setValue(0)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.document().setMaximumBlockCount(5000)
 
         self.start_btn = QPushButton(f"{title} starten")
         self.stop_btn = QPushButton("Stop")

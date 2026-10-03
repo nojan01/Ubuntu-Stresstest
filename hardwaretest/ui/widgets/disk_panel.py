@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 	QFormLayout,
 	QGroupBox,
 	QHBoxLayout,
+	QInputDialog,
 	QLabel,
 	QListWidget,
 	QListWidgetItem,
@@ -43,6 +44,7 @@ from hardwaretest.tests.fio_runner import (
 	FioDestructiveRunner,
 	FioDeviceSweepRunner,
 	FioRunner,
+	_check_devices_not_mounted,
 )
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
@@ -57,6 +59,9 @@ class BlockDevice:
 	model: str
 	read_only: bool
 	removable: bool
+	busy: bool = False
+	serial: str = ""
+	wwn: str = ""
 
 
 SystemInfoProvider = Callable[[], SystemInfo]
@@ -91,6 +96,42 @@ def _show_info_dialog(parent: QWidget, title: str, content: str) -> None:
 	dlg.exec()
 
 
+SYSTEM_MOUNTPOINTS = frozenset({"/", "/boot", "/boot/efi", "/efi", "/home", "/usr", "/var", "[SWAP]"})
+
+
+def _collect_mounted_partitions(node: dict) -> Tuple[List[Tuple[str, str]], bool]:
+	"""Liefert (Gerät, Mountpoint)-Paare unterhalb eines lsblk-Knotens und ob Systempfade darunter liegen."""
+	mounted: List[Tuple[str, str]] = []
+	system = False
+	for mp in node.get("mountpoints") or []:
+		if not mp:
+			continue
+		if mp in SYSTEM_MOUNTPOINTS:
+			system = True
+		mounted.append((f"/dev/{node.get('name')}", mp))
+	for child in node.get("children") or []:
+		child_mounted, child_system = _collect_mounted_partitions(child)
+		mounted.extend(child_mounted)
+		system = system or child_system
+	return mounted, system
+
+
+def find_unmountable_disks(lsblk_json: str) -> List[Tuple[str, List[Tuple[str, str]]]]:
+	"""Eingehängte, nicht systemrelevante Datenträger mit ihren Mounts."""
+	try:
+		data = json.loads(lsblk_json or "{}")
+	except json.JSONDecodeError:
+		return []
+	result: List[Tuple[str, List[Tuple[str, str]]]] = []
+	for node in data.get("blockdevices") or []:
+		if (node.get("type") or "").lower() != "disk":
+			continue
+		mounted, system = _collect_mounted_partitions(node)
+		if mounted and not system:
+			result.append((f"/dev/{node.get('name')}", mounted))
+	return result
+
+
 class DeviceSelectionMixin:
 	"""Shared helpers for panels that operate on block devices."""
 
@@ -105,7 +146,10 @@ class DeviceSelectionMixin:
 		for dev in devices:
 			item = QListWidgetItem(self._format_device_entry(dev))
 			item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-			item.setCheckState(Qt.CheckState.Checked)
+			if dev.busy and self._block_busy_devices():
+				item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+				item.setToolTip("Datenträger ist eingehängt, belegt oder Systemdatenträger. Zum Testen erst aushängen und neu scannen.")
+			item.setCheckState(Qt.CheckState.Checked if self._default_device_checked(dev) else Qt.CheckState.Unchecked)
 			self.device_list.addItem(item)
 		self.device_list.blockSignals(False)
 		if devices:
@@ -117,7 +161,7 @@ class DeviceSelectionMixin:
 	def _scan_block_devices(self) -> List[BlockDevice]:
 		try:
 			result = subprocess.run(
-				["lsblk", "-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,RO,RM"],
+				["lsblk", "-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,RO,RM,SERIAL,WWN"],
 				check=True,
 				capture_output=True,
 				text=True,
@@ -139,6 +183,15 @@ class DeviceSelectionMixin:
 			self._collect_block_devices(node, devices)
 		return devices
 
+	def _default_device_checked(self, dev: BlockDevice) -> bool:
+		return not (dev.busy and self._block_busy_devices())
+
+	def _block_busy_devices(self) -> bool:
+		return False
+
+	def _is_item_selectable(self, item: QListWidgetItem) -> bool:
+		return bool(item.flags() & Qt.ItemFlag.ItemIsEnabled)
+
 	def _collect_block_devices(self, node: dict, devices: List[BlockDevice]) -> None:
 		node_type = (node.get("type") or "").lower()
 		name = node.get("name") or ""
@@ -157,6 +210,9 @@ class DeviceSelectionMixin:
 					model=(node.get("model") or "").strip() or "unbekannt",
 					read_only=str(node.get("ro", "0")) == "1",
 					removable=str(node.get("rm", "0")) == "1",
+					busy=self._is_device_busy(f"/dev/{name}"),
+					serial=str(node.get("serial") or ""),
+					wwn=str(node.get("wwn") or ""),
 				)
 			)
 		for child in node.get("children", []) or []:
@@ -168,14 +224,60 @@ class DeviceSelectionMixin:
 			flags.append("RO")
 		if dev.removable:
 			flags.append("removable")
+		if dev.busy:
+			flags.append("belegt")
 		flag_text = f" ({', '.join(flags)})" if flags else ""
 		return f"{dev.path} – {dev.display_size} – {dev.model}{flag_text}"
+
+	def _is_device_busy(self, path: str) -> bool:
+		try:
+			_check_devices_not_mounted([path])
+		except Exception:
+			return True
+		return False
+
+	def _unmount_device_dialog(self) -> None:
+		try:
+			out = subprocess.run(
+				["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINTS"],
+				check=True, capture_output=True, text=True,
+			).stdout
+		except (OSError, subprocess.CalledProcessError) as exc:
+			self._append_log(f"lsblk fehlgeschlagen: {exc}")
+			return
+		candidates = find_unmountable_disks(out)
+		if not candidates:
+			QMessageBox.information(
+				self, "Aushängen",
+				"Keine aushängbaren Datenträger gefunden (Systemdatenträger werden nicht angeboten).",
+			)
+			return
+		labels = [f"{disk}: " + ", ".join(mp for _, mp in mounts) for disk, mounts in candidates]
+		choice, ok = QInputDialog.getItem(self, "Datenträger aushängen", "Datenträger:", labels, 0, False)
+		if not ok:
+			return
+		_disk, mounts = candidates[labels.index(choice)]
+		errors = []
+		for part, mp in mounts:
+			if shutil.which("udisksctl"):
+				cmd = ["udisksctl", "unmount", "-b", part]
+			else:
+				cmd = ["pkexec", "umount", part]
+			proc = subprocess.run(cmd, capture_output=True, text=True)
+			if proc.returncode == 0:
+				self._append_log(f"{part} ({mp}) ausgehängt.")
+			else:
+				errors.append(f"{part}: {(proc.stderr or proc.stdout).strip()}")
+		if errors:
+			QMessageBox.warning(self, "Aushängen", "Aushängen fehlgeschlagen:\n" + "\n".join(errors))
+		self._refresh_device_list()
 
 	def _set_all_devices_checked(self, checked: bool) -> None:
 		state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
 		for idx in range(self.device_list.count()):
 			item = self.device_list.item(idx)
-			item.setCheckState(state)
+			if self._is_item_selectable(item):
+				item.setCheckState(state)
 		self._update_device_controls_enabled()
 
 	def _selected_device_objects(self) -> List[BlockDevice]:
@@ -184,7 +286,7 @@ class DeviceSelectionMixin:
 			if idx >= len(self._devices):
 				continue
 			item = self.device_list.item(idx)
-			if item.checkState() == Qt.CheckState.Checked:
+			if item.checkState() == Qt.CheckState.Checked and self._is_item_selectable(item):
 				selected.append(self._devices[idx])
 		return selected
 
@@ -268,6 +370,7 @@ class FileDiskPanel(QWidget):
 		self.progress_bar.setValue(0)
 		self.log_view = QTextEdit()
 		self.log_view.setReadOnly(True)
+		self.log_view.document().setMaximumBlockCount(5000)
 
 		self.start_btn = QPushButton("fio starten")
 		self.stop_btn = QPushButton("Stop")
@@ -374,6 +477,9 @@ class FileDiskPanel(QWidget):
 			return
 		if path.exists() and not path.is_file():
 			self._append_log("Der angegebene Pfad ist keine Datei.")
+			return
+		if path.exists():
+			self._append_log("Die Testdatei existiert bereits; bitte einen neuen Dateinamen wählen.")
 			return
 		size_mb = self.file_size_mb.value()
 		required_bytes = size_mb * 1024 * 1024
@@ -574,6 +680,8 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.select_all_btn.clicked.connect(lambda: self._set_all_devices_checked(True))
 		self.select_none_btn = QPushButton("Alle abwählen")
 		self.select_none_btn.clicked.connect(lambda: self._set_all_devices_checked(False))
+		self.unmount_btn = QPushButton("Datenträger aushängen…")
+		self.unmount_btn.clicked.connect(self._unmount_device_dialog)
 
 		self.block_size_box = QComboBox()
 		for size in ["512k", "1m", "2m", "4m"]:
@@ -591,6 +699,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.progress_bar.setValue(0)
 		self.log_view = QTextEdit()
 		self.log_view.setReadOnly(True)
+		self.log_view.document().setMaximumBlockCount(5000)
 
 		self.start_btn = QPushButton("Rohgeräte-Read starten")
 		self.stop_btn = QPushButton("Stop")
@@ -614,6 +723,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		list_controls.addWidget(self.scan_btn)
 		list_controls.addWidget(self.select_all_btn)
 		list_controls.addWidget(self.select_none_btn)
+		list_controls.addWidget(self.unmount_btn)
 		list_controls.addStretch(1)
 
 		form = QFormLayout()
@@ -682,8 +792,8 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		if not block_size:
 			self._append_log("Blockgröße darf nicht leer sein.")
 			return
-		estimated = self._estimate_runtime_seconds(selected)
-		params = TestParameters(duration_seconds=max(1, estimated))
+		# Groessenbasierter Lauf: kein Zeitwaechter, Fortschritt kommt aus fio-ETA.
+		params = TestParameters(duration_seconds=0)
 		self.runner = FioDeviceSweepRunner(
 			params,
 			devices=paths,
@@ -880,6 +990,8 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.select_all_btn.clicked.connect(lambda: self._set_all_devices_checked(True))
 		self.select_none_btn = QPushButton("Alle abwählen")
 		self.select_none_btn.clicked.connect(lambda: self._set_all_devices_checked(False))
+		self.unmount_btn = QPushButton("Datenträger aushängen…")
+		self.unmount_btn.clicked.connect(self._unmount_device_dialog)
 
 		self.block_size_box = QComboBox()
 		for size in ["512k", "1m", "2m", "4m"]:
@@ -902,6 +1014,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.progress_bar.setValue(0)
 		self.log_view = QTextEdit()
 		self.log_view.setReadOnly(True)
+		self.log_view.document().setMaximumBlockCount(5000)
 
 		self.start_btn = QPushButton("DESTRUKTIVEN Test starten")
 		self.stop_btn = QPushButton("Stop")
@@ -923,6 +1036,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		button_row.addWidget(self.scan_btn)
 		button_row.addWidget(self.select_all_btn)
 		button_row.addWidget(self.select_none_btn)
+		button_row.addWidget(self.unmount_btn)
 		button_row.addStretch(1)
 
 		form = QFormLayout()
@@ -980,6 +1094,12 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self._refresh_system_info()
 		self._refresh_device_list()
 
+	def _default_device_checked(self, dev: BlockDevice) -> bool:
+		return False
+
+	def _block_busy_devices(self) -> bool:
+		return True
+
 	def start_test(self) -> None:
 		if self.runner and self.runner.is_running():
 			return
@@ -1011,21 +1131,23 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		if message.exec() != QMessageBox.StandardButton.Yes:
 			self._append_log("Destruktiver Test abgebrochen – keine Bestätigung.")
 			return
-		paths = [dev.path for dev in selected]
-		params = TestParameters(duration_seconds=max(1, estimated))
-		self.runner = FioDestructiveRunner(
-			params,
-			devices=paths,
-			block_size=block_size,
-			io_depth=self.io_depth.value(),
-			passes=self.passes_box.value(),
-			log_fn=self._handle_runner_log,
-			use_pkexec=True,
-		)
 		try:
+			self._verify_selected_devices(selected)
+			paths = [dev.path for dev in selected]
+			params = TestParameters(duration_seconds=0)
+			self.runner = FioDestructiveRunner(
+				params,
+				devices=paths,
+				block_size=block_size,
+				io_depth=self.io_depth.value(),
+				passes=self.passes_box.value(),
+				log_fn=self._handle_runner_log,
+				use_pkexec=True,
+			)
 			self._append_log("WARNUNG: Destruktiver Test startet jetzt über pkexec – Autorisierung bestätigen!")
 			self.runner.start()
 		except Exception as exc:  # pragma: no cover - runtime safety
+			QMessageBox.critical(self, "Start fehlgeschlagen", str(exc))
 			self._append_log(f"Fehler beim Start: {exc}")
 			self.runner = None
 			return
@@ -1038,6 +1160,17 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.result_label.setText("")
 		self.result_label.setStyleSheet("")
 		self.timer.start()
+
+	def _verify_selected_devices(self, selected: List[BlockDevice]) -> None:
+		fresh = {dev.path: dev for dev in self._scan_block_devices()}
+		for dev in selected:
+			current = fresh.get(dev.path)
+			if current is None:
+				raise RuntimeError(f"{dev.path} nicht mehr vorhanden.")
+			if current.busy:
+				raise RuntimeError(f"{dev.path} ist inzwischen belegt/eingehängt.")
+			if (dev.serial or dev.wwn) and (dev.serial, dev.wwn) != (current.serial, current.wwn):
+				raise RuntimeError(f"{dev.path} Identität hat sich geändert; bitte neu scannen.")
 
 	def stop_test(self) -> None:
 		if not self.runner:

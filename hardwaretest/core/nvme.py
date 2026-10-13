@@ -261,3 +261,4 @@ def _latest_self_test_result(data: object) -> Optional[int]:
             if found is not None:
                 return found
     return None
+

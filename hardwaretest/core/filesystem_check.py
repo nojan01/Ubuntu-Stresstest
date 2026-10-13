@@ -12,6 +12,8 @@ import stat
 import subprocess
 import sys
 
+from hardwaretest.core.paths import self_command_for_root
+
 
 @dataclass(frozen=True)
 class FilesystemDevice:
@@ -93,7 +95,7 @@ def checker_command(action: str, device: str) -> list[str]:
 
 
 def worker_command(action: str, device: FilesystemDevice, language: str = "de") -> list[str]:
-    program = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "hardwaretest"]
+    program = self_command_for_root()
     return [*program, "--filesystem-worker", action, "--device", device.path,
                       "--uuid", device.uuid, "--number", device.number, "--fstype", device.fstype,
                       "--language", language]

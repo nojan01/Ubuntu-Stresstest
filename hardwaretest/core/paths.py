@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sys
 
@@ -22,3 +23,18 @@ def application_root() -> Path:
 def resource_path(*parts: str) -> Path:
     """Liefert einen absoluten Pfad innerhalb der mitgelieferten Ressourcen."""
     return application_root().joinpath(*parts)
+
+
+def self_command_for_root() -> list[str]:
+    """Programmaufruf für Worker, die per pkexec als root laufen.
+
+    Ein AppImage ist per FUSE nur für den startenden Benutzer eingehängt; root
+    kann darin nichts lesen.  Deshalb startet root das AppImage selbst über
+    ``--appimage-extract-and-run`` statt der Binärdatei im FUSE-Mount.
+    """
+    appimage = os.environ.get("APPIMAGE")
+    if getattr(sys, "frozen", False) and appimage and os.path.isfile(appimage):
+        return [appimage, "--appimage-extract-and-run"]
+    if getattr(sys, "frozen", False):
+        return [sys.executable]
+    return [sys.executable, "-m", "hardwaretest"]

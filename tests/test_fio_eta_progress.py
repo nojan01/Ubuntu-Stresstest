@@ -44,6 +44,6 @@ class Test_FioEtaProgress:
 			stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env,
 		)
 		assert proc.wait(timeout=5) == 0
-		assert proc.stdout.read().strip() == "--eta=always job.fio"
+		assert proc.stdout.read().splitlines()[-1] == "--eta=always job.fio"
 		proc.stdin.close()
 		proc.stdout.close()

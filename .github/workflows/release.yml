@@ -29,8 +29,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Build-Werkzeuge installieren
-        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y dpkg-dev
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install . -r requirements-build.txt
 
       - name: .deb-Paket bauen
         run: bash scripts/build_deb.sh
@@ -44,7 +53,7 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          DEB_PATH="$(ls dist/hardwaretest_*_all.deb | head -n1)"
+          DEB_PATH="$(ls hardwaretest_*_amd64.deb | head -n1)"
           echo "deb_path=${DEB_PATH}" >> "$GITHUB_OUTPUT"
 
       - name: GitHub Release erstellen/aktualisieren und Asset anhaengen
@@ -54,7 +63,13 @@ jobs:
           TAG="${{ steps.meta.outputs.tag }}"
           DEB="${{ steps.meta.outputs.deb_path }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$DEB" --clobber
+            # Lokal gebaute Pakete (inkl. mprime, das nicht im Repo liegt)
+            # nie ueberschreiben; nur fehlendes Asset ergaenzen.
+            if gh release view "$TAG" --json assets -q '.assets[].name' | grep -qx "$(basename "$DEB")"; then
+              echo "Asset existiert bereits, wird nicht ueberschrieben."
+            else
+              gh release upload "$TAG" "$DEB"
+            fi
           else
             gh release create "$TAG" "$DEB" \
               --title "$TAG" \

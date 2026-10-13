@@ -107,6 +107,8 @@ PathLike = Union[str, Path]
 class BaseTestRunner:
     """Provides lifecycle, stdout/stderr collection and result evaluation for CLI tools."""
 
+    _use_watchdog = True
+
     def __init__(
         self,
         params: TestParameters,
@@ -124,6 +126,9 @@ class BaseTestRunner:
         self._collected_errors: List[str] = []
         self._result: Optional[TestResult] = None
         self._aborted = False
+        # Optional: gemeinsame Root-Sitzung (eine pkexec-Autorisierung).
+        self.root_broker = None
+        self._broker_job: Optional[str] = None
         self._dropped_error_count = 0
 
     def build_command(self) -> List[str]:  # pragma: no cover - abstract hook
@@ -136,7 +141,12 @@ class BaseTestRunner:
         self._result = None
         self._aborted = False
         cmd = self.build_command()
-        self._log(f"Starte: {' '.join(cmd)}")
+        if self.root_broker is not None:
+            self._broker_job = self.root_broker.submit(cmd)
+            self._log(f"Starte (root): {' '.join(cmd)}")
+            cmd = self.root_broker.relay_command(self._broker_job)
+        else:
+            self._log(f"Starte: {' '.join(cmd)}")
         self._start_time = time.time()
         self._process = subprocess.Popen(
             cmd,
@@ -151,7 +161,7 @@ class BaseTestRunner:
         self._stdout_thread.start()
         # Watchdog: beendet den Prozess automatisch nach der eingestellten Dauer
         self._watchdog_cancel.clear()
-        if self.params.duration_seconds > 0:
+        if self._use_watchdog and self.params.duration_seconds > 0:
             self._watchdog_thread = threading.Thread(
                 target=self._watchdog_timer, daemon=True
             )
@@ -163,6 +173,11 @@ class BaseTestRunner:
         self._watchdog_cancel.set()
         if self._watchdog_thread is not None:
             self._watchdog_thread = None
+        if self._process and self._process.poll() is None and self._broker_job:
+            self._log("Stoppe Test...")
+            self.root_broker.kill(self._broker_job)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self._process.wait(timeout=10)
         if self._process and self._process.poll() is None:
             self._log("Stoppe Test...")
             self._process.terminate()
@@ -209,6 +224,9 @@ class BaseTestRunner:
 
     def _finalize_result(self) -> None:
         """Erstellt das TestResult nach Abschluss des Tests."""
+        if self._broker_job and (self._process is None or self._process.poll() is not None):
+            self.root_broker.done(self._broker_job)
+            self._broker_job = None
         elapsed = 0.0
         if self._start_time:
             elapsed = time.time() - self._start_time

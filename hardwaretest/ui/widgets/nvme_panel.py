@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 import os
 import shutil
+import subprocess
 from typing import Callable, Optional
 
 from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Signal
@@ -35,6 +36,7 @@ from hardwaretest.core.nvme import (
     read_nvme_self_test_status,
     start_nvme_self_test,
 )
+from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.fio_runner import FioNvmeFullReadRunner, FioNvmeReadBenchmarkRunner
 from hardwaretest.ui.i18n import language_manager
@@ -169,6 +171,9 @@ class NvmePanel(QWidget):
         self.full_read_btn.clicked.connect(self._start_full_read)
         self.stop_io_btn.clicked.connect(self._stop_io_test)
         self.select_all_nvme.toggled.connect(self._select_all_io_devices)
+        self._nvme_session: Optional[RootBroker] = None
+        self._io_waiting_for_auth = False
+        self._io_status_text = ""
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(8_000)
         self._status_timer.timeout.connect(self._poll_self_test_status)
@@ -274,7 +279,7 @@ class NvmePanel(QWidget):
             return
         self._set_runtime_text(self.status, "NVMe-Gesundheitsdaten werden gelesen …")
         self._set_device_actions_enabled(False)
-        self._run_worker(lambda: read_nvme_smart(device, self._privilege_prefix()), self._show_health)
+        self._run_worker(lambda: read_nvme_smart(device, run=self._nvme_run), self._show_health)
 
     def _start_self_test(self) -> None:
         device = self._selected_device()
@@ -297,7 +302,7 @@ class NvmePanel(QWidget):
         self._set_runtime_text(self.status, "NVMe-Selbsttest wird gestartet …")
         self._set_device_actions_enabled(False)
         self._run_worker(
-            lambda: start_nvme_self_test(device, test_type, self._privilege_prefix()),
+            lambda: start_nvme_self_test(device, test_type, run=self._nvme_run),
             self._self_test_started,
         )
 
@@ -313,7 +318,7 @@ class NvmePanel(QWidget):
         self.self_test_progress.setVisible(True)
         self._set_device_actions_enabled(False)
         self._run_worker(
-            lambda: read_nvme_self_test_status(device, self._privilege_prefix()),
+            lambda: read_nvme_self_test_status(device, run=self._nvme_run),
             self._show_self_test_status,
         )
 
@@ -369,7 +374,7 @@ class NvmePanel(QWidget):
         device = self._selected_device()
         if device:
             self._run_worker(
-                lambda: read_nvme_self_test_status(device, self._privilege_prefix()),
+                lambda: read_nvme_self_test_status(device, run=self._nvme_run),
                 self._show_self_test_status,
                 show_failure=False,
             )
@@ -533,6 +538,8 @@ class NvmePanel(QWidget):
             return
         self._io_runner = runner
         self._io_timed = timed
+        self._io_status_text = status
+        self._io_waiting_for_auth = not getattr(runner, "authorized", True)
         self._set_runtime_text(self.io_result, "⌛ NVMe-Lese-Test läuft")
         self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
         self._set_runtime_text(self.io_status, status)
@@ -558,6 +565,23 @@ class NvmePanel(QWidget):
         if runner is None:
             self._io_timer.stop()
             return
+        if not getattr(runner, "authorized", True):
+            if runner.is_running():
+                self._set_runtime_text(self.io_result, "🔑 Warte auf Passwort-Eingabe …")
+                self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+                self._set_runtime_text(
+                    self.io_status, "Der Lese-Test startet nach der Autorisierung."
+                )
+                self.io_progress.setRange(0, 0)
+                return
+        elif self._io_waiting_for_auth:
+            self._io_waiting_for_auth = False
+            self._set_runtime_text(self.io_result, "⌛ NVMe-Lese-Test läuft")
+            self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(self.io_status, self._io_status_text)
+            if self._io_timed:
+                self.io_progress.setRange(0, 100)
+                self.io_progress.setValue(0)
         if self._io_timed:
             progress = min(99, int(runner.progress() * 100)) if runner.is_running() else 100
             self.io_progress.setValue(progress)
@@ -581,6 +605,11 @@ class NvmePanel(QWidget):
             self._set_runtime_text(self.io_result, "? NVMe-Lese-Test abgebrochen")
             self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.io_status, "Lese-Test wurde manuell beendet.")
+            return
+        if not getattr(runner, "authorized", True):
+            self._set_runtime_text(self.io_result, "? NVMe-Lese-Test nicht gestartet")
+            self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(self.io_status, "Die Passwort-Eingabe wurde abgebrochen oder abgelehnt.")
             return
         if result is None:
             self._set_runtime_text(self.io_result, "✗ NVMe-Lese-Test ohne Ergebnis beendet")
@@ -710,11 +739,18 @@ class NvmePanel(QWidget):
             )
             self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
 
-    @staticmethod
-    def _privilege_prefix() -> tuple[str, ...]:
-        if os.geteuid() == 0:
-            return ()
-        return ("pkexec",) if shutil.which("pkexec") else ()
+    def _nvme_run(self, command, **kwargs):
+        """nvme-cli direkt als root oder über eine gemeinsame pkexec-Sitzung."""
+        if os.geteuid() == 0 or not shutil.which("pkexec"):
+            return subprocess.run(command, **kwargs)
+        if self._nvme_session is None:
+            self._nvme_session = RootBroker(shutil.which("pkexec") or "pkexec")
+        return self._nvme_session.run(command, **kwargs)
+
+    def close_privileged_session(self) -> None:
+        if self._nvme_session is not None:
+            self._nvme_session.close()
+            self._nvme_session = None
 
     def _set_device_actions_enabled(self, enabled: bool) -> None:
         self.health_btn.setEnabled(enabled)

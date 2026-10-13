@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import json
 from pathlib import Path
 import re
@@ -190,8 +191,12 @@ def _check_devices_not_mounted(devices: List[str], *, proc_root: str = "/proc", 
 # Hintergrundjobs nach /dev/null um; deshalb die Pipe vorher auf fd 3 sichern.
 _FIO_ETA_PERCENT = re.compile(r"^Jobs:.*?\[(\d+(?:\.\d+)?)%\]")
 
+# Wird nach erfolgreicher pkexec-Autorisierung ausgegeben, damit die App
+# Laufzeit und Fortschritt erst ab dann zaehlt.
+AUTHORIZED_MARKER = "@@HARDWARETEST-AUTHORIZED@@"
+
 PKEXEC_STOP_WRAPPER = (
-    'exec 3<&0; fio "$@" </dev/null & pid=$!; '
+    'echo "' + AUTHORIZED_MARKER + '"; exec 3<&0; fio "$@" </dev/null & pid=$!; '
     '(read _ <&3; kill -TERM "$pid" 2>/dev/null) & stopper=$!; '
     'wait "$pid"; status=$?; kill "$stopper" 2>/dev/null; exit "$status"'
 )
@@ -265,6 +270,10 @@ class _FioJobFileRunner(BaseTestRunner):
 
     # Fortschritt aus fio-ETA-Zeilen statt aus einer Zeitschaetzung ableiten.
     _eta_progress: bool = False
+    # fio begrenzt die Laufzeit selbst (runtime/size); ein externer Watchdog
+    # wuerde fio sonst vor der JSON-Ausgabe beenden – inklusive der Zeit,
+    # in der pkexec noch auf das Kennwort wartet.
+    _use_watchdog = False
 
     def __init__(
         self,
@@ -278,6 +287,7 @@ class _FioJobFileRunner(BaseTestRunner):
         self._eta_fraction = 0.0
         self._command_prefix: List[str] = []
         self._pkexec_path: Optional[str] = None
+        self.authorized = True
         self.ioengine = ioengine or _best_ioengine()
         if use_pkexec:
             # Skip pkexec when already running as root (e.g. Puppy Linux /
@@ -309,9 +319,15 @@ class _FioJobFileRunner(BaseTestRunner):
         return [*self._command_prefix, *command]
 
     def start(self) -> None:
-        if hasattr(self, "devices"):
-            _check_devices_not_mounted(list(self.devices))
+        self.authorized = not self._pkexec_path
         super().start()
+
+    def _handle_auth_marker(self, line: str) -> bool:
+        if line.strip() != AUTHORIZED_MARKER:
+            return False
+        self.authorized = True
+        self._start_time = time.time()
+        return True
 
     def _job_lines(self) -> List[str]:  # pragma: no cover - abstract helper
         raise NotImplementedError
@@ -338,18 +354,14 @@ class _FioJobFileRunner(BaseTestRunner):
         return self._eta_fraction
 
     def _stream_output(self) -> None:
-        if not self._eta_progress:
-            super()._stream_output()
-            self._cleanup_job_file()
-            return
         if not self._process or not self._process.stdout:
             return
         for line in self._process.stdout:
             for fragment in line.replace("\r", "\n").splitlines():
                 stripped = fragment.rstrip()
-                if not stripped:
+                if not stripped or self._handle_auth_marker(stripped):
                     continue
-                if stripped.startswith("Jobs:"):
+                if self._eta_progress and stripped.startswith("Jobs:"):
                     # ETA-Zeilen nur fuer den Fortschritt auswerten, nicht loggen.
                     match = _FIO_ETA_PERCENT.search(stripped)
                     if match:
@@ -546,6 +558,8 @@ class FioNvmeReadBenchmarkRunner(_FioJobFileRunner):
             return
         for line in self._process.stdout:
             stripped = line.rstrip()
+            if self._handle_auth_marker(stripped):
+                continue
             self.output_lines.append(stripped)
             self._log(stripped)
             self._check_line_for_errors(stripped)
@@ -679,7 +693,7 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
             self._record_progress(line)
             for fragment in line.replace("\r", "\n").splitlines():
                 stripped = fragment.rstrip()
-                if stripped:
+                if stripped and not self._handle_auth_marker(stripped):
                     self.output_lines.append(stripped)
                     self._log(stripped)
                     self._check_line_for_errors(stripped)

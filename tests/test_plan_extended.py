@@ -124,7 +124,7 @@ def test_selected_health_only_checks_selected_controller(tmp_path, monkeypatch):
     monkeypatch.setattr(test_plan, "list_nvme_devices", lambda: [DRIVE, other])
     reads = []
     monkeypatch.setattr(test_plan, "read_nvme_smart",
-                        lambda controller, _: reads.append(controller) or NvmeHealth(controller, media_errors=0))
+                        lambda controller, *_: reads.append(controller) or NvmeHealth(controller, media_errors=0))
     assert plan._run_nvme().status == "passed"
     assert reads == ["/dev/nvme0"]
 

@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 
+from hardwaretest.core.paths import self_command_for_root
+
 
 @dataclass(frozen=True)
 class ZfsPool:
@@ -122,7 +124,7 @@ def control_pool(action: str, guid: str) -> str:
 
 
 def worker_command(action: str, guid: str) -> list[str]:
-    program = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "hardwaretest"]
+    program = self_command_for_root()
     return [*program, "--zfs-worker", action, "--guid", guid]
 
 

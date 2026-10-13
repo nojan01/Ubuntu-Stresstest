@@ -199,6 +199,10 @@ class MainWindow(QMainWindow):
             ))
             event.ignore()
             return
+        for panel in self._test_panels:
+            closer = getattr(panel, "close_privileged_session", None)
+            if closer is not None:
+                closer()
         super().closeEvent(event)
 
     def _add_menus(self) -> None:

@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -21,6 +22,7 @@ from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
 from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices, read_nvme_smart
+from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.system_info import read_system_info
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.network import NetworkRunner, threshold_failures
@@ -152,6 +154,7 @@ class TestPlanExecutor:
         self._cancel = threading.Event()
         self._active_runner: Optional[BaseTestRunner] = None
         self._monitor: Optional[MonitoringGuard] = None
+        self._root: Optional[RootBroker] = None
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -189,6 +192,9 @@ class TestPlanExecutor:
             if self._monitor is not None:
                 self._monitor.finish()
                 self._monitor = None
+            if self._root is not None:
+                self._root.close()
+                self._root = None
 
     def _execute(self) -> TestPlanResult:
         started = _now()
@@ -219,6 +225,9 @@ class TestPlanExecutor:
             "nvidia": self._run_nvidia,
             "dcgm": self._run_dcgm,
         }
+
+        # Passwort sofort abfragen, damit lange Testpläne unbeaufsichtigt laufen.
+        self._authorize_root()
 
         if self.config.monitoring_enabled:
             session = MonitorSession(self.config.output_dir, self.config.temperature_limit, self.config.language)
@@ -367,7 +376,6 @@ class TestPlanExecutor:
             devices = self._validated_nvme_devices(devices)
         if not devices:
             return self._skipped("nvme", "Keine NVMe-Laufwerke gefunden.")
-        prefix = self._privilege_prefix()
         details: list[str] = []
         failed = 0
         for device in devices:
@@ -381,7 +389,7 @@ class TestPlanExecutor:
                 f"FW {device.firmware}"
             )
             try:
-                health = read_nvme_smart(device.controller_path, prefix)
+                health = read_nvme_smart(device.controller_path, (), self._nvme_run)
                 details.append(
                     f"  Status: {'OK' if health.healthy else _text('WARNUNG', self.config.language)} | "
                     f"temperature: {_value(health.temperature_c)} °C | "
@@ -421,29 +429,29 @@ class TestPlanExecutor:
         devices = self._validated_nvme_devices(list_nvme_devices())
         details = [f"{d.namespace_path} | {d.model} | SN {d.serial} | FW {d.firmware} | {d.size_bytes} B"
                    for d in devices]
-        prefix = self._privilege_prefix()
         before = {}
         for device in devices:
             if self._cancel.is_set() or self._safety_triggered():
                 return self._instant_result("nvme_read", STATUS_CANCELLED if self._cancel.is_set()
                                             else STATUS_FAILED, "NVMe-Prüfung abgebrochen.", details)
             if device.controller_path not in before:
-                before[device.controller_path] = read_nvme_smart(device.controller_path, prefix)
+                before[device.controller_path] = read_nvme_smart(device.controller_path, (), self._nvme_run)
                 if before[device.controller_path].media_errors is None:
                     raise RuntimeError(_text("SMART-Medienfehlerzähler nicht verfügbar.", self.config.language))
         # Refresh the identity again after authentication, before starting fio.
         self._validated_nvme_devices(list_nvme_devices())
         runner = FioNvmeFullReadRunner(
             TestParameters(0), [d.namespace_path for d in devices], total_bytes=sum(d.size_bytes for d in devices),
-            use_pkexec=os.geteuid() != 0, log_fn=lambda _line: None,
+            use_pkexec=False, log_fn=lambda _line: None,
         )
+        self._attach_root(runner)
         result = self._run_process_step("nvme_read", runner,
             summary_extra=f"{len(devices)} NVMe; {sum(d.size_bytes for d in devices) / 1024**3:.1f} GiB")
         details.extend(result.details)
         if result.status != STATUS_CANCELLED and not self._safety_triggered():
             for controller, initial in before.items():
                 try:
-                    final = read_nvme_smart(controller, prefix)
+                    final = read_nvme_smart(controller, (), self._nvme_run)
                     for field_name in ("temperature_c", "media_errors", "error_log_entries",
                                        "critical_warning", "percentage_used", "data_units_read"):
                         old, new = getattr(initial, field_name), getattr(final, field_name)
@@ -540,8 +548,9 @@ class TestPlanExecutor:
             [gpu.index for gpu in gpus],
             self.config.dcgm_level,
             log_fn=self._log,
-            use_pkexec=os.geteuid() != 0 and shutil.which("pkexec") is not None,
+            use_pkexec=False,
         )
+        self._attach_root(runner)
         result = self._run_process_step("dcgm", runner)
         counts = runner.status_counts()
         result.summary += (
@@ -663,6 +672,33 @@ class TestPlanExecutor:
             key, status, started, started_at, " | ".join(summary_parts),
             _bounded_details(details, language=self.config.language),
         )
+
+    def _needs_root(self) -> bool:
+        if os.geteuid() == 0 or not shutil.which("pkexec"):
+            return False
+        keys = set(self.selected_step_keys())
+        return bool(keys & {"nvme", "nvme_read"}) or ("dcgm" in keys and dcgmi_available())
+
+    def _authorize_root(self) -> None:
+        """Fragt das Passwort einmal zu Beginn ab – danach läuft der Plan unbeaufsichtigt."""
+        if self._root is not None or not self._needs_root():
+            return
+        self._log(_text("Root-Berechtigung für den gesamten Testplan wird angefordert …",
+                        self.config.language))
+        broker = RootBroker(shutil.which("pkexec") or "pkexec")
+        broker.start()
+        self._root = broker
+
+    def _nvme_run(self, command, **kwargs):
+        """SMART-Abfragen über die zu Beginn autorisierte Root-Sitzung."""
+        if self._root is None:
+            return subprocess.run(command, **kwargs)
+        return self._root.run(command, **kwargs)
+
+    def _attach_root(self, runner: BaseTestRunner) -> BaseTestRunner:
+        if runner is not None and self._root is not None:
+            runner.root_broker = self._root
+        return runner
 
     def _privilege_prefix(self) -> tuple[str, ...]:
         if os.geteuid() == 0:
@@ -912,6 +948,8 @@ def _text(source: str, language: str) -> str:
         "Zusammenfassung": "Summary",
         "Details": "Details",
         "Testplan wurde manuell abgebrochen.": "The test plan was cancelled manually.",
+        "Root-Berechtigung für den gesamten Testplan wird angefordert …":
+            "Requesting root permission for the whole test plan …",
         "Teiltest wurde abgebrochen.": "The test step was cancelled.",
         "stress-ng ist nicht installiert.": "stress-ng is not installed.",
         "nvme-cli ist nicht installiert.": "nvme-cli is not installed.",

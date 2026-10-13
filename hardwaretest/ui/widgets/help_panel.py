@@ -368,6 +368,9 @@ aber keine Dateiinhalte oder Dateisystem-Prüfsummen. Ausreichend freien Speiche
 und Kühlung vorsehen. Der Plan läuft nur, solange die App geöffnet bleibt.</p>
 <p>
 Der Gesamttest führt die markierten, nicht-destruktiven Prüfungen nacheinander aus.
+Benötigt der Plan Root-Rechte (NVMe-Gesundheit, NVMe-Lesetest, DCGM), wird das
+Passwort <b>nur einmal direkt beim Start</b> abgefragt; danach läuft der Plan
+unbeaufsichtigt. Wird die Abfrage abgebrochen, startet der Plan nicht.
 CPU- und RAM-Dauer, verwendeter RAM-Anteil, Netzwerkziel sowie optionale NVIDIA-
 und DCGM-Prüfungen lassen sich vor dem Start festlegen. „Bei erstem Fehler
 abbrechen“ beendet den Ablauf nach einem fehlgeschlagenen Schritt. Ein manueller
@@ -776,6 +779,9 @@ executed rounds, including failed ones. Background monitoring covers all rounds.
 The read test detects read errors, not file-content or filesystem checksum errors.
 Provide cooling and sufficient report storage. The app must remain open.</p>
 <p>
+If the plan needs root permissions (NVMe health, NVMe read test, DCGM), the
+password is requested <b>only once right at the start</b>; the plan then runs
+unattended. Cancelling the prompt does not start the plan.
 The test plan runs the selected non-destructive checks sequentially. CPU and RAM
 duration, the memory share, network target, and optional NVIDIA/DCGM checks can
 be configured before starting. “Stop on first failure” ends the plan after a

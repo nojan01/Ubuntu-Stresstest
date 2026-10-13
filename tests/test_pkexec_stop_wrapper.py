@@ -30,3 +30,22 @@ class Test_PkexecStopWrapper:
 		time.sleep(0.3)
 		proc.stdin.close()
 		assert proc.wait(timeout=5) != 0
+
+
+def test_wrapper_announces_authorization_before_fio(tmp_path):
+    import subprocess
+
+    from hardwaretest.tests.fio_runner import AUTHORIZED_MARKER, PKEXEC_STOP_WRAPPER
+
+    fake = tmp_path / "fio"
+    fake.write_text("#!/bin/sh\necho fio-output\n")
+    fake.chmod(0o755)
+    proc = subprocess.Popen(
+        ["sh", "-c", PKEXEC_STOP_WRAPPER, "x"], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, text=True, env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+    )
+    assert proc.wait(timeout=10) == 0
+    out = proc.stdout.read().splitlines()
+    proc.stdin.close()
+    assert out[0] == AUTHORIZED_MARKER
+    assert "fio-output" in out

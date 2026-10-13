@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import os
 import shlex
 import re
 import shutil
 import subprocess
+import tempfile
 from typing import Callable, Optional
 
 from PySide6.QtCore import QProcess
@@ -137,8 +139,25 @@ class InfoPanel(QWidget):
                 f"{script_path} wurde nicht gefunden. Bitte Installation prüfen.",
             )
             return
-        command = ([str(script_path), str(target)] if is_running_as_root()
-                   else ["sudo", str(script_path), str(target)])
+        if is_running_as_root():
+            command = ["bash", str(script_path), str(target)]
+        else:
+            # root kann nicht in den FUSE-Mount des AppImage sehen: Skript vorher
+            # in eine normale Temp-Datei kopieren und danach wieder löschen.
+            # Ein Wrapper-Skript vermeidet Quoting-Probleme der Terminal-Aufrufe.
+            fd, copy_path = tempfile.mkstemp(prefix="hardwaretest-report-", suffix=".sh")
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(script_path.read_bytes())
+            fd, wrapper_path = tempfile.mkstemp(prefix="hardwaretest-report-run-", suffix=".sh")
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "#!/bin/bash\n"
+                    f"sudo bash {shlex.quote(copy_path)} {shlex.quote(str(target))}\n"
+                    "rc=$?\n"
+                    f"rm -f {shlex.quote(copy_path)} {shlex.quote(wrapper_path)}\n"
+                    "exit $rc\n"
+                )
+            command = ["bash", wrapper_path]
         if not launch_command_in_terminal(command, hold=True):
             QMessageBox.critical(
                 self,

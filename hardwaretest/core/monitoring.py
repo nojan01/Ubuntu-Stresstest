@@ -17,6 +17,7 @@ import uuid
 
 import psutil
 
+from hardwaretest.core import ipmi
 from hardwaretest.core.monitor_history import MetricHistory, is_temperature, render_chart, validated_sensor_limits
 
 
@@ -24,7 +25,8 @@ def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def collect_metrics() -> tuple[dict[str, float], list[str]]:
+def collect_metrics(root_run=None) -> tuple[dict[str, float], list[str]]:
+    """``root_run``: subprocess.run-kompatibler Root-Aufruf für IPMI (Lüfter/BMC-ECC)."""
     metrics: dict[str, float] = {"memory.percent": psutil.virtual_memory().percent}
     unavailable: list[str] = []
     try:
@@ -42,6 +44,13 @@ def collect_metrics() -> tuple[dict[str, float], list[str]]:
                 metrics[f"fan.{chip}.{index}.{sensor.label}"] = sensor.current
     except (OSError, AttributeError, RuntimeError):
         unavailable.append("fan")
+    ipmi_run = root_run or ipmi.default_runner()
+    use_ipmi = ipmi_run is not None and ipmi.ipmi_available()
+    if use_ipmi and not any(key.startswith("fan.") for key in metrics):
+        # Server wie HPE ProLiant melden Lüfter nur über den BMC (iLO).
+        fans, missing_fans = ipmi.fan_metrics(ipmi_run)
+        metrics.update(fans)
+        unavailable.extend(missing_fans)
     if not any(key.startswith("fan.") for key in metrics) and "fan" not in unavailable:
         unavailable.append("fan")
     for controller in Path("/sys/devices/system/edac/mc").glob("mc[0-9]*"):
@@ -50,6 +59,10 @@ def collect_metrics() -> tuple[dict[str, float], list[str]]:
                 metrics[f"ecc.{controller.name}.{field}"] = int((controller / field).read_text())
             except (ValueError, OSError):
                 unavailable.append(f"ecc.{controller.name}.{field}")
+    if use_ipmi:
+        sel, missing_sel = ipmi.sel_ecc_metrics(ipmi_run)
+        metrics.update(sel)
+        unavailable.extend(missing_sel)
     if not any(key.startswith("ecc.") for key in metrics):
         unavailable.append("ecc")
     # Ext4 exposes recorded filesystem errors without running fsck on a mount.

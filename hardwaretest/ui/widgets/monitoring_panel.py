@@ -1,6 +1,10 @@
 """Background telemetry with bounded UI output and incremental disk recording."""
 
+import functools
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import threading
 import time
 
@@ -11,7 +15,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from hardwaretest.core.monitoring import MonitorSession
+from hardwaretest.core import ipmi
+from hardwaretest.core.monitoring import MonitorSession, collect_metrics
+from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.monitor_history import is_temperature, render_chart
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
@@ -30,10 +36,29 @@ class MonitorWorker(QThread):
         self.stop_event = threading.Event()
         self.sensor_limits = {}
 
+    def _root_collect(self):
+        """Server mit BMC (z. B. HPE iLO): Lüfter und ECC-Ereignisse per ipmitool (einmal Passwort)."""
+        if not ipmi.ipmi_available():
+            return {}
+        if os.geteuid() == 0:
+            ipmi.ensure_ipmi_driver(subprocess.run)
+            return {}
+        if not shutil.which("pkexec"):
+            return {}
+        broker = RootBroker(shutil.which("pkexec"))
+        try:
+            broker.start()
+        except RootAuthorizationError:
+            return {}
+        self.root = broker
+        ipmi.ensure_ipmi_driver(broker.run)
+        return {"collect": functools.partial(collect_metrics, root_run=broker.run)}
+
     def run(self):
         session = None
+        self.root = None
         try:
-            session = MonitorSession(self.directory, self.limit, self.language)
+            session = MonitorSession(self.directory, self.limit, self.language, **self._root_collect())
             session.set_sensor_limits(self.sensor_limits)
             started = time.monotonic()
             while not self.stop_event.is_set():
@@ -51,6 +76,8 @@ class MonitorWorker(QThread):
                 session.record_error(str(exc))
             self.error.emit(str(exc))
         finally:
+            if self.root is not None:
+                self.root.close()
             if session:
                 try:
                     self.reports.emit((session.close(), session.summary()))

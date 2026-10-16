@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
             ))
             event.ignore()
             return
-        for panel in self._test_panels:
+        for panel in [*self._test_panels, self.ecc_panel]:
             closer = getattr(panel, "close_privileged_session", None)
             if closer is not None:
                 closer()

@@ -2,6 +2,12 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.35
+
+- ECC-Tab liest auf Servern mit BMC (IPMI) automatisch beim Start und alle 5 Minuten aus (einmalige Passwortabfrage).
+- Die ECC-Anzeige in den Testtabs (stress-ng, Prime95 …) zeigt zusätzlich die Fehler aus dem BMC-Protokoll (z. B. HPE iLO).
+- squashfs kann auch eingehängt geprüft werden (nur lesend, keine Reparatur).
+
 ### Neu in 0.2.34
 
 - Neuer Tab **ECC / Speicher**: ECC-Typ und Module (dmidecode), Kernel-EDAC-Zähler und Speicherereignisse aus dem BMC-Protokoll (ipmitool, z. B. HPE iLO).
@@ -97,7 +103,7 @@ Lizenztext befindet sich in der Datei `LICENSE`.
 
 ### Variante A – Debian-Paket (empfohlen)
 
-Für die Installation wird nur die Datei `hardwaretest_0.2.34_amd64.deb` benötigt.
+Für die Installation wird nur die Datei `hardwaretest_0.2.35_amd64.deb` benötigt.
 
 1. Die DEB-Datei herunterladen.
 2. Im Dateimanager doppelt anklicken und im Paketinstallationsprogramm
@@ -128,8 +134,8 @@ Das AppImage enthält ebenfalls Python, PySide6 und alle Python-Module. Es kann
 ohne Installation einer Python-Laufzeit gestartet werden:
 
 ```bash
-chmod +x Hardwaretest-0.2.34-x86_64.AppImage
-./Hardwaretest-0.2.34-x86_64.AppImage
+chmod +x Hardwaretest-0.2.35-x86_64.AppImage
+./Hardwaretest-0.2.35-x86_64.AppImage
 ```
 
 Native Diagnoseprogramme müssen auf der jeweiligen Distribution weiterhin über

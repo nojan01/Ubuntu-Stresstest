@@ -7,6 +7,7 @@ bietet ein aufklappbares Detail-Panel fuer alle Einzel-Cores.
 
 from __future__ import annotations
 
+import time
 from typing import List, Optional
 
 from PySide6.QtCore import QTimer, Qt
@@ -31,6 +32,7 @@ from hardwaretest.core.system_info import (
     read_edac_info,
     summarize_cpu_temperatures,
 )
+from hardwaretest.core import ipmi
 from hardwaretest.ui.i18n import language_manager
 
 
@@ -444,8 +446,20 @@ class TemperatureWidget(QWidget):
 
     def _update_edac(self) -> None:
         edac = read_edac_info()
-        text = format_edac_info(edac)
-        self._edac_label.setText(language_manager.tr(text))
+        text = language_manager.tr(format_edac_info(edac))
+        ipmi.refresh_sel_counts_async()
+        bmc = ipmi.last_sel_counts
+        if bmc is not None:
+            stamp = time.strftime("%H:%M", time.localtime(bmc.timestamp))
+            en = language_manager.language == "en"
+            text += (f"\nBMC log (iLO/IPMI, as of {stamp}): {bmc.correctable} correctable, "
+                     f"{bmc.uncorrectable} uncorrectable" if en else
+                     f"\nBMC-Protokoll (iLO/IPMI, Stand {stamp}): {bmc.correctable} korrigierbar, "
+                     f"{bmc.uncorrectable} unkorrigierbar")
+        self._edac_label.setText(text)
+        if bmc is not None and (bmc.uncorrectable or bmc.correctable):
+            self._edac_label.setStyleSheet(_CSS_RED if bmc.uncorrectable or edac.uncorrectable_errors else _CSS_YELLOW)
+            return
 
         if not edac.available:
             self._edac_label.setStyleSheet(_CSS_GREY)

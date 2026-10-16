@@ -55,6 +55,11 @@ class FilesystemDevice:
         return self.fstype in CHECKABLE_TYPES
 
     @property
+    def checkable_while_mounted(self) -> bool:
+        # squashfs ist unveränderlich; unsquashfs liest nur – auch eingehängt sicher (z. B. Snaps, Live-System).
+        return self.fstype == "squashfs" and not self.children
+
+    @property
     def repairable(self) -> bool:
         return self.fstype in REPAIRABLE_TYPES
 
@@ -98,11 +103,13 @@ def validate_identity(expected: FilesystemDevice) -> FilesystemDevice:
     return current
 
 
-def validate_device(expected: FilesystemDevice) -> FilesystemDevice:
+def validate_device(expected: FilesystemDevice, action: str = "check") -> FilesystemDevice:
     """Fail closed on identity changes, mounts, active layers or unreadable state."""
     current = validate_identity(expected)
     if not current.supported or current.kind not in {"part", "disk", "lvm", "crypt", "loop", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10", "md"}:
         raise ValueError("Only offline ext2/3/4, xfs, vfat, squashfs / Nur ext2/3/4, xfs, vfat, squashfs offline unterstützt.")
+    if action == "check" and current.checkable_while_mounted:
+        return current
     numbers = mounted_numbers(Path("/proc/self/mountinfo").read_text())
     # Also reject mounts in the host's initial namespace, when different.
     numbers |= mounted_numbers(Path("/proc/1/mountinfo").read_text())
@@ -326,7 +333,7 @@ def worker_main(argv: list[str]) -> int:
             report, code = read_online_status(current, args.language)
             print(report, flush=True)
             return code
-        validate_device(device)
+        validate_device(device, args.action)
         # No implicit prompts or automatic unmounting. e2fsck also checks mounts.
         return run_checker(args.action, args.device, args.fstype)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:

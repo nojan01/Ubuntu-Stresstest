@@ -13,7 +13,7 @@ def test_filesystem_controls_block_mounted_and_unsupported():
     panel = FilesystemPanel()
     panel.scanned([
         FilesystemDevice("/dev/a", "ext4", "a", "8:1", ("/",), "part"),
-        FilesystemDevice("/dev/b", "xfs", "b", "8:2", (), "part"),
+        FilesystemDevice("/dev/b", "btrfs", "b", "8:2", (), "part"),
         FilesystemDevice("/dev/c", "ext4", "c", "8:3", (), "part"),
     ])
     assert not panel.repair.isEnabled()

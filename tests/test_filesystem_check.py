@@ -85,7 +85,7 @@ def test_commands_and_exit_codes_are_conservative():
 def test_inventory_includes_mounted_and_unsupported_for_explanation(monkeypatch):
     rows = {"blockdevices": [{"name": "/dev/test", "children": [
         {"name": "/dev/test0", "type": "part", "fstype": "ext4", "uuid": "abc", "maj:min": "8:1", "mountpoints": ["/"]},
-        {"name": "/dev/test1", "type": "part", "fstype": "xfs", "uuid": "xyz", "maj:min": "8:2", "mountpoints": [None]},
+        {"name": "/dev/test1", "type": "part", "fstype": "btrfs", "uuid": "xyz", "maj:min": "8:2", "mountpoints": [None]},
     ]}]}
     monkeypatch.setattr(fs.subprocess, "run", lambda *_a, **_kw: SimpleNamespace(stdout=json.dumps(rows)))
     devices = fs.list_filesystems()
@@ -154,3 +154,33 @@ def test_check_and_repair_real_temporary_image(tmp_path):
     assert image.read_bytes() == before  # -n must not change a byte.
     assert fs.run_checker("repair", str(image)) == 1
     assert fs.run_checker("check", str(image)) == 0
+
+
+@pytest.mark.parametrize(("fstype", "action", "expected"), [
+    ("xfs", "check", ["-n"]), ("xfs", "repair", []),
+    ("vfat", "check", ["-n"]), ("vfat", "repair", ["-a", "-w"]),
+])
+def test_checker_commands_for_other_filesystems(fstype, action, expected):
+    command = fs.checker_command(action, "/dev/x", fstype)
+    assert command[1:] == [*expected, "/dev/x"]
+    assert "-L" not in command
+
+
+def test_squashfs_cannot_be_repaired():
+    with pytest.raises(ValueError):
+        fs.checker_command("repair", "/dev/x", "squashfs")
+    assert not fs.FilesystemDevice("/dev/x", "squashfs", "", "7:0", (), "loop").repairable
+
+
+@pytest.mark.parametrize(("fstype", "action", "code", "expected"), [
+    ("xfs", "check", 1, 4), ("xfs", "repair", 2, 8), ("xfs", "check", 0, 0),
+    ("vfat", "check", 1, 4), ("vfat", "repair", 1, 1), ("squashfs", "check", 1, 4),
+])
+def test_normalize_exit(fstype, action, code, expected):
+    assert fs.normalize_exit(fstype, action, code) == expected
+
+
+@pytest.mark.parametrize(("full", "expected"), [(True, ["-pf", "/dev/null"]), (False, ["-lls"])])
+def test_squashfs_check_reads_data_when_supported(monkeypatch, full, expected):
+    monkeypatch.setattr(fs, "_unsquashfs_full_read", lambda: full)
+    assert fs.checker_command("check", "/dev/x", "squashfs")[1:] == ["-no-progress", *expected, "/dev/x"]

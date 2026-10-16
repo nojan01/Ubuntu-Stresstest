@@ -15,6 +15,31 @@ import sys
 from hardwaretest.core.paths import self_command_for_root
 
 
+CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs"}
+# squashfs ist ein schreibgeschütztes Abbild und kann nicht repariert werden.
+REPAIRABLE_TYPES = CHECKABLE_TYPES - {"squashfs"}
+
+_TOOLS = {
+    "e2fsck": ("/usr/sbin/e2fsck", "/sbin/e2fsck", "e2fsprogs"),
+    "xfs_repair": ("/usr/sbin/xfs_repair", "/sbin/xfs_repair", "xfsprogs"),
+    "fsck.fat": ("/usr/sbin/fsck.fat", "/sbin/fsck.fat", "dosfstools"),
+    "unsquashfs": ("/usr/bin/unsquashfs", "/usr/sbin/unsquashfs", "squashfs-tools"),
+}
+
+
+def _tool(name: str) -> str:
+    first, second, _package = _TOOLS[name]
+    return second if not os.path.exists(first) and os.path.exists(second) else first
+
+
+def _unsquashfs_full_read() -> bool:
+    try:
+        result = subprocess.run([_tool("unsquashfs"), "-help"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "-pf" in (result.stdout + result.stderr)
+
+
 @dataclass(frozen=True)
 class FilesystemDevice:
     path: str
@@ -27,7 +52,11 @@ class FilesystemDevice:
 
     @property
     def supported(self) -> bool:
-        return self.fstype in {"ext2", "ext3", "ext4"}
+        return self.fstype in CHECKABLE_TYPES
+
+    @property
+    def repairable(self) -> bool:
+        return self.fstype in REPAIRABLE_TYPES
 
 
 def list_filesystems() -> list[FilesystemDevice]:
@@ -72,8 +101,8 @@ def validate_identity(expected: FilesystemDevice) -> FilesystemDevice:
 def validate_device(expected: FilesystemDevice) -> FilesystemDevice:
     """Fail closed on identity changes, mounts, active layers or unreadable state."""
     current = validate_identity(expected)
-    if not current.supported or current.kind not in {"part", "disk", "lvm", "crypt", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10", "md"}:
-        raise ValueError("Only offline ext2/ext3/ext4 / Nur ext2/ext3/ext4 offline unterstützt.")
+    if not current.supported or current.kind not in {"part", "disk", "lvm", "crypt", "loop", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10", "md"}:
+        raise ValueError("Only offline ext2/3/4, xfs, vfat, squashfs / Nur ext2/3/4, xfs, vfat, squashfs offline unterstützt.")
     numbers = mounted_numbers(Path("/proc/self/mountinfo").read_text())
     # Also reject mounts in the host's initial namespace, when different.
     numbers |= mounted_numbers(Path("/proc/1/mountinfo").read_text())
@@ -86,12 +115,29 @@ def validate_device(expected: FilesystemDevice) -> FilesystemDevice:
     return current
 
 
-def checker_command(action: str, device: str) -> list[str]:
+def checker_command(action: str, device: str, fstype: str = "ext4") -> list[str]:
     if action not in {"check", "repair"}:
         raise ValueError("Unknown filesystem action")
+    check = action == "check"
+    if fstype == "xfs":
+        # -n: nur lesen. Niemals -L (verwirft das Journal und damit Daten).
+        return [_tool("xfs_repair"), *(["-n"] if check else []), device]
+    if fstype == "vfat":
+        # -n: nur lesen; -a: automatisch sicher reparieren, -w: sofort schreiben.
+        return [_tool("fsck.fat"), *(["-n"] if check else ["-a", "-w"]), device]
+    if fstype == "squashfs":
+        if not check:
+            raise ValueError("squashfs is read-only / squashfs ist schreibgeschützt – keine Reparatur möglich.")
+        if _unsquashfs_full_read():
+            # -pf liest alle Metadaten UND alle Datenblöcke (inkl. Dekomprimierung).
+            return [_tool("unsquashfs"), "-no-progress", "-pf", "/dev/null", device]
+        # Ältere squashfs-tools (< 4.6): nur Superblock, Inode- und Verzeichnistabellen.
+        return [_tool("unsquashfs"), "-no-progress", "-lls", device]
+    if fstype not in {"ext2", "ext3", "ext4"}:
+        raise ValueError(f"Unsupported filesystem / Nicht unterstützt: {fstype}")
     # -n is strictly read-only. -p repairs only problems e2fsck considers safe;
     # never use -y, never run the generic fsck dispatcher on mounted filesystems.
-    return ["/usr/sbin/e2fsck", "-f", "-n" if action == "check" else "-p", device]
+    return [_tool("e2fsck"), "-f", "-n" if check else "-p", device]
 
 
 def worker_command(action: str, device: FilesystemDevice, language: str = "de") -> list[str]:
@@ -199,19 +245,62 @@ def read_online_status(device: FilesystemDevice, language: str = "de") -> tuple[
     return "\n".join(lines), 4 if failed else (0 if covered else 8)
 
 
-def run_checker(action: str, device: str) -> int:
+def normalize_exit(fstype: str, action: str, code: int, output: str = "") -> int:
+    """Rechnet Exit-Codes von xfs_repair/fsck.fat/unsquashfs in e2fsck-Semantik um."""
+    if code < 0:
+        return 8
+    if fstype == "xfs":
+        if code == 0:
+            return 0
+        if code == 1 and action == "check":
+            return 4
+        return 8  # 2 = Journal nicht leer, sonst Betriebsfehler
+    if fstype == "vfat":
+        if code == 0:
+            return 0
+        if code == 1:
+            return 4 if action == "check" else 1
+        return 8
+    if fstype == "squashfs":
+        return 0 if code == 0 else 4
+    return code
+
+
+def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
     env = {**os.environ, "LC_ALL": "C"}
-    command = checker_command(action, device)
+    command = checker_command(action, device, fstype)
+    if not os.path.exists(command[0]):
+        package = next(p for n, (a, b, p) in _TOOLS.items() if command[0] in (a, b))
+        print(f"{command[0]} fehlt / missing. Installation: sudo apt install {package}", flush=True)
+        return 8
     print("$ " + " ".join(command), flush=True)
     declined_fix = False
     skipped_journal = False
+    dirty_log = False
+    # unsquashfs -lls listet jede Datei; nur eine Zusammenfassung ausgeben.
+    listing = fstype == "squashfs" and "-lls" in command
+    listed = 0
     with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True, errors="replace", env=env) as process:
         for line in process.stdout:
+            if listing and line.startswith(("-", "d", "l", "c", "b", "p", "s")) and "/" in line:
+                listed += 1
+                continue
             print(line, end="", flush=True)
-            declined_fix |= bool(re.search(r"\?\s*no\b", line))
-            skipped_journal |= "skipping journal recovery" in line.lower()
+            if fstype in {"ext2", "ext3", "ext4"}:
+                declined_fix |= bool(re.search(r"\?\s*no\b", line))
+                skipped_journal |= "skipping journal recovery" in line.lower()
+            dirty_log |= "log" in line.lower() and "destroy" in line.lower()
         code = process.wait()
+    if listing:
+        print(f"{listed} Einträge gelesen / entries read (Metadaten; Datenblöcke nicht geprüft / data blocks not verified).",
+              flush=True)
+    if fstype == "xfs" and (code == 2 or dirty_log):
+        print("XFS-Journal nicht leer: Dateisystem einmal einhängen und sauber aushängen, dann erneut prüfen. "
+              "Kein xfs_repair -L (Datenverlust). / XFS log dirty: mount and cleanly unmount once, then check again.",
+              flush=True)
+    if fstype not in {"ext2", "ext3", "ext4"}:
+        return normalize_exit(fstype, action, code)
     # Some e2fsck versions return 0 for a declined free-block-count correction.
     # Do not claim a clean filesystem merely from the exit status in that case.
     if action == "check" and skipped_journal:
@@ -239,7 +328,7 @@ def worker_main(argv: list[str]) -> int:
             return code
         validate_device(device)
         # No implicit prompts or automatic unmounting. e2fsck also checks mounts.
-        return run_checker(args.action, args.device)
+        return run_checker(args.action, args.device, args.fstype)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(str(exc), file=sys.stderr, flush=True)
         return 8

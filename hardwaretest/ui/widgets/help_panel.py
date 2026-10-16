@@ -898,9 +898,12 @@ progress, cancelled scans and old results are not treated as successful new test
 <p>The Filesystem tab provides a read-only <b>status diagnosis for mounted filesystems</b>,
 including ext2/3/4, Btrfs, XFS, FAT/exFAT and NTFS: mount state, space and available
 error indications. It is not a complete integrity check.</p>
-<p>Full integrity checking uses e2fsck -f -n for <b>offline ext2/ext3/ext4</b>.
+<p>Full integrity checking for <b>offline</b> filesystems: e2fsck -f -n (ext2/3/4),
+xfs_repair -n (XFS), fsck.fat -n (vfat) and unsquashfs -pf /dev/null (squashfs, reads all data blocks).
+squashfs is a read-only image and cannot be repaired; rebuild the image instead.
 Mounted filesystems are blocked for integrity checking and repair; use a live USB for the system partition.
-Repair is a separate confirmed action (e2fsck -f -p, never forced yes).
+Repair is a separate confirmed action (e2fsck -f -p, xfs_repair without -L, fsck.fat -a -w; never forced yes).
+If XFS reports a dirty log, mount and cleanly unmount once – xfs_repair -L is never used.
 Back up first. With failing hardware, create an image before attempting repair.
 Do not allow other programs to mount/access the device during the operation.
 Do not power off or interrupt a repair. Recheck afterward.
@@ -943,9 +946,12 @@ alte Ergebnisse werden nicht als erfolgreicher neuer Test gewertet.</p>
 <p>Der Dateisystem-Tab bietet eine lesende <b>Statusdiagnose für eingehängte Dateisysteme</b>,
 auch ext2/3/4, Btrfs, XFS, FAT/exFAT und NTFS: Einhängezustand, Speicherplatz und verfügbare
 Fehlerhinweise. Dies ist keine vollständige Strukturprüfung.</p>
-<p>Die vollständige Strukturprüfung verwendet e2fsck -f -n für <b>ext2/ext3/ext4 offline</b>.
+<p>Vollständige Strukturprüfung für <b>ausgehängte</b> Dateisysteme: e2fsck -f -n (ext2/3/4),
+xfs_repair -n (XFS), fsck.fat -n (vfat) und unsquashfs -pf /dev/null (squashfs, liest alle Datenblöcke).
+squashfs ist ein schreibgeschütztes Abbild und kann nicht repariert werden; ggf. neu erstellen.
 Für Strukturprüfung und Reparatur bleiben eingehängte Dateisysteme gesperrt; für die Systempartition ein Live-USB verwenden.
-Reparatur ist eine separat bestätigte Aktion (e2fsck -f -p, keine erzwungene Ja-Antwort).
+Reparatur ist eine separat bestätigte Aktion (e2fsck -f -p, xfs_repair ohne -L, fsck.fat -a -w; keine erzwungene Ja-Antwort).
+Meldet XFS ein nicht leeres Journal, einmal einhängen und sauber aushängen – xfs_repair -L wird nie verwendet.
 Vorher sichern; bei Hardwaredefekten zuerst ein Abbild anlegen.
 Währenddessen keine Zugriffe und kein Einhängen durch andere Programme zulassen.
 Nicht ausschalten oder eine Reparatur unterbrechen. Anschließend erneut prüfen.

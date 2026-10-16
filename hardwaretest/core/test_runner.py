@@ -59,7 +59,8 @@ _FAILURE_PATTERNS = [
 
 # Rückgabecodes, die bei einem ausdrücklich vom Bediener abgebrochenen
 # Subprozess entstehen können (direktes Signal oder 128 + Signalnummer).
-_TERMINATED_EXIT_CODES = {-15, -9, -2, 143, 137, 130}
+# fio beendet sich nach SIGTERM/SIGINT selbst mit Exit-Code 128.
+_TERMINATED_EXIT_CODES = {-15, -9, -2, 128, 143, 137, 130}
 _MAX_STORED_ERRORS = 200
 
 

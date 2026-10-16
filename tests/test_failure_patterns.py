@@ -36,3 +36,4 @@ def test_terminated_exit_codes_constant():
     assert -9 in test_runner._TERMINATED_EXIT_CODES   # SIGKILL
     assert 143 in test_runner._TERMINATED_EXIT_CODES  # 128+15
     assert 137 in test_runner._TERMINATED_EXIT_CODES  # 128+9
+    assert 128 in test_runner._TERMINATED_EXIT_CODES  # fio nach SIGTERM

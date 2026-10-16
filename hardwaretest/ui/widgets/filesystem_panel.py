@@ -47,9 +47,9 @@ class FilesystemPanel(QWidget):
         hint.setWordWrap(True)
         self.bind(hint,
                   "Eingehängte Dateisysteme: Statusdiagnose mit Einhängezustand, Speicherplatz und verfügbaren Fehlerhinweisen. "
-                  "Vollständige Strukturprüfung und Reparatur für ext2/ext3/ext4 nur ausgehängt; für die Systempartition ein Live-USB verwenden.",
+                  "Vollständige Strukturprüfung für ext2/3/4, xfs, vfat und squashfs, Reparatur (außer squashfs) nur ausgehängt; für die Systempartition ein Live-USB verwenden.",
                   "Mounted filesystems: status diagnosis with mount state, free space and available error indications. "
-                  "Full integrity check and repair for ext2/ext3/ext4 require an unmounted filesystem; use a live USB for the system partition.")
+                  "Full integrity check for ext2/3/4, xfs, vfat and squashfs and repair (except squashfs) require an unmounted filesystem; use a live USB for the system partition.")
         layout.addWidget(hint)
         self.devices = QComboBox()
         self.devices.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -166,7 +166,7 @@ class FilesystemPanel(QWidget):
         for widget in (self.devices, self.refresh, self.output_dir, self.choose):
             widget.setEnabled(not busy)
         self.check.setEnabled(allowed and not busy)
-        self.repair.setEnabled(allowed and not busy)
+        self.repair.setEnabled(allowed and device.repairable and not busy)
         self.online.setEnabled(device is not None and bool(device.mounts) and not busy)
         if device is None:
             message = self.text("Bitte Laufwerke aktualisieren und ein Dateisystem auswählen.", "Refresh drives and select a filesystem.")
@@ -177,6 +177,9 @@ class FilesystemPanel(QWidget):
             message = self.text("Dieses Dateisystem wird noch nicht unterstützt. Keine Reparatur verfügbar.", "This filesystem is not supported yet. Repair unavailable.")
         elif not allowed:
             message = self.text("Eingehängt/in Benutzung – Prüfung und Reparatur gesperrt. Live-USB verwenden.", "Mounted/in use – check and repair blocked. Use a live USB.")
+        elif not device.repairable:
+            message = self.text("Offline-Kandidat. squashfs ist schreibgeschützt: nur Prüfung, keine Reparatur möglich.",
+                                "Offline candidate. squashfs is read-only: check only, repair impossible.")
         else:
             message = self.text("Offline-Kandidat. Identität und Einhängezustand werden vor der Aktion erneut geprüft.", "Offline candidate. Device identity and mount state will be checked again before the operation.")
         self.reason.setText(message)
@@ -192,17 +195,19 @@ class FilesystemPanel(QWidget):
             return
         if action != "status" and (not device.supported or device.mounts or device.children):
             return
+        if action == "repair" and not device.repairable:
+            return
         if action == "repair":
             answer = QMessageBox.warning(
                 self, self.text("Reparatur bestätigen", "Confirm repair"),
                 self.text(f"{device.path} ({device.fstype}, UUID {device.uuid})\n\n"
                           "Eine Reparatur verändert Dateisystem-Metadaten und kann beschädigte Daten entfernen. "
                           "Vorher ein Backup anlegen; bei Hardwaredefekten zuerst ein Abbild erstellen. "
-                          "Es werden nur automatisch sicher behebbare Fehler korrigiert (e2fsck -p), keine erzwungene Ja-Antwort. Fortfahren?",
+                          "Es werden nur automatisch behebbare Fehler korrigiert (e2fsck -p, xfs_repair ohne -L, fsck.fat -a), keine erzwungene Ja-Antwort. Fortfahren?",
                           f"{device.path} ({device.fstype}, UUID {device.uuid})\n\n"
                           "Repair changes filesystem metadata and may remove damaged data. Back up first; "
-                          "if hardware is failing, create an image first. Only problems e2fsck -p considers "
-                          "safe to fix automatically will be repaired; no forced yes. Continue?"),
+                          "if hardware is failing, create an image first. Only automatically fixable problems are "
+                          "repaired (e2fsck -p, xfs_repair without -L, fsck.fat -a); no forced yes. Continue?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )

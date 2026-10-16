@@ -34,8 +34,8 @@ while IFS= read -r line; do
     case "${1:-}" in
       fio|dcgmi) ;;
       nvme) case "${2:-}" in smart-log|self-test-log|device-self-test) ;; *) ok=0;; esac ;;
-      ipmitool) case "${2:-} ${3:-}" in "sdr type"|"sel list"|"sel elist"|"sel info") ;; *) ok=0;; esac ;;
-      dmidecode) [ $# -eq 3 ] && [ "$2" = "-t" ] && [ "$3" = memory ] || ok=0 ;;
+      ipmitool) case "${2:-} ${3:-}" in "sdr type"|"sdr elist"|"sel list"|"sel elist"|"sel info"|"mc info") ;; *) ok=0;; esac ;;
+      dmidecode) [ $# -eq 3 ] && [ "$2" = "-t" ] && case "$3" in memory|system) true;; *) false;; esac || ok=0 ;;
       modprobe) [ $# -eq 3 ] && [ "$2" = "-q" ] && case "$3" in ipmi_si|ipmi_devintf) true;; *) false;; esac || ok=0 ;;
       *) ok=0 ;;
     esac

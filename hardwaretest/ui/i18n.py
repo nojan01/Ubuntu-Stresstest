@@ -31,7 +31,6 @@ _EN: dict[str, str] = {
     "Partitionen": "Partitions",
     "Dateisystem": "Filesystem",
     "Langzeitmonitoring": "Long-term monitoring",
-    "ECC / Speicher": "ECC / Memory",
     "Begleitendes Monitoring mit Sicherheitsabbruch": "Background monitoring with safety stop",
     "Temperaturgrenze / Messintervall": "Temperature limit / sample interval",
     "Aktion läuft": "Operation running",

@@ -27,7 +27,7 @@ class SelCounts:
     timestamp: float
 
 
-# Letzter erfolgreich gelesener Stand des BMC-Protokolls (ECC-Tab, Monitoring, Gesamttest).
+# Letzter erfolgreich gelesener Stand des BMC-Protokolls (ProLiant-Info-Tab, Monitoring, Gesamttest).
 # Die ECC-Anzeigen der Testtabs lesen ihn, weil sie selbst keine Root-Rechte haben.
 last_sel_counts: Optional[SelCounts] = None
 
@@ -242,3 +242,148 @@ def refresh_sel_counts_async(max_age: float = 60.0) -> None:
         finally:
             _poll_running = False
     threading.Thread(target=worker, daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# ProLiant-Info: Erkennung, Systemdaten, alle Sensoren, komplettes Ereignisprotokoll
+
+def is_proliant() -> bool:
+    vendor = _read("/sys/class/dmi/id/sys_vendor")
+    product = _read("/sys/class/dmi/id/product_name")
+    return bool(re.search(r"\bhpe?\b|hewlett", vendor, re.I)) and "proliant" in product.lower()
+
+
+def system_identity() -> dict[str, str]:
+    base = "/sys/class/dmi/id/"
+    return {key: _read(base + name) for key, name in (
+        ("vendor", "sys_vendor"), ("product", "product_name"), ("bios", "bios_version"),
+        ("bios_date", "bios_date"))}
+
+
+def _run_text(run: Runner, cmd: list[str], timeout: float = 60) -> tuple[Optional[str], str]:
+    try:
+        result = run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+        return None, str(exc)
+    if result.returncode:
+        return None, (result.stderr or result.stdout).strip() or f"Exit {result.returncode}"
+    return result.stdout, ""
+
+
+def parse_key_values(text: str, separator: str = ":") -> dict[str, str]:
+    values = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition(separator)
+        if sep and key.strip() and value.strip() and key.strip() not in values:
+            values[key.strip()] = value.strip()
+    return values
+
+
+def read_bmc_info(run: Runner) -> tuple[dict[str, str], str]:
+    """``ipmitool mc info``: Firmware des BMC (iLO), Hersteller, IPMI-Version."""
+    text, error = _run_text(run, ["ipmitool", "mc", "info"], 30)
+    return (parse_key_values(text) if text else {}), error
+
+
+def read_dmi_system(run: Runner) -> dict[str, str]:
+    """Seriennummer/SKU stehen nur root-lesbar in DMI."""
+    text, _error = _run_text(run, ["dmidecode", "-t", "system"], 30)
+    return parse_key_values(text) if text else {}
+
+
+@dataclass
+class Sensor:
+    name: str
+    status: str
+    entity: str
+    reading: str
+    severity: str  # ok | warn | error | info
+
+
+def _sensor_severity(status: str, reading: str) -> str:
+    status = status.lower()
+    text = reading.lower()
+    if status in {"cr", "nr", "lnr", "lcr", "ucr", "unr"} or re.search(r"fail|fault|critical|lost|non-recoverable", text):
+        return "error"
+    if status in {"nc", "lnc", "unc"} or re.search(r"degraded|predictive|warning|redundancy lost|absent", text):
+        return "warn"
+    if status == "ok":
+        return "ok"
+    return "info"  # ns = keine Messung (Steckplatz leer, Sensor deaktiviert)
+
+
+def parse_sensors(text: str) -> list[Sensor]:
+    """``ipmitool sdr elist``: ``Name | 30h | ok | 7.1 | 35 degrees C``."""
+    sensors = []
+    for line in text.splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) < 5 or not parts[0]:
+            continue
+        sensors.append(Sensor(parts[0], parts[2], parts[3], parts[4], _sensor_severity(parts[2], parts[4])))
+    return sensors
+
+
+def read_sensors(run: Runner) -> tuple[Optional[list[Sensor]], str]:
+    text, error = _run_text(run, ["ipmitool", "sdr", "elist"], 120)
+    return (parse_sensors(text) if text is not None else None), error
+
+
+@dataclass
+class LogEvent:
+    number: str
+    date: str
+    time: str
+    sensor: str
+    event: str
+    direction: str
+    severity: str  # error | warn | info
+
+    @property
+    def memory(self) -> bool:
+        return bool(_SEL_MEMORY.search(self.sensor + " " + self.event))
+
+
+_EVENT_ERROR = re.compile(r"uncorrectable|multi-?bit|fatal|failure|fault|critical|non-recoverable|ierr|"
+                          r"machine check|bus (?:fatal|uncorrectable)|lost|power off|ac lost|thermal trip|"
+                          r"processor.*error|config(?:uration)? error", re.I)
+_EVENT_WARN = re.compile(r"correctable|single-?bit|predictive|non-critical|degraded|warning|upper non|lower non|"
+                         r"redundancy|watchdog|timeout|throttl|limit|presence|removed|absent|power cycle|reset", re.I)
+
+
+def _event_severity(sensor: str, event: str, direction: str) -> str:
+    if direction.lower().startswith("deasserted"):
+        return "info"
+    text = f"{sensor} {event}"
+    if _EVENT_ERROR.search(text.replace("Correctable", "")):
+        return "error"
+    if _EVENT_WARN.search(text):
+        return "warn"
+    return "info"
+
+
+def parse_event_log(text: str) -> list[LogEvent]:
+    """``ipmitool sel elist``: ``1 | 10/15/2026 | 12:00:00 | Memory #0x01 | Correctable ECC | Asserted``."""
+    events = []
+    for line in text.splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) < 5 or not parts[0]:
+            continue
+        number, date, clock, sensor, event = parts[:5]
+        direction = parts[5] if len(parts) > 5 else ""
+        events.append(LogEvent(number, date, clock, sensor, event, direction,
+                               _event_severity(sensor, event, direction)))
+    return events
+
+
+def read_event_log(run: Runner) -> tuple[Optional[list[LogEvent]], str]:
+    text, error = _run_text(run, ["ipmitool", "sel", "elist"], 180)
+    if text is None:
+        return None, error
+    events = parse_event_log(text)
+    _remember(parse_sel_memory(text))
+    return events, ""
+
+
+def read_sel_info(run: Runner) -> dict[str, str]:
+    text, _error = _run_text(run, ["ipmitool", "sel", "info"], 30)
+    return parse_key_values(text) if text else {}

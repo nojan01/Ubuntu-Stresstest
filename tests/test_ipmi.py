@@ -35,3 +35,48 @@ def test_sel_counts_are_remembered():
         return subprocess.CompletedProcess(cmd, 0, text, "")
     ipmi.sel_ecc_metrics(run)
     assert (ipmi.last_sel_counts.correctable, ipmi.last_sel_counts.uncorrectable) == (1, 1)
+
+
+SEL = """   1 | 10/15/2026 | 08:00:00 | Memory #0x01 | Correctable ECC (@DIMM 3) | Asserted
+   2 | 10/15/2026 | 08:05:00 | Power Supply #0x02 | Failure detected | Asserted
+   3 | 10/15/2026 | 08:06:00 | Power Supply #0x02 | Failure detected | Deasserted
+   4 | 10/15/2026 | 08:07:00 | System Event #0x10 | Timestamp Clock Sync | Asserted
+"""
+
+
+def test_parse_event_log_severity():
+    events = ipmi.parse_event_log(SEL)
+    assert [e.severity for e in events] == ["warn", "error", "info", "info"]
+    assert events[0].memory and not events[1].memory
+
+
+def test_parse_sensors():
+    text = ("01-Inlet Ambient  | 01h | ok  |  7.1 | 22 degrees C\n"
+            "Fan 1            | 30h | ok  | 29.1 | 30.58 percent\n"
+            "Power Supply 2   | 51h | cr  | 10.2 | Failure detected\n"
+            "PCI 3            | 40h | ns  | 11.3 | Disabled\n")
+    sensors = ipmi.parse_sensors(text)
+    assert [s.severity for s in sensors] == ["ok", "ok", "error", "info"]
+
+
+def test_proliant_panel_renders(monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from datetime import datetime
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from hardwaretest.ui.widgets import proliant_panel
+    monkeypatch.setattr(proliant_panel.ipmi, "is_proliant", lambda: False)
+    monkeypatch.setattr(proliant_panel.ipmi, "ipmi_available", lambda: False)
+    panel = proliant_panel.ProliantPanel()
+    assert not panel.notice.isHidden()
+    data = {"identity": {"vendor": "HPE", "product": "ProLiant DL380 Gen10"}, "proliant": True,
+            "time": datetime.now(), "dmi_system": {"Serial Number": "CZ123"}, "bmc": {"Firmware Revision": "2.90"},
+            "bmc_error": "", "sel_info": {"Entries": "4"}, "sensors": ipmi.parse_sensors("Fan 1 | 30h | ok | 29.1 | 30 percent"),
+            "sensors_error": "", "events": ipmi.parse_event_log(SEL), "events_error": "",
+            "ecc": ("warn", "ECC", "details")}
+    panel.show_result(data)
+    assert panel.events.rowCount() == 4
+    panel.event_filter.setCurrentIndex(2)
+    assert panel.events.rowCount() == 1
+    assert "CZ123" in panel.html_report()

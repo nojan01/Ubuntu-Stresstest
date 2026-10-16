@@ -908,8 +908,8 @@ Back up first. With failing hardware, create an image before attempting repair.
 Do not allow other programs to mount/access the device during the operation.
 Do not power off or interrupt a repair. Recheck afterward.
 Unsupported filesystems are listed but not changed. No repairs in automated plans.</p>
-<h2>ECC / Memory</h2>
-<p>Reads the installed memory and ECC type (dmidecode), kernel EDAC counters and memory events from the BMC log (ipmitool, e.g. HPE iLO). On HPE ProLiant, corrected ECC errors are often only visible in the iLO log. Requires the packages <code>ipmitool</code> and <code>dmidecode</code> and the administrator password once. On servers with a BMC, long-term monitoring additionally records fan speeds and ECC events via IPMI.</p>
+<h2>ProLiant Info</h2>
+<p>Reads directly from the HPE iLO via ipmitool: system data (model, serial number, BIOS, iLO firmware), all sensors (temperatures, fans, power supplies, voltages) and the complete event log (IPMI SEL) with rating (red = error, orange = warning), filter, search and HTML export. The <i>Memory / ECC</i> page shows the ECC type, modules, kernel EDAC counters and memory events. On a ProLiant the tab reads automatically at startup and every 5 minutes (administrator password asked once). If no ProLiant is detected, a notice is shown and the iLO information is inactive; it can still be read manually (e.g. other servers with IPMI). Requires <code>ipmitool</code> and <code>dmidecode</code>. Long-term monitoring additionally records fan speeds and ECC events via IPMI.</p>
 <h2>Long-term monitoring</h2>
 <p><b>Individual temperature limits:</b> Only checked sensors override the default.
 Limits are saved per user and shared with test-plan monitoring. Follow hardware
@@ -958,8 +958,8 @@ Vorher sichern; bei Hardwaredefekten zuerst ein Abbild anlegen.
 Währenddessen keine Zugriffe und kein Einhängen durch andere Programme zulassen.
 Nicht ausschalten oder eine Reparatur unterbrechen. Anschließend erneut prüfen.
 Andere Dateisysteme werden angezeigt, aber nicht verändert. Keine Reparatur im Gesamttestplan.</p>
-<h2>ECC / Speicher</h2>
-<p>Liest verbauten Speicher und ECC-Typ (dmidecode), Kernel-EDAC-Zähler und Speicherereignisse aus dem BMC-Protokoll (ipmitool, z. B. HPE iLO). Auf HPE ProLiant sind korrigierte ECC-Fehler oft nur im iLO-Protokoll sichtbar. Benötigt die Pakete <code>ipmitool</code> und <code>dmidecode</code> sowie einmalig das Administrator-Passwort. Auf Servern mit BMC zeichnet das Langzeitmonitoring zusätzlich Lüfterdrehzahlen und ECC-Ereignisse über IPMI auf.</p>
+<h2>ProLiant Info</h2>
+<p>Liest per ipmitool direkt vom HPE iLO: Systemdaten (Modell, Seriennummer, BIOS, iLO-Firmware), alle Sensoren (Temperaturen, Lüfter, Netzteile, Spannungen) und das komplette Ereignisprotokoll (IPMI SEL) mit Bewertung (rot = Fehler, orange = Warnung), Filter, Suche und HTML-Export. Die Seite <i>Speicher / ECC</i> zeigt ECC-Typ, Module, Kernel-EDAC-Zähler und Speicherereignisse. Auf einem ProLiant liest der Tab beim Start automatisch und danach alle 5 Minuten aus (einmalige Passwortabfrage). Wird kein ProLiant erkannt, erscheint ein Hinweis und die iLO-Informationen sind nicht aktiv; manuelles Auslesen bleibt möglich (z. B. andere Server mit IPMI). Benötigt <code>ipmitool</code> und <code>dmidecode</code>. Das Langzeitmonitoring zeichnet zusätzlich Lüfterdrehzahlen und ECC-Ereignisse über IPMI auf.</p>
 <h2>Langzeitmonitoring</h2>
 <p><b>Individuelle Temperaturgrenzen:</b> Nur aktivierte Sensorzeilen überschreiben
 den Standardwert. Grenzen werden pro Benutzer gespeichert und auch im Gesamttest

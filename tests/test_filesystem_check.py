@@ -66,7 +66,7 @@ def test_unreadable_mount_state_fails_closed(monkeypatch):
 
 def test_worker_never_runs_checker_after_rejected_validation(monkeypatch):
     monkeypatch.setattr(fs.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(fs, "validate_device", lambda _: (_ for _ in ()).throw(ValueError("mounted")))
+    monkeypatch.setattr(fs, "validate_device", lambda *_: (_ for _ in ()).throw(ValueError("mounted")))
     monkeypatch.setattr(fs, "run_checker", lambda *_a, **_k: pytest.fail("must not run"))
     assert fs.worker_main(["repair", "--device", "/dev/test0", "--uuid", "abc", "--number", "8:1", "--fstype", "ext4"]) == 8
 
@@ -184,3 +184,11 @@ def test_normalize_exit(fstype, action, code, expected):
 def test_squashfs_check_reads_data_when_supported(monkeypatch, full, expected):
     monkeypatch.setattr(fs, "_unsquashfs_full_read", lambda: full)
     assert fs.checker_command("check", "/dev/x", "squashfs")[1:] == ["-no-progress", *expected, "/dev/x"]
+
+
+def test_mounted_squashfs_check_allowed(monkeypatch):
+    dev = fs.FilesystemDevice("/dev/loop0", "squashfs", "", "7:0", ("/snap/x",), "loop")
+    monkeypatch.setattr(fs, "validate_identity", lambda expected: dev)
+    assert fs.validate_device(dev, "check") == dev
+    with pytest.raises(ValueError):
+        fs.validate_device(dev, "repair")

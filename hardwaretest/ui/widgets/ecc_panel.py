@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
 from hardwaretest.core import ipmi
@@ -105,33 +105,27 @@ def build_ecc_report(run) -> tuple[str, str, list[str]]:
 class EccWorker(QThread):
     done = Signal(str, str, str)
 
+    def __init__(self, panel):
+        super().__init__(panel)
+        self.panel = panel
+
     def run(self):
-        broker = None
         try:
-            if os.geteuid() == 0:
-                run = subprocess.run
-            elif shutil.which("pkexec"):
-                broker = RootBroker(shutil.which("pkexec"))
-                try:
-                    broker.start()
-                    run = broker.run
-                except RootAuthorizationError:
-                    broker, run = None, None
-            else:
-                run = None
-            state, summary, lines = build_ecc_report(run)
+            state, summary, lines = build_ecc_report(self.panel.root_runner())
             self.done.emit(state, summary, "\n".join(lines))
         except Exception as exc:  # pragma: no cover - runtime safety
             self.done.emit("error", str(exc), "")
-        finally:
-            if broker is not None:
-                broker.close()
 
 
 class EccPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
+        self._broker = None
+        self._broker_failed = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(5 * 60 * 1000)
+        self._timer.timeout.connect(self.start)
         layout = QVBoxLayout(self)
         self.hint = QLabel()
         self.hint.setWordWrap(True)
@@ -147,21 +141,53 @@ class EccPanel(QWidget):
         layout.addWidget(self.details, 1)
         language_manager.language_changed.connect(self.retranslate)
         self.retranslate()
+        if ipmi.ipmi_available():
+            # Server mit BMC: automatisch auslesen und regelmäßig aktualisieren.
+            QTimer.singleShot(1500, self.start)
+            self._timer.start()
+
+    def root_runner(self):
+        """Läuft im Worker-Thread. Hält eine Root-Sitzung offen (nur eine Passwortabfrage)."""
+        if os.geteuid() == 0:
+            return subprocess.run
+        if self._broker is not None:
+            return self._broker.run
+        if self._broker_failed or not shutil.which("pkexec"):
+            return None
+        broker = RootBroker(shutil.which("pkexec"))
+        try:
+            broker.start()
+        except RootAuthorizationError:
+            self._broker_failed = True
+            return None
+        self._broker = broker
+        return broker.run
+
+    def close_privileged_session(self):
+        self._timer.stop()
+        if self._worker is not None:
+            self._worker.wait(5000)
+        if self._broker is not None:
+            self._broker.close()
+            self._broker = None
 
     def retranslate(self, *_):
         self.hint.setText(_t(
             "Zeigt verbauten Speicher und ECC-Typ (dmidecode), Kernel-EDAC-Zähler und Speicherereignisse "
-            "aus dem BMC-Protokoll (ipmitool, z. B. HPE iLO, Dell iDRAC). Benötigt einmalig das Administrator-Passwort.",
+            "aus dem BMC-Protokoll (ipmitool, z. B. HPE iLO, Dell iDRAC). Wird ein BMC erkannt, liest der Tab beim Start automatisch und danach alle 5 Minuten aus (einmalige Passwortabfrage). Die Werte erscheinen auch in der ECC-Anzeige der Testtabs.",
             "Shows installed memory and ECC type (dmidecode), kernel EDAC counters and memory events from the "
-            "BMC log (ipmitool, e.g. HPE iLO, Dell iDRAC). Requires the administrator password once."))
+            "BMC log (ipmitool, e.g. HPE iLO, Dell iDRAC). If a BMC is detected, the tab reads automatically at startup and every 5 minutes (password asked once). The values also appear in the ECC display of the test tabs."))
         self.read_btn.setText(_t("ECC-Status auslesen", "Read ECC status"))
 
     def start(self):
         if self._worker is not None:
             return
+        if self.sender() is self.read_btn:
+            self._broker_failed = False
         self.read_btn.setEnabled(False)
         self.summary.setStyleSheet("")
-        self.summary.setText(_t("Wird ausgelesen … (Passwort-Abfrage beachten)", "Reading … (watch for password prompt)"))
+        if self._broker is None and os.geteuid() != 0:
+            self.summary.setText(_t("Wird ausgelesen … (Passwort-Abfrage beachten)", "Reading … (watch for password prompt)"))
         self._worker = EccWorker(self)
         self._worker.done.connect(self.show_result)
         self._worker.finished.connect(self._finished)

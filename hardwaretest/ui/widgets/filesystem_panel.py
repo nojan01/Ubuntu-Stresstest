@@ -165,11 +165,14 @@ class FilesystemPanel(QWidget):
         allowed = device is not None and device.supported and not device.mounts and not device.children
         for widget in (self.devices, self.refresh, self.output_dir, self.choose):
             widget.setEnabled(not busy)
-        self.check.setEnabled(allowed and not busy)
+        self.check.setEnabled((allowed or (device is not None and device.checkable_while_mounted)) and not busy)
         self.repair.setEnabled(allowed and device.repairable and not busy)
         self.online.setEnabled(device is not None and bool(device.mounts) and not busy)
         if device is None:
             message = self.text("Bitte Laufwerke aktualisieren und ein Dateisystem auswählen.", "Refresh drives and select a filesystem.")
+        elif device.mounts and device.checkable_while_mounted:
+            message = self.text("squashfs ist schreibgeschützt: Strukturprüfung auch eingehängt möglich (nur lesend), keine Reparatur.",
+                                "squashfs is read-only: integrity check possible while mounted (read-only), no repair.")
         elif device.mounts:
             message = self.text("Eingehängt: Statusdiagnose verfügbar. Für Strukturprüfung/Reparatur aushängen oder Live-USB verwenden.",
                                 "Mounted: status diagnosis available. Unmount or use a live USB for integrity check/repair.")
@@ -193,7 +196,8 @@ class FilesystemPanel(QWidget):
             return
         if action == "status" and not device.mounts:
             return
-        if action != "status" and (not device.supported or device.mounts or device.children):
+        mounted_ok = action == "check" and device.checkable_while_mounted
+        if action != "status" and (not device.supported or (device.mounts and not mounted_ok) or device.children):
             return
         if action == "repair" and not device.repairable:
             return

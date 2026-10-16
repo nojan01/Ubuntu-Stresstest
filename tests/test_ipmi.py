@@ -24,3 +24,14 @@ def test_parse_dmidecode_memory():
     dmi = ipmi.parse_dmidecode_memory(text)
     assert dmi.ecc is True
     assert len(dmi.modules) == 1 and dmi.modules[0].locator == "PROC 1 DIMM 1"
+
+
+def test_sel_counts_are_remembered():
+    import subprocess
+    text = ("1 | 01/01/2025 | 10:00:00 | Memory #0x01 | Correctable ECC | Asserted\n"
+            "2 | 01/01/2025 | 10:01:00 | Memory #0x01 | Uncorrectable ECC | Asserted\n")
+
+    def run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, text, "")
+    ipmi.sel_ecc_metrics(run)
+    assert (ipmi.last_sel_counts.correctable, ipmi.last_sel_counts.uncorrectable) == (1, 1)

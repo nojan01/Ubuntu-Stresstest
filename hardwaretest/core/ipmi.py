@@ -13,9 +13,29 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import threading
+import time
 from typing import Callable, Optional
 
 Runner = Callable[..., subprocess.CompletedProcess]
+
+
+@dataclass
+class SelCounts:
+    correctable: int
+    uncorrectable: int
+    timestamp: float
+
+
+# Letzter erfolgreich gelesener Stand des BMC-Protokolls (ECC-Tab, Monitoring, Gesamttest).
+# Die ECC-Anzeigen der Testtabs lesen ihn, weil sie selbst keine Root-Rechte haben.
+last_sel_counts: Optional[SelCounts] = None
+
+
+def _remember(events) -> None:
+    global last_sel_counts
+    ue = sum(e.uncorrectable for e in events)
+    last_sel_counts = SelCounts(len(events) - ue, ue, time.time())
 
 _SERVER_VENDORS = re.compile(r"\b(hpe?|hewlett|dell|supermicro|lenovo|fujitsu|cisco|inspur|quanta|gigabyte|asrock ?rack)\b", re.I)
 _SEL_MEMORY = re.compile(r"memory|ecc|dimm", re.I)
@@ -118,6 +138,7 @@ def sel_ecc_metrics(run: Runner) -> tuple[dict[str, float], list[str]]:
     if result.returncode:
         return {}, ["ecc.ipmi_sel"]
     events = parse_sel_memory(result.stdout)
+    _remember(events)
     return {
         "ecc.ipmi_sel.ce_count": float(sum(not e.uncorrectable for e in events)),
         "ecc.ipmi_sel.ue_count": float(sum(e.uncorrectable for e in events)),
@@ -178,4 +199,46 @@ def read_sel_memory(run: Runner) -> tuple[Optional[list[SelEvent]], str]:
         return None, str(exc)
     if result.returncode:
         return None, (result.stderr or result.stdout).strip() or f"Exit {result.returncode}"
-    return parse_sel_memory(result.stdout), ""
+    events = parse_sel_memory(result.stdout)
+    _remember(events)
+    return events, ""
+
+
+_poll_lock = threading.Lock()
+_poll_running = False
+
+
+def _noninteractive_runner() -> Optional[Runner]:
+    """Root-Aufruf ohne Passwortabfrage: als root direkt, sonst ``sudo -n`` (z. B. Live-ISO)."""
+    if os.geteuid() == 0:
+        return subprocess.run
+    if not shutil.which("sudo"):
+        return None
+
+    def run(cmd, **kwargs):
+        return subprocess.run(["sudo", "-n", *cmd], **kwargs)
+    return run
+
+
+def refresh_sel_counts_async(max_age: float = 60.0) -> None:
+    """Aktualisiert ``last_sel_counts`` im Hintergrund, wenn das ohne Passwort möglich ist."""
+    global _poll_running
+    if last_sel_counts is not None and time.time() - last_sel_counts.timestamp < max_age:
+        return
+    if not shutil.which("ipmitool") or not ipmi_available():
+        return
+    run = _noninteractive_runner()
+    if run is None:
+        return
+    with _poll_lock:
+        if _poll_running:
+            return
+        _poll_running = True
+
+    def worker():
+        global _poll_running
+        try:
+            sel_ecc_metrics(run)
+        finally:
+            _poll_running = False
+    threading.Thread(target=worker, daemon=True).start()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import csv
+import functools
 import math
 from datetime import datetime
 from html import escape
@@ -18,7 +19,8 @@ import uuid
 from typing import Callable, Optional
 
 from hardwaretest import __version__
-from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard
+from hardwaretest.core import ipmi
+from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
 from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices, read_nvme_smart
@@ -230,7 +232,12 @@ class TestPlanExecutor:
         self._authorize_root()
 
         if self.config.monitoring_enabled:
-            session = MonitorSession(self.config.output_dir, self.config.temperature_limit, self.config.language)
+            extra = {}
+            if self._root is not None and ipmi.ipmi_available():
+                ipmi.ensure_ipmi_driver(self._root.run)
+                extra["collect"] = functools.partial(collect_metrics, root_run=self._root.run)
+            session = MonitorSession(self.config.output_dir, self.config.temperature_limit, self.config.language,
+                                     **extra)
             session.set_sensor_limits(dict(self.config.sensor_temperature_limits))
             self._monitor = MonitoringGuard(session, self.config.monitoring_interval)
             self._monitor.start()
@@ -677,7 +684,8 @@ class TestPlanExecutor:
         if os.geteuid() == 0 or not shutil.which("pkexec"):
             return False
         keys = set(self.selected_step_keys())
-        return bool(keys & {"nvme", "nvme_read"}) or ("dcgm" in keys and dcgmi_available())
+        return (bool(keys & {"nvme", "nvme_read"}) or ("dcgm" in keys and dcgmi_available())
+                or (self.config.monitoring_enabled and ipmi.ipmi_available()))
 
     def _authorize_root(self) -> None:
         """Fragt das Passwort einmal zu Beginn ab – danach läuft der Plan unbeaufsichtigt."""

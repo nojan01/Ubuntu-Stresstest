@@ -33,6 +33,7 @@ from hardwaretest.ui.widgets.test_plan_panel import TestPlanPanel
 from hardwaretest.ui.widgets.filesystem_panel import FilesystemPanel
 from hardwaretest.ui.widgets.monitoring_panel import MonitoringPanel
 from hardwaretest.ui.widgets.zfs_panel import ZfsPanel
+from hardwaretest.ui.widgets.ecc_panel import EccPanel
 from hardwaretest.ui.i18n import language_manager
 
 
@@ -97,6 +98,8 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(filesystem_tabs, "Dateisystem")
         self.monitoring_panel = MonitoringPanel()
         self._tabs.addTab(self.monitoring_panel, "Langzeitmonitoring")
+        self.ecc_panel = EccPanel()
+        self._tabs.addTab(self.ecc_panel, "ECC / Speicher")
         self._test_panels = [ram_panel, prime_panel, mem_ctrl_panel, mem_fill_panel,
                              file_disk_panel, device_disk_panel, destructive_disk_panel,
                              nvme_panel, nvidia_panel, network_panel, test_plan_panel]

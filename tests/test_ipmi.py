@@ -74,9 +74,46 @@ def test_proliant_panel_renders(monkeypatch):
             "time": datetime.now(), "dmi_system": {"Serial Number": "CZ123"}, "bmc": {"Firmware Revision": "2.90"},
             "bmc_error": "", "sel_info": {"Entries": "4"}, "sensors": ipmi.parse_sensors("Fan 1 | 30h | ok | 29.1 | 30 percent"),
             "sensors_error": "", "events": ipmi.parse_event_log(SEL), "events_error": "",
-            "ecc": ("warn", "ECC", "details")}
+            "ecc": ("warn", "ECC", "details"), "iml": ipmi.parse_iml(IML), "iml_error": ""}
     panel.show_result(data)
     assert panel.events.rowCount() == 4
     panel.event_filter.setCurrentIndex(2)
     assert panel.events.rowCount() == 1
     assert "CZ123" in panel.html_report()
+    assert panel.iml.rowCount() == 3
+    panel.iml_filter.setCurrentIndex(2)
+    assert panel.iml.rowCount() == 1
+    assert "Integrated Management Log" in panel.html_report()
+
+
+IML = """Discovering data...Done
+{"@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries", "Members": [
+ {"Id": "2", "Created": "2026-10-18T08:05:00Z", "Severity": "Critical",
+  "Message": "Uncorrectable Memory Error detected (Processor 1, DIMM 3)",
+  "Oem": {"Hpe": {"Class": 33, "Count": 1, "Repaired": false, "Updated": "2026-10-18T08:05:00Z",
+                  "Categories": ["Hardware", "Memory"]}}},
+ {"Id": "1", "Created": "2026-10-17T07:00:00Z", "Severity": "Caution",
+  "Message": "Power Supply Failure (Bay 2)", "Oem": {"Hpe": {"Class": 32, "Count": 3, "Repaired": true}}},
+ {"Id": "3", "Created": "2026-10-18T09:00:00Z", "Severity": "OK", "Message": "Firmware flashed"}
+]}
+"""
+
+
+def test_parse_iml():
+    entries = ipmi.parse_iml(IML)
+    assert [e.number for e in entries] == ["1", "2", "3"]
+    assert [e.severity for e in entries] == ["info", "error", "info"]
+    assert entries[0].repaired and entries[0].category == "32" and entries[0].count == "3"
+    assert entries[1].memory and entries[1].category == "Hardware, Memory"
+    assert entries[1].created == "2026-10-18 08:05:00"
+
+
+def test_parse_iml_rejects_garbage():
+    import pytest
+    with pytest.raises(ValueError):
+        ipmi.parse_iml("Error: no iLO")
+
+
+def test_root_broker_allows_only_fixed_ilorest_command():
+    from hardwaretest.core import root_broker
+    assert " ".join(ipmi.ILOREST_IML_CMD) in root_broker.ROOT_BROKER_SCRIPT

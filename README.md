@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.37
+
+- ProLiant Info: neue Unterseite **Integrated Management Log (IML)** – liest das HPE-IML lokal über iLOrest (ohne iLO-Passwort, Redfish über den CHIF-Kanal) mit HPE-Klartextmeldungen, Bewertung, „repariert“-Kennzeichnung, Filter (Fehler/Warnungen, nur offene, nur Speicher), Suche und HTML-Export. IML-Fehler fließen in die Zusammenfassung ein.
+
 ### Neu in 0.2.36
 
 - Tab „ECC / Speicher“ heißt jetzt **„ProLiant Info“**: liest per ipmitool vom HPE iLO Systemdaten (Modell, Seriennummer, BIOS, iLO-Firmware), alle Sensoren und das komplette Ereignisprotokoll (IPMI SEL) mit Bewertung, Filter, Suche und HTML-Export; Unterseite Speicher/ECC wie bisher.
@@ -108,7 +112,7 @@ Lizenztext befindet sich in der Datei `LICENSE`.
 
 ### Variante A – Debian-Paket (empfohlen)
 
-Für die Installation wird nur die Datei `hardwaretest_0.2.36_amd64.deb` benötigt.
+Für die Installation wird nur die Datei `hardwaretest_0.2.37_amd64.deb` benötigt.
 
 1. Die DEB-Datei herunterladen.
 2. Im Dateimanager doppelt anklicken und im Paketinstallationsprogramm
@@ -139,8 +143,8 @@ Das AppImage enthält ebenfalls Python, PySide6 und alle Python-Module. Es kann
 ohne Installation einer Python-Laufzeit gestartet werden:
 
 ```bash
-chmod +x Hardwaretest-0.2.36-x86_64.AppImage
-./Hardwaretest-0.2.36-x86_64.AppImage
+chmod +x Hardwaretest-0.2.37-x86_64.AppImage
+./Hardwaretest-0.2.37-x86_64.AppImage
 ```
 
 Native Diagnoseprogramme müssen auf der jeweiligen Distribution weiterhin über

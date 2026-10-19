@@ -1,7 +1,7 @@
 """Langlebige Root-Sitzung über eine einzige pkexec-Autorisierung.
 
 Der Root-Prozess nimmt zeilenweise nur freigegebene Werkzeuge (fio, nvme mit
-lesenden/Selbsttest-Unterbefehlen, dcgmi, lesendes ipmitool, dmidecode) entgegen.  Jeder Auftrag schreibt
+lesenden/Selbsttest-Unterbefehlen, dcgmi, lesendes ipmitool, dmidecode, IML per ilorest) entgegen.  Jeder Auftrag schreibt
 in eine root-eigene FIFO; ein unprivilegierter Relay-Prozess liest sie und
 liefert den Exit-Code des Werkzeugs.  Schliesst die App die Sitzung (oder
 stirbt sie), beendet der Root-Prozess alle laufenden Aufträge.
@@ -36,6 +36,7 @@ while IFS= read -r line; do
       nvme) case "${2:-}" in smart-log|self-test-log|device-self-test) ;; *) ok=0;; esac ;;
       ipmitool) case "${2:-} ${3:-}" in "sdr type"|"sdr elist"|"sel list"|"sel elist"|"sel info"|"mc info") ;; *) ok=0;; esac ;;
       dmidecode) [ $# -eq 3 ] && [ "$2" = "-t" ] && case "$3" in memory|system) true;; *) false;; esac || ok=0 ;;
+      ilorest) [ "$*" = "ilorest --nologo rawget /redfish/v1/Systems/1/LogServices/IML/Entries --expand" ] || ok=0 ;;
       modprobe) [ $# -eq 3 ] && [ "$2" = "-q" ] && case "$3" in ipmi_si|ipmi_devintf) true;; *) false;; esac || ok=0 ;;
       *) ok=0 ;;
     esac

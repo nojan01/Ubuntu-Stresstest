@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass, field
+import json
 import os
 from pathlib import Path
 import re
@@ -387,3 +388,71 @@ def read_event_log(run: Runner) -> tuple[Optional[list[LogEvent]], str]:
 def read_sel_info(run: Runner) -> dict[str, str]:
     text, _error = _run_text(run, ["ipmitool", "sel", "info"], 30)
     return parse_key_values(text) if text else {}
+
+
+# ----- HPE Integrated Management Log (IML) über iLOrest (lokaler CHIF-Kanal) -----
+
+ILOREST_IML_CMD = ["ilorest", "--nologo", "rawget", "/redfish/v1/Systems/1/LogServices/IML/Entries", "--expand"]
+
+
+@dataclass
+class ImlEntry:
+    number: str
+    created: str
+    updated: str
+    count: str
+    severity: str  # error | warn | info
+    category: str
+    message: str
+    repaired: bool
+
+    @property
+    def memory(self) -> bool:
+        return bool(_SEL_MEMORY.search(self.category + " " + self.message))
+
+
+_IML_SEVERITY = {"critical": "error", "warning": "warn", "caution": "warn"}
+
+
+def _iml_time(value: str) -> str:
+    return (value or "").replace("T", " ").replace("Z", "").strip()
+
+
+def parse_iml(text: str) -> list[ImlEntry]:
+    """Redfish-JSON (``ilorest rawget … --expand``) in IML-Einträge umwandeln."""
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("keine JSON-Antwort")
+    data, _end = json.JSONDecoder().raw_decode(text[start:])
+    entries = []
+    for member in data.get("Members") or []:
+        oem = (member.get("Oem") or {})
+        oem = oem.get("Hpe") or oem.get("Hp") or {}
+        repaired = bool(oem.get("Repaired"))
+        severity = "info" if repaired else _IML_SEVERITY.get(str(member.get("Severity", "")).lower(), "info")
+        categories = oem.get("Categories") or []
+        category = ", ".join(str(c) for c in categories) if categories else str(oem.get("Class", ""))
+        entries.append(ImlEntry(
+            number=str(member.get("Id", "")),
+            created=_iml_time(member.get("Created", "")),
+            updated=_iml_time(oem.get("Updated", "")),
+            count=str(oem.get("Count", "")),
+            severity=severity,
+            category=category,
+            message=str(member.get("Message", "")).strip(),
+            repaired=repaired,
+        ))
+    entries.sort(key=lambda e: (e.created, int(e.number) if e.number.isdigit() else 0))
+    return entries
+
+
+def read_iml(run: Runner) -> tuple[Optional[list[ImlEntry]], str]:
+    if not shutil.which("ilorest"):
+        return None, "ilorest nicht installiert / not installed"
+    text, error = _run_text(run, ILOREST_IML_CMD, 240)
+    if text is None:
+        return None, error
+    try:
+        return parse_iml(text), ""
+    except ValueError as exc:
+        return None, f"IML: {exc}"

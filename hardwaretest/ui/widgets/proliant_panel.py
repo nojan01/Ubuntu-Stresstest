@@ -114,13 +114,18 @@ def collect_proliant(run) -> dict:
     """Alle Stufe-1-Daten. Läuft im Worker-Thread; ``run`` darf None sein (keine Root-Rechte)."""
     data = {"identity": ipmi.system_identity(), "proliant": ipmi.is_proliant(), "time": datetime.now(),
             "dmi_system": {}, "bmc": {}, "bmc_error": "", "sel_info": {}, "sensors": None,
-            "sensors_error": "", "events": None, "events_error": ""}
+            "sensors_error": "", "events": None, "events_error": "", "iml": None, "iml_error": ""}
     ecc_state, ecc_summary, ecc_lines = build_ecc_report(run)
     data["ecc"] = (ecc_state, ecc_summary, "\n".join(ecc_lines))
     if run is None:
         data["bmc_error"] = _t("Keine Root-Rechte.", "No root privileges.")
+        data["iml_error"] = data["bmc_error"]
         return data
     data["dmi_system"] = ipmi.read_dmi_system(run)
+    if data["proliant"]:
+        data["iml"], data["iml_error"] = ipmi.read_iml(run)
+    else:
+        data["iml_error"] = _t("Kein HPE ProLiant.", "No HPE ProLiant.")
     if not shutil.which("ipmitool"):
         data["bmc_error"] = _t("ipmitool nicht installiert.", "ipmitool not installed.")
         return data
@@ -234,11 +239,27 @@ class ProliantPanel(QWidget):
         events_layout.addLayout(filters)
         self.events = _table(6)
         events_layout.addWidget(self.events, 1)
+        iml_page = QWidget()
+        iml_layout = QVBoxLayout(iml_page)
+        iml_layout.setContentsMargins(0, 0, 0, 0)
+        iml_filters = QHBoxLayout()
+        self.iml_filter = QComboBox()
+        self.iml_filter.currentIndexChanged.connect(self.show_iml)
+        self.iml_search = QLineEdit()
+        self.iml_search.textChanged.connect(self.show_iml)
+        self.iml_count = QLabel()
+        iml_filters.addWidget(self.iml_filter)
+        iml_filters.addWidget(self.iml_search, 1)
+        iml_filters.addWidget(self.iml_count)
+        iml_layout.addLayout(iml_filters)
+        self.iml = _table(7)
+        iml_layout.addWidget(self.iml, 1)
         self.ecc = QPlainTextEdit()
         self.ecc.setReadOnly(True)
         self.pages.addTab(self.overview, "")
         self.pages.addTab(self.sensors, "")
         self.pages.addTab(events_page, "")
+        self.pages.addTab(iml_page, "")
         self.pages.addTab(self.ecc, "")
         layout.addWidget(self.pages, 1)
 
@@ -286,15 +307,18 @@ class ProliantPanel(QWidget):
             "Memory/ECC and possibly another BMC (IPMI) can still be read manually."))
         self.hint.setText(_t(
             "Liest über ipmitool direkt vom iLO: Systemdaten, alle Sensoren (Temperaturen, Lüfter, Netzteile, "
-            "Spannungen) und das komplette Ereignisprotokoll (IPMI SEL), dazu Speicher/ECC. Auf einem ProLiant wird beim "
+            "Spannungen) und das komplette Ereignisprotokoll (IPMI SEL), über iLOrest das Integrated Management Log "
+            "(IML), dazu Speicher/ECC. Auf einem ProLiant wird beim "
             "Start automatisch und danach alle 5 Minuten ausgelesen (einmalige Passwortabfrage).",
             "Reads directly from iLO via ipmitool: system data, all sensors (temperatures, fans, power supplies, "
-            "voltages) and the complete event log (IPMI SEL), plus memory/ECC. On a ProLiant it reads automatically "
+            "voltages) and the complete event log (IPMI SEL), the Integrated Management Log (IML) via iLOrest, plus memory/ECC. On a ProLiant it reads automatically "
             "at startup and every 5 minutes (password asked once)."))
         self.read_btn.setText(_t("Jetzt auslesen", "Read now"))
         self.export_btn.setText(_t("Als HTML exportieren …", "Export as HTML …"))
         for index, (de, en) in enumerate((("Übersicht", "Overview"), ("Sensoren", "Sensors"),
-                                          ("iLO-Ereignisprotokoll", "iLO event log"), ("Speicher / ECC", "Memory / ECC"))):
+                                          ("iLO-Ereignisprotokoll", "iLO event log"),
+                                          ("Integrated Management Log (IML)", "Integrated Management Log (IML)"),
+                                          ("Speicher / ECC", "Memory / ECC"))):
             self.pages.setTabText(index, _t(de, en))
         self.sensors.setHorizontalHeaderLabels([_t("Sensor", "Sensor"), _t("Wert", "Reading"), _t("Status", "Status"),
                                                 _t("Einheit/Entity", "Entity"), _t("Bewertung", "Rating")])
@@ -308,6 +332,18 @@ class ProliantPanel(QWidget):
         self.event_filter.setCurrentIndex(max(0, with_signals))
         self.event_filter.blockSignals(False)
         self.event_search.setPlaceholderText(_t("Suchen …", "Search …"))
+        self.iml.setHorizontalHeaderLabels(["#", _t("Erstellt", "Created"), _t("Aktualisiert", "Updated"),
+                                            _t("Anzahl", "Count"), _t("Kategorie", "Category"),
+                                            _t("Meldung", "Message"), _t("Bewertung", "Rating")])
+        iml_mode = self.iml_filter.currentIndex()
+        self.iml_filter.blockSignals(True)
+        self.iml_filter.clear()
+        self.iml_filter.addItems([_t("Alle Einträge", "All entries"), _t("Fehler und Warnungen", "Errors and warnings"),
+                                  _t("Nur offene (nicht repariert)", "Open only (not repaired)"),
+                                  _t("Nur Speicher/ECC", "Memory/ECC only")])
+        self.iml_filter.setCurrentIndex(max(0, iml_mode))
+        self.iml_filter.blockSignals(False)
+        self.iml_search.setPlaceholderText(_t("Suchen …", "Search …"))
         if self._data:
             self.show_result(self._data)
 
@@ -340,6 +376,7 @@ class ProliantPanel(QWidget):
         sensors = data["sensors"] or []
         _fill(self.sensors, [([s.name, s.reading, s.status, s.entity, _sev(s.severity)], s.severity) for s in sensors])
         self.show_events()
+        self.show_iml()
         _ecc_state, ecc_summary, ecc_text = data["ecc"]
         self.ecc.setPlainText(ecc_summary + "\n\n" + ecc_text)
         state, text = self._summary(data)
@@ -359,13 +396,20 @@ class ProliantPanel(QWidget):
         warn = sum(e.severity == "warn" for e in events)
         s_err = sum(s.severity == "error" for s in sensors)
         s_warn = sum(s.severity == "warn" for s in sensors)
+        iml = data.get("iml") or []
+        i_err = sum(e.severity == "error" for e in iml)
+        i_warn = sum(e.severity == "warn" for e in iml)
+        iml_text = ""
+        if data.get("iml") is not None:
+            iml_text = _t(f" | IML: {len(iml)} Einträge ({i_err} Fehler, {i_warn} Warnungen offen)",
+                          f" | IML: {len(iml)} entries ({i_err} errors, {i_warn} warnings open)")
         text = _t(f"[{stamp}] Sensoren: {len(sensors)} ({s_err} kritisch, {s_warn} Warnung) | "
-                  f"Ereignisprotokoll: {len(events)} Einträge ({err} Fehler, {warn} Warnungen) | {data['ecc'][1]}",
+                  f"Ereignisprotokoll: {len(events)} Einträge ({err} Fehler, {warn} Warnungen){iml_text} | {data['ecc'][1]}",
                   f"[{stamp}] Sensors: {len(sensors)} ({s_err} critical, {s_warn} warning) | "
-                  f"Event log: {len(events)} entries ({err} errors, {warn} warnings) | {data['ecc'][1]}")
-        if s_err or err or data["ecc"][0] == "error":
+                  f"Event log: {len(events)} entries ({err} errors, {warn} warnings){iml_text} | {data['ecc'][1]}")
+        if s_err or err or i_err or data["ecc"][0] == "error":
             return "error", text
-        if s_warn or warn or data["ecc"][0] == "warn":
+        if s_warn or warn or i_warn or data["ecc"][0] == "warn":
             return "warn", text
         return "ok", text
 
@@ -401,6 +445,8 @@ class ProliantPanel(QWidget):
             lines.append(_t("Sensoren: ", "Sensors: ") + data["sensors_error"])
         if data["events_error"]:
             lines.append(_t("Ereignisprotokoll: ", "Event log: ") + data["events_error"])
+        if data.get("iml_error"):
+            lines.append("IML: " + data["iml_error"])
         lines.append("")
         lines.append(_t("Stand: ", "As of: ") + data["time"].strftime("%d.%m.%Y %H:%M:%S"))
         return lines
@@ -430,6 +476,38 @@ class ProliantPanel(QWidget):
         total = len((self._data or {}).get("events") or [])
         self.event_count.setText(_t(f"{len(events)} von {total}", f"{len(events)} of {total}"))
 
+    def _filtered_iml(self):
+        entries = (self._data or {}).get("iml") or []
+        mode = self.iml_filter.currentIndex()
+        needle = self.iml_search.text().strip().lower()
+        result = []
+        for entry in reversed(entries):  # neueste zuerst
+            if mode == 1 and entry.severity not in ("error", "warn"):
+                continue
+            if mode == 2 and (entry.repaired or entry.severity == "info"):
+                continue
+            if mode == 3 and not entry.memory:
+                continue
+            if needle and needle not in f"{entry.created} {entry.category} {entry.message}".lower():
+                continue
+            result.append(entry)
+        return result
+
+    @staticmethod
+    def _iml_rating(entry) -> str:
+        return _sev(entry.severity) + (_t(" (repariert)", " (repaired)") if entry.repaired else "")
+
+    def show_iml(self, *_):
+        entries = self._filtered_iml()
+        _fill(self.iml, [([e.number, e.created, e.updated, e.count, e.category, e.message, self._iml_rating(e)],
+                          e.severity) for e in entries])
+        data = self._data or {}
+        if data.get("iml") is None and data.get("iml_error"):
+            self.iml_count.setText(data["iml_error"])
+        else:
+            self.iml_count.setText(_t(f"{len(entries)} von {len(data.get('iml') or [])}",
+                                      f"{len(entries)} of {len(data.get('iml') or [])}"))
+
     def export(self):
         if not self._data:
             return
@@ -454,6 +532,8 @@ class ProliantPanel(QWidget):
         sensors = [([s.name, s.reading, s.status, s.entity, _sev(s.severity)], s.severity) for s in data["sensors"] or []]
         events = [([e.number, e.date, e.time, e.sensor, e.event, e.direction, _sev(e.severity)], e.severity)
                   for e in reversed(data["events"] or [])]
+        iml = [([e.number, e.created, e.updated, e.count, e.category, e.message, self._iml_rating(e)], e.severity)
+               for e in reversed(data.get("iml") or [])]
         style = "<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:2px 6px}</style>"
         return ('<!doctype html><meta charset="utf-8"><title>ProLiant Info</title>' + style +
                 f"<h1>ProLiant Info</h1><p><b>{escape(self._summary(data)[1])}</b></p>"
@@ -463,4 +543,7 @@ class ProliantPanel(QWidget):
                 f"<h2>{_t('iLO-Ereignisprotokoll', 'iLO event log')}</h2><table><tr><th>#</th><th>{_t('Datum', 'Date')}</th>"
                 f"<th>{_t('Zeit', 'Time')}</th><th>Sensor</th><th>{_t('Ereignis', 'Event')}</th><th></th>"
                 f"<th>{_t('Bewertung', 'Rating')}</th></tr>{rows(events)}</table>"
+                f"<h2>Integrated Management Log (IML)</h2><table><tr><th>#</th><th>{_t('Erstellt', 'Created')}</th>"
+                f"<th>{_t('Aktualisiert', 'Updated')}</th><th>{_t('Anzahl', 'Count')}</th><th>{_t('Kategorie', 'Category')}</th>"
+                f"<th>{_t('Meldung', 'Message')}</th><th>{_t('Bewertung', 'Rating')}</th></tr>{rows(iml)}</table>"
                 f"<h2>{_t('Speicher / ECC', 'Memory / ECC')}</h2><pre>{escape(data['ecc'][1] + chr(10) + chr(10) + data['ecc'][2])}</pre>")

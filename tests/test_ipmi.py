@@ -117,3 +117,12 @@ def test_parse_iml_rejects_garbage():
 def test_root_broker_allows_only_fixed_ilorest_command():
     from hardwaretest.core import root_broker
     assert " ".join(ipmi.ILOREST_IML_CMD) in root_broker.ROOT_BROKER_SCRIPT
+
+
+def test_iml_error_text_chif():
+    err = ("ERROR   : BlobStore2.initializecreds raised exception: Failed to load dynlib/dll 'ilorest_chif.so'.\n"
+           "ERROR   : CHIF session initialization failed - BlobStore2 instance is None\n")
+    text = ipmi._iml_error_text(err)
+    assert text.startswith("BlobStore2.initializecreds")
+    assert "CHIF session initialization failed" in text
+    assert "Require Host Authentication" in text

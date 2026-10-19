@@ -252,6 +252,11 @@ class ProliantPanel(QWidget):
         iml_filters.addWidget(self.iml_search, 1)
         iml_filters.addWidget(self.iml_count)
         iml_layout.addLayout(iml_filters)
+        self.iml_error = QLabel()
+        self.iml_error.setWordWrap(True)
+        self.iml_error.setStyleSheet("color: #e05252;")
+        self.iml_error.hide()
+        iml_layout.addWidget(self.iml_error)
         self.iml = _table(7)
         iml_layout.addWidget(self.iml, 1)
         self.ecc = QPlainTextEdit()
@@ -502,11 +507,11 @@ class ProliantPanel(QWidget):
         _fill(self.iml, [([e.number, e.created, e.updated, e.count, e.category, e.message, self._iml_rating(e)],
                           e.severity) for e in entries])
         data = self._data or {}
-        if data.get("iml") is None and data.get("iml_error"):
-            self.iml_count.setText(data["iml_error"])
-        else:
-            self.iml_count.setText(_t(f"{len(entries)} von {len(data.get('iml') or [])}",
-                                      f"{len(entries)} of {len(data.get('iml') or [])}"))
+        error = data.get("iml_error", "") if data.get("iml") is None else ""
+        self.iml_error.setText(error)
+        self.iml_error.setVisible(bool(error))
+        self.iml_count.setText(_t(f"{len(entries)} von {len(data.get('iml') or [])}",
+                                  f"{len(entries)} of {len(data.get('iml') or [])}"))
 
     def export(self):
         if not self._data:

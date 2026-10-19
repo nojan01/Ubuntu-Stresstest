@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.40
+
+- NVIDIA-Tab zeigt die unterstützten GPU-Typen (Treiber 595, Open-Kernelmodul ab Turing).
+
 ### Neu in 0.2.39
 
 - IML wird über `ilorest serverlogs --selectlog=IML --json` gelesen – funktioniert ohne iLO-Zugangsdaten auch im iLO-Sicherheitsmodus.
@@ -121,7 +125,7 @@ Lizenztext befindet sich in der Datei `LICENSE`.
 
 ### Variante A – Debian-Paket (empfohlen)
 
-Für die Installation wird nur die Datei `hardwaretest_0.2.39_amd64.deb` benötigt.
+Für die Installation wird nur die Datei `hardwaretest_0.2.40_amd64.deb` benötigt.
 
 1. Die DEB-Datei herunterladen.
 2. Im Dateimanager doppelt anklicken und im Paketinstallationsprogramm
@@ -152,8 +156,8 @@ Das AppImage enthält ebenfalls Python, PySide6 und alle Python-Module. Es kann
 ohne Installation einer Python-Laufzeit gestartet werden:
 
 ```bash
-chmod +x Hardwaretest-0.2.39-x86_64.AppImage
-./Hardwaretest-0.2.39-x86_64.AppImage
+chmod +x Hardwaretest-0.2.40-x86_64.AppImage
+./Hardwaretest-0.2.40-x86_64.AppImage
 ```
 
 Native Diagnoseprogramme müssen auf der jeweiligen Distribution weiterhin über

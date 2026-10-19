@@ -126,3 +126,22 @@ def test_iml_error_text_chif():
     assert text.startswith("BlobStore2.initializecreds")
     assert "CHIF session initialization failed" in text
     assert "Require Host Authentication" in text
+
+
+def test_parse_iml_serverlogs_list():
+    from hardwaretest.core.ipmi import parse_iml
+    text = 'Discovering data...Done\n[{"Id": "2", "Created": "2026-10-01T10:00:00Z", "Severity": "Critical", ' \
+           '"Message": "Memory error", "Oem": {"Hpe": {"Count": 1, "Repaired": false, "Categories": ["Memory"]}}}]'
+    entries = parse_iml(text)
+    assert len(entries) == 1 and entries[0].severity == "error" and entries[0].category == "Memory"
+
+
+def test_parse_iml_gen10_event():
+    from hardwaretest.core.ipmi import parse_iml
+    text = ('[{"Created": "2026-10-19T09:29:39Z", "Id": "178", "Message": "HPE Eth 10/25Gb Connectivity status '
+            'changed to OK", "Oem": {"Hpe": {"Categories": ["Hardware"], "Class": 17, "ClassDescription": "Network", '
+            '"Count": 1, "Repaired": true, "Severity": "Repaired", "Updated": "2026-10-19T09:29:39Z"}}, '
+            '"Severity": "OK"}]')
+    (e,) = parse_iml(text)
+    assert e.number == "178" and e.repaired and e.severity == "info"
+    assert e.category == "Hardware / Network" and e.count == "1"

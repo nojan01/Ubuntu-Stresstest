@@ -446,12 +446,28 @@ def parse_iml(text: str) -> list[ImlEntry]:
     return entries
 
 
+def _iml_error_text(error: str) -> str:
+    lines = [re.sub(r"^\s*ERROR\s*:\s*", "", ln).strip() for ln in error.splitlines()]
+    lines = [ln for ln in lines if ln][:3]
+    text = " | ".join(lines) or error
+    if "chif" in error.lower() or "blobstore" in error.lower():
+        text += _t_both(" – Lokaler iLO-Zugriff (CHIF) fehlgeschlagen: Bibliothek ilorest_chif.so nicht gefunden "
+                        "oder in iLO ist 'Require Host Authentication' aktiv.",
+                        "Local iLO access (CHIF) failed: ilorest_chif.so not found or "
+                        "'Require Host Authentication' is enabled in iLO.")
+    return text
+
+
+def _t_both(de: str, en: str) -> str:
+    return f"{de} / {en}"
+
+
 def read_iml(run: Runner) -> tuple[Optional[list[ImlEntry]], str]:
     if not shutil.which("ilorest"):
         return None, "ilorest nicht installiert / not installed"
     text, error = _run_text(run, ILOREST_IML_CMD, 240)
     if text is None:
-        return None, error
+        return None, _iml_error_text(error)
     try:
         return parse_iml(text), ""
     except ValueError as exc:

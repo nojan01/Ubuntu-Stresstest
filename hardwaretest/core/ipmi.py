@@ -392,7 +392,7 @@ def read_sel_info(run: Runner) -> dict[str, str]:
 
 # ----- HPE Integrated Management Log (IML) über iLOrest (lokaler CHIF-Kanal) -----
 
-ILOREST_IML_CMD = ["ilorest", "--nologo", "rawget", "/redfish/v1/Systems/1/LogServices/IML/Entries", "--expand"]
+ILOREST_IML_CMD = ["ilorest", "--nologo", "serverlogs", "--selectlog=IML", "--json"]
 
 
 @dataclass
@@ -419,19 +419,24 @@ def _iml_time(value: str) -> str:
 
 
 def parse_iml(text: str) -> list[ImlEntry]:
-    """Redfish-JSON (``ilorest rawget … --expand``) in IML-Einträge umwandeln."""
-    start = text.find("{")
-    if start < 0:
+    """IML-JSON (``ilorest serverlogs --selectlog=IML --json`` oder Redfish-Collection) umwandeln."""
+    starts = [i for i in (text.find("{"), text.find("[")) if i >= 0]
+    if not starts:
         raise ValueError("keine JSON-Antwort")
-    data, _end = json.JSONDecoder().raw_decode(text[start:])
+    data, _end = json.JSONDecoder().raw_decode(text[min(starts):])
+    members = data if isinstance(data, list) else (data.get("Members") or data.get("Items") or [])
     entries = []
-    for member in data.get("Members") or []:
+    for member in members:
+        if not isinstance(member, dict):
+            continue
         oem = (member.get("Oem") or {})
         oem = oem.get("Hpe") or oem.get("Hp") or {}
         repaired = bool(oem.get("Repaired"))
         severity = "info" if repaired else _IML_SEVERITY.get(str(member.get("Severity", "")).lower(), "info")
         categories = oem.get("Categories") or []
         category = ", ".join(str(c) for c in categories) if categories else str(oem.get("Class", ""))
+        if oem.get("ClassDescription"):
+            category = f"{category} / {oem['ClassDescription']}" if category else str(oem["ClassDescription"])
         entries.append(ImlEntry(
             number=str(member.get("Id", "")),
             created=_iml_time(member.get("Created", "")),

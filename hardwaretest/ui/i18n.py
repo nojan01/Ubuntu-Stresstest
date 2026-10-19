@@ -86,6 +86,8 @@ _EN: dict[str, str] = {
     "nvidia-smi liefert Inventar- und Gesundheitsdaten. NVIDIA DCGM führt optional aktive Bereitschafts-, Speicher-, PCIe- und Belastungsdiagnosen aus.": "nvidia-smi provides inventory and health data. NVIDIA DCGM optionally runs active readiness, memory, PCIe and stress diagnostics.",
     "NVIDIA-GPUs suchen": "Scan NVIDIA GPUs",
     "Linux-Basisprüfung": "Linux basic check",
+    "Unterstützte NVIDIA-GPUs": "Supported NVIDIA GPUs",
+    "Treiber 595 (Open-Kernelmodul) ab Turing: Tesla T4; Ampere A2, A10, A16, A30, A40, A100; Ada L4, L40, L40S, RTX 2000–6000 Ada; Hopper H100, H200; Blackwell B200, RTX PRO; RTX/Quadro ab Turing. Nicht unterstützt: Pascal/Volta (P4, P40, P100, V100) und älter. DCGM-Diagnosen sind für Rechenzentrums-GPUs vorgesehen; bei Workstation-Karten laufen nur Teile.": "Driver 595 (open kernel module) from Turing: Tesla T4; Ampere A2, A10, A16, A30, A40, A100; Ada L4, L40, L40S, RTX 2000–6000 Ada; Hopper H100, H200; Blackwell B200, RTX PRO; RTX/Quadro from Turing. Not supported: Pascal/Volta (P4, P40, P100, V100) and older. DCGM diagnostics target data-center GPUs; on workstation cards only parts run.",
     "Installationsanleitung: /opt/hardwaretest/docs/NVIDIA_GPU.md": "Installation guide: /opt/hardwaretest/docs/NVIDIA_GPU.md",
     "Alle NVIDIA-GPUs auswählen": "Select all NVIDIA GPUs",
     "NVIDIA-GPUs werden gesucht …": "Scanning NVIDIA GPUs …",

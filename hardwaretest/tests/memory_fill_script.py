@@ -24,6 +24,7 @@ import argparse
 import contextlib
 import gc
 import mmap
+import os
 import random
 import signal
 import struct
@@ -41,6 +42,8 @@ _stop = False
 # 1800 MB/s). Damit das Pruefen des Geschriebenen noch in die Testzeit passt,
 # endet das Schreiben nach diesem Anteil der Restzeit.
 _WRITE_SHARE = 1 / 1.6
+# Abstand der Fortschrittsmeldungen beim Schreiben/Verifizieren.
+_PROGRESS_INTERVAL = 10.0
 
 
 def _handle_signal(signum, _frame):
@@ -286,8 +289,11 @@ def _fill(chunks: List[Chunk], builder: PatternBuilder, deadline: float = float(
     def _halt() -> bool:
         return _stop or time.monotonic() >= deadline
 
+    grand_total = sum(size for _, size in chunks)
+    reporter = _ProgressReporter("geschrieben", grand_total)
     global_offset = 0
     for m, total in chunks:
+        reporter.update(global_offset)
         if _halt():
             return global_offset
         m.seek(0)
@@ -302,29 +308,66 @@ def _fill(chunks: List[Chunk], builder: PatternBuilder, deadline: float = float(
     return global_offset
 
 
-def _verify(chunks: List[Chunk], builder: PatternBuilder, limit: Optional[int] = None) -> List[str]:
-    """Vergleicht den Inhalt aller Chunks mit dem erwarteten Muster.
+class _ProgressReporter:
+    """Gibt alle ``_PROGRESS_INTERVAL`` Sekunden den Fortschritt aus."""
 
-    Nutzt ``mmap.read`` + ``bytes``-Vergleich (memcmp): das ist ~14x schneller
-    als der Vergleich von ``memoryview``-Slices, der in CPython byteweise
-    statt per memcmp ausgewertet wird und die Verifikation auf ~500 MB/s
-    bremste.
-    """
-    errors: List[str] = []
-    global_offset = 0
-    for idx, (m, total) in enumerate(chunks):
-        if _stop or (limit is not None and global_offset >= limit):
-            break
+    def __init__(self, verb: str, total: int) -> None:
+        self.verb = verb
+        self.total = max(1, total)
+        self.start = time.monotonic()
+        self.next = self.start + _PROGRESS_INTERVAL
+
+    def update(self, done: int) -> None:
+        now = time.monotonic()
+        if now < self.next:
+            return
+        self.next = now + _PROGRESS_INTERVAL
+        mb = done // (1024 * 1024)
+        speed = mb / max(1e-6, now - self.start)
+        print(f"    ... {mb} / {self.total // (1024 * 1024)} MB {self.verb} "
+              f"({100 * done / self.total:.0f}%, {speed:.0f} MB/s)", flush=True)
+
+
+def _usable_cpus() -> int:
+    """Anzahl der fuer diesen Prozess nutzbaren logischen CPUs."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+Segment = Tuple[int, int, int]  # (Chunk-Index, globaler Offset, Laenge)
+
+
+def _segments(chunks: List[Chunk], limit: Optional[int]) -> List[Segment]:
+    segs: List[Segment] = []
+    offset = 0
+    for idx, (_m, total) in enumerate(chunks):
         if limit is not None:
-            total = min(total, limit - global_offset)
-        m.seek(0)
+            if offset >= limit:
+                break
+            total = min(total, limit - offset)
+        segs.append((idx, offset, total))
+        offset += total
+    return segs
+
+
+def _verify_segments(chunks: List[Chunk], builder: PatternBuilder,
+                     segs: List[Segment],
+                     on_progress: Optional[Callable[[int], None]] = None) -> List[str]:
+    errors: List[str] = []
+    done = 0
+    for idx, global_offset, total in segs:
+        if _stop:
+            break
+        m = chunks[idx][0]
         pos = 0
         while pos < total:
             if _stop:
                 break
             piece = min(_BUF_SIZE, total - pos)
             expected = builder(global_offset + pos, piece)
-            actual = m.read(piece)
+            actual = m[pos:pos + piece]
             if actual != expected:
                 for byte_idx, (got, want) in enumerate(
                     zip(actual, expected, strict=False)
@@ -343,7 +386,87 @@ def _verify(chunks: List[Chunk], builder: PatternBuilder, limit: Optional[int] =
                     )
                     return errors
             pos += piece
-        global_offset += total
+            done += piece
+            if on_progress is not None:
+                on_progress(done)
+    return errors
+
+
+def _verify(chunks: List[Chunk], builder: PatternBuilder, limit: Optional[int] = None) -> List[str]:
+    """Vergleicht den Inhalt aller Chunks (bis *limit* Bytes) mit dem Muster.
+
+    ``mmap``-Slicing liefert ``bytes``; der Vergleich laeuft per memcmp.
+    """
+    segs = _segments(chunks, limit)
+    reporter = _ProgressReporter("geprueft", sum(s[2] for s in segs))
+    return _verify_segments(chunks, builder, segs, reporter.update)
+
+
+def _verify_parallel(chunks: List[Chunk], builder: PatternBuilder,
+                     limit: Optional[int] = None,
+                     workers: Optional[int] = None) -> List[str]:
+    """Verifiziert parallel in geforkten Prozessen (nur lesend, kein Copy-on-Write).
+
+    Python vergleicht single-threaded; bei mehreren hundert GB RAM begrenzt
+    das die Pruefung auf ~2 GB/s. Jeder Worker prueft einen Teil der Bloecke.
+    """
+    segs = _segments(chunks, limit)
+    if workers is None:
+        workers = _usable_cpus()
+    workers = max(1, min(workers, len(segs)))
+    if workers == 1 or not hasattr(os, "fork"):
+        return _verify(chunks, builder, limit)
+
+    grand_total = sum(s[2] for s in segs)
+    print(f"    Pruefe parallel mit {workers} Prozessen ...", flush=True)
+    counters = mmap.mmap(-1, 8 * workers,
+                         flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
+    procs: List[Tuple[int, int]] = []
+    for w in range(workers):
+        part = segs[w::workers]
+        r, wfd = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            code = 0
+            try:
+                os.close(r)
+
+                def _report(done: int, _w: int = w) -> None:
+                    struct.pack_into("<Q", counters, 8 * _w, done)
+                errs = _verify_segments(chunks, builder, part, _report)
+                with os.fdopen(wfd, "w", encoding="utf-8") as f:
+                    f.write("\n".join(errs))
+            except BaseException:
+                code = 1
+            finally:
+                os._exit(code)
+        os.close(wfd)
+        procs.append((pid, r))
+
+    reporter = _ProgressReporter("geprueft", grand_total)
+    errors: List[str] = []
+    pending = {pid for pid, _ in procs}
+    try:
+        while pending:
+            for pid in list(pending):
+                done_pid, _status = os.waitpid(pid, os.WNOHANG)
+                if done_pid:
+                    pending.discard(pid)
+            if _stop:
+                for pid in pending:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(pid, signal.SIGTERM)
+            if pending:
+                time.sleep(0.2)
+                reporter.update(sum(
+                    struct.unpack_from("<Q", counters, 8 * i)[0]
+                    for i in range(workers)))
+    finally:
+        for _pid, r in procs:
+            with os.fdopen(r, "r", encoding="utf-8") as f:
+                data = f.read()
+            errors.extend(line for line in data.splitlines() if line)
+        counters.close()
     return errors
 
 
@@ -429,33 +552,32 @@ def run_cycles(
         written_mb = 0
         try:
             if not _stop:
-                print(f"  Schreibe {name} ({actual_mb} MB) ...",
-                      end="", flush=True)
+                print(f"  Schreibe {name} ({actual_mb} MB) ...", flush=True)
                 t0 = time.monotonic()
                 written = _fill(chunks, builder, t0 + max(0.0, end - t0) * _WRITE_SHARE)
                 written_mb = written // (1024 * 1024)
                 write_time = time.monotonic() - t0
                 speed = written_mb / write_time if write_time > 0 else 0
-                print(f" {write_time:.1f}s ({speed:.0f} MB/s)", flush=True)
+                print(f"  Schreiben fertig: {write_time:.1f}s ({speed:.0f} MB/s)", flush=True)
                 if not _stop and written_mb < actual_mb:
                     print(f"  Testzeit reicht nicht fuer den ganzen Zyklus – "
                           f"pruefe die geschriebenen {written_mb} MB.", flush=True)
 
             if not _stop and written_mb > 0:
-                print(f"  Verifiziere {name} ...", end="", flush=True)
+                print(f"  Verifiziere {name} ({written_mb} MB) ...", flush=True)
                 t0 = time.monotonic()
-                errs = _verify(chunks, builder, written)
+                errs = _verify_parallel(chunks, builder, written)
                 verify_time = time.monotonic() - t0
                 speed = written_mb / verify_time if verify_time > 0 else 0
 
                 if errs:
-                    print(f" FEHLER ({len(errs)} Treffer, "
+                    print(f"  Verifizieren: FEHLER ({len(errs)} Treffer, "
                           f"{verify_time:.1f}s)", flush=True)
                     for e in errs:
                         print(f"    *** {e}", flush=True)
                     cycle_errors.extend(errs)
                 else:
-                    print(f" OK ({verify_time:.1f}s, {speed:.0f} MB/s)",
+                    print(f"  Verifizieren: OK ({verify_time:.1f}s, {speed:.0f} MB/s)",
                           flush=True)
                     verified_cycles += 1
                     verified_mb += written_mb

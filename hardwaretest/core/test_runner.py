@@ -109,6 +109,8 @@ class BaseTestRunner:
     """Provides lifecycle, stdout/stderr collection and result evaluation for CLI tools."""
 
     _use_watchdog = True
+    # Zeit zwischen SIGTERM und SIGKILL nach Ablauf der Testzeit.
+    terminate_grace_seconds = 10
 
     def __init__(
         self,
@@ -262,7 +264,7 @@ class BaseTestRunner:
             )
             try:
                 self._process.terminate()
-                self._process.wait(timeout=10)
+                self._process.wait(timeout=self.terminate_grace_seconds)
             except PermissionError:
                 self.stop(aborted=True)
             except subprocess.TimeoutExpired:

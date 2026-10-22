@@ -22,6 +22,9 @@ from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 class MemoryFillRunner(BaseTestRunner):
     """Runner der den zyklischen RAM-Fuelltest als Subprozess startet."""
 
+    # Freigeben von mehreren hundert GB dauert länger als 10 s.
+    terminate_grace_seconds = 300
+
     def __init__(
         self,
         params: TestParameters,

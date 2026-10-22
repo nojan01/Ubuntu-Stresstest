@@ -30,13 +30,17 @@ import struct
 import sys
 import time
 import traceback
-from typing import Callable, List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
 
 _stop = False
+# Verifizieren ist etwa doppelt so schnell wie Schreiben (gemessen 4300 vs.
+# 1800 MB/s). Damit das Pruefen des Geschriebenen noch in die Testzeit passt,
+# endet das Schreiben nach diesem Anteil der Restzeit.
+_WRITE_SHARE = 1 / 1.6
 
 
 def _handle_signal(signum, _frame):
@@ -273,24 +277,32 @@ def _build_pattern_plan(
 # Fill / Verify
 # ---------------------------------------------------------------------------
 
-def _fill(chunks: List[Chunk], builder: PatternBuilder) -> None:
-    """Schreibt das vom *builder* erzeugte Muster in alle Chunks."""
+def _fill(chunks: List[Chunk], builder: PatternBuilder, deadline: float = float("inf")) -> int:
+    """Schreibt das Muster bis *deadline* (monotonic); liefert die geschriebenen Bytes.
+
+    Bei sehr grossem RAM passt ein ganzer Zyklus nicht in die Testzeit; dann
+    wird nur ein Teil beschrieben und genau dieser Teil verifiziert.
+    """
+    def _halt() -> bool:
+        return _stop or time.monotonic() >= deadline
+
     global_offset = 0
     for m, total in chunks:
-        if _stop:
-            return
+        if _halt():
+            return global_offset
         m.seek(0)
         pos = 0
         while pos < total:
-            if _stop:
-                return
+            if _halt():
+                return global_offset + pos
             piece = min(_BUF_SIZE, total - pos)
             m.write(builder(global_offset + pos, piece))
             pos += piece
         global_offset += total
+    return global_offset
 
 
-def _verify(chunks: List[Chunk], builder: PatternBuilder) -> List[str]:
+def _verify(chunks: List[Chunk], builder: PatternBuilder, limit: Optional[int] = None) -> List[str]:
     """Vergleicht den Inhalt aller Chunks mit dem erwarteten Muster.
 
     Nutzt ``mmap.read`` + ``bytes``-Vergleich (memcmp): das ist ~14x schneller
@@ -301,8 +313,10 @@ def _verify(chunks: List[Chunk], builder: PatternBuilder) -> List[str]:
     errors: List[str] = []
     global_offset = 0
     for idx, (m, total) in enumerate(chunks):
-        if _stop:
+        if _stop or (limit is not None and global_offset >= limit):
             break
+        if limit is not None:
+            total = min(total, limit - global_offset)
         m.seek(0)
         pos = 0
         while pos < total:
@@ -346,6 +360,7 @@ def run_cycles(
     pause_seconds: float = 3.0,
 ) -> int:
     start = time.monotonic()
+    end = start + duration_seconds
     cycle = 0
     total_errors = 0
     verified_cycles = 0
@@ -411,22 +426,27 @@ def run_cycles(
             continue
 
         cycle_errors: List[str] = []
+        written_mb = 0
         try:
             if not _stop:
                 print(f"  Schreibe {name} ({actual_mb} MB) ...",
                       end="", flush=True)
                 t0 = time.monotonic()
-                _fill(chunks, builder)
+                written = _fill(chunks, builder, t0 + max(0.0, end - t0) * _WRITE_SHARE)
+                written_mb = written // (1024 * 1024)
                 write_time = time.monotonic() - t0
-                speed = actual_mb / write_time if write_time > 0 else 0
+                speed = written_mb / write_time if write_time > 0 else 0
                 print(f" {write_time:.1f}s ({speed:.0f} MB/s)", flush=True)
+                if not _stop and written_mb < actual_mb:
+                    print(f"  Testzeit reicht nicht fuer den ganzen Zyklus – "
+                          f"pruefe die geschriebenen {written_mb} MB.", flush=True)
 
-            if not _stop:
+            if not _stop and written_mb > 0:
                 print(f"  Verifiziere {name} ...", end="", flush=True)
                 t0 = time.monotonic()
-                errs = _verify(chunks, builder)
+                errs = _verify(chunks, builder, written)
                 verify_time = time.monotonic() - t0
-                speed = actual_mb / verify_time if verify_time > 0 else 0
+                speed = written_mb / verify_time if verify_time > 0 else 0
 
                 if errs:
                     print(f" FEHLER ({len(errs)} Treffer, "
@@ -438,7 +458,7 @@ def run_cycles(
                     print(f" OK ({verify_time:.1f}s, {speed:.0f} MB/s)",
                           flush=True)
                     verified_cycles += 1
-                    verified_mb += actual_mb
+                    verified_mb += written_mb
         finally:
             print(f"  Freigabe {actual_mb} MB ...", end="", flush=True)
             t0 = time.monotonic()

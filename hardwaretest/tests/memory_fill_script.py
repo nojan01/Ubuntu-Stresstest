@@ -329,11 +329,32 @@ class _ProgressReporter:
 
 
 def _usable_cpus() -> int:
-    """Anzahl der fuer diesen Prozess nutzbaren logischen CPUs."""
+    """Anzahl der Worker: nutzbare logische CPUs, zwei bleiben fuer OS/GUI frei."""
     try:
-        return max(1, len(os.sched_getaffinity(0)))
+        n = len(os.sched_getaffinity(0))
     except (AttributeError, OSError):
-        return max(1, os.cpu_count() or 1)
+        n = os.cpu_count() or 1
+    return max(1, n - 2 if n > 4 else n)
+
+
+def _min_reserve_mb() -> int:
+    """Mindestreserve: 1 % des RAM, 1-8 GB.
+
+    Ohne Swap kann der Kernel den Testspeicher nicht auslagern; bei zu kleiner
+    Reserve verdraengt er die Programmdateien von OS/GUI und das System friert ein.
+    """
+    return max(1024, min(8192, _read_meminfo_total_mb() // 100))
+
+
+def _read_meminfo_total_mb() -> int:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
 
 
 Segment = Tuple[int, int, int]  # (Chunk-Index, globaler Offset, Laenge)
@@ -474,6 +495,8 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
             try:
                 os.close(r)
                 _set_parent_death_signal()
+                with contextlib.suppress(OSError):
+                    os.nice(10)
                 if cpus:
                     with contextlib.suppress(OSError):
                         os.sched_setaffinity(0, {cpus[w % len(cpus)]})
@@ -556,6 +579,8 @@ def run_cycles(
     verified_mb = 0
 
     print("=== Zyklischer RAM-Fuelltest gestartet ===")
+    if reserve_mb < _min_reserve_mb():
+        reserve_mb = _min_reserve_mb()
     print(f"Dauer: {duration_seconds}s | Reserve: {reserve_mb} MB | "
           f"Chunk: {chunk_mb} MB | Pause: {pause_seconds:.0f}s")
     print("Ablauf je Zyklus: allokieren -> Muster schreiben -> verifizieren "

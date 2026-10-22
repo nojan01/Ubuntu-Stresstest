@@ -33,3 +33,18 @@ def test_verify_parallel_finds_error():
     errs = mfs._verify_parallel(chunks, builder, workers=3)
     assert len(errs) == 1 and "Chunk 4" in errs[0]
     mfs._free_chunks(chunks)
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_parallel_fill_is_visible_in_parent_and_rotates():
+    chunks = mfs._allocate_chunks(8, 1)
+    builder = mfs._const_byte_builder(0x3C)
+    segs = mfs._segments(chunks, None)
+    for rotation in (0, 3):
+        written = mfs._run_parallel("fill", chunks, builder, segs, workers=4,
+                                    rotation=rotation)
+        assert sum(s[2] for s in written) == 8 << 20
+        assert chunks[5][0][123] == 0x3C
+        assert mfs._run_parallel("verify", chunks, builder, written,
+                                 workers=4, rotation=rotation + 2) == []
+    mfs._free_chunks(chunks)

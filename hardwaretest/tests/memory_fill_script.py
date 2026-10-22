@@ -120,7 +120,7 @@ def _allocate_chunks(total_mb: int, chunk_mb: int) -> List[Chunk]:
         size_bytes = size_mb * 1024 * 1024
         try:
             m = mmap.mmap(-1, size_bytes,
-                          flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
+                          flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS,
                           prot=mmap.PROT_READ | mmap.PROT_WRITE)
             chunks.append((m, size_bytes))
             remaining -= size_mb
@@ -402,40 +402,91 @@ def _verify(chunks: List[Chunk], builder: PatternBuilder, limit: Optional[int] =
     return _verify_segments(chunks, builder, segs, reporter.update)
 
 
-def _verify_parallel(chunks: List[Chunk], builder: PatternBuilder,
-                     limit: Optional[int] = None,
-                     workers: Optional[int] = None) -> List[str]:
-    """Verifiziert parallel in geforkten Prozessen (nur lesend, kein Copy-on-Write).
+def _fill_segments(chunks: List[Chunk], builder: PatternBuilder,
+                   segs: List[Segment], deadline: float = float("inf"),
+                   on_progress: Optional[Callable[[int], None]] = None) -> List[Segment]:
+    """Schreibt das Muster in *segs* bis *deadline*; liefert die beschriebenen Teile."""
+    written: List[Segment] = []
+    done = 0
+    for idx, global_offset, total in segs:
+        m = chunks[idx][0]
+        pos = 0
+        while pos < total and not _stop and time.monotonic() < deadline:
+            piece = min(_BUF_SIZE, total - pos)
+            m[pos:pos + piece] = builder(global_offset + pos, piece)
+            pos += piece
+            done += piece
+            if on_progress is not None:
+                on_progress(done)
+        if pos:
+            written.append((idx, global_offset, pos))
+        if pos < total:
+            break
+    return written
 
-    Python vergleicht single-threaded; bei mehreren hundert GB RAM begrenzt
-    das die Pruefung auf ~2 GB/s. Jeder Worker prueft einen Teil der Bloecke.
+
+def _set_parent_death_signal() -> None:
+    """Kindprozess beenden, falls der Hauptprozess hart beendet wird."""
+    with contextlib.suppress(Exception):
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+
+
+def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
+                  segs: List[Segment], workers: Optional[int] = None,
+                  rotation: int = 0, deadline: float = float("inf")):
+    """Fuehrt Schreiben (``kind='fill'``) oder Pruefen (``'verify'``) parallel aus.
+
+    Der Speicher ist ``MAP_SHARED``; geforkte Worker schreiben/lesen daher
+    direkt im selben RAM. Jeder Worker ist an eine CPU gebunden. Ueber
+    *rotation* bekommen die Bloecke je Zyklus andere CPUs (und damit auf
+    Mehrsockel-Systemen wechselnd lokale und entfernte Speicherzugriffe).
+
+    Liefert bei ``fill`` die beschriebenen Segmente, bei ``verify`` die Fehler.
     """
-    segs = _segments(chunks, limit)
+    cpus = sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else []
     if workers is None:
         workers = _usable_cpus()
     workers = max(1, min(workers, len(segs)))
-    if workers == 1 or not hasattr(os, "fork"):
-        return _verify(chunks, builder, limit)
-
+    parts: List[List[Segment]] = [[] for _ in range(workers)]
+    for j, seg in enumerate(segs):
+        parts[(j + rotation) % workers].append(seg)
     grand_total = sum(s[2] for s in segs)
-    print(f"    Pruefe parallel mit {workers} Prozessen ...", flush=True)
+    verb = "geschrieben" if kind == "fill" else "geprueft"
+
+    if workers == 1 or not hasattr(os, "fork"):
+        reporter = _ProgressReporter(verb, grand_total)
+        if kind == "fill":
+            return _fill_segments(chunks, builder, segs, deadline, reporter.update)
+        return _verify_segments(chunks, builder, segs, reporter.update)
+
+    print(f"    {workers} Prozesse auf CPUs, Rotation {rotation % workers} ...",
+          flush=True)
     counters = mmap.mmap(-1, 8 * workers,
                          flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
     procs: List[Tuple[int, int]] = []
     for w in range(workers):
-        part = segs[w::workers]
         r, wfd = os.pipe()
         pid = os.fork()
         if pid == 0:
             code = 0
             try:
                 os.close(r)
+                _set_parent_death_signal()
+                if cpus:
+                    with contextlib.suppress(OSError):
+                        os.sched_setaffinity(0, {cpus[w % len(cpus)]})
 
                 def _report(done: int, _w: int = w) -> None:
                     struct.pack_into("<Q", counters, 8 * _w, done)
-                errs = _verify_segments(chunks, builder, part, _report)
+                if kind == "fill":
+                    res = _fill_segments(chunks, builder, parts[w], deadline, _report)
+                    lines = [f"{i} {o} {n}" for i, o, n in res]
+                else:
+                    lines = _verify_segments(chunks, builder, parts[w], _report)
                 with os.fdopen(wfd, "w", encoding="utf-8") as f:
-                    f.write("\n".join(errs))
+                    f.write("\n".join(lines))
             except BaseException:
                 code = 1
             finally:
@@ -443,15 +494,17 @@ def _verify_parallel(chunks: List[Chunk], builder: PatternBuilder,
         os.close(wfd)
         procs.append((pid, r))
 
-    reporter = _ProgressReporter("geprueft", grand_total)
-    errors: List[str] = []
+    reporter = _ProgressReporter(verb, grand_total)
     pending = {pid for pid, _ in procs}
+    failed = 0
     try:
         while pending:
             for pid in list(pending):
-                done_pid, _status = os.waitpid(pid, os.WNOHANG)
+                done_pid, status = os.waitpid(pid, os.WNOHANG)
                 if done_pid:
                     pending.discard(pid)
+                    if os.waitstatus_to_exitcode(status) != 0:
+                        failed += 1
             if _stop:
                 for pid in pending:
                     with contextlib.suppress(ProcessLookupError):
@@ -462,12 +515,25 @@ def _verify_parallel(chunks: List[Chunk], builder: PatternBuilder,
                     struct.unpack_from("<Q", counters, 8 * i)[0]
                     for i in range(workers)))
     finally:
+        outputs = []
         for _pid, r in procs:
             with os.fdopen(r, "r", encoding="utf-8") as f:
-                data = f.read()
-            errors.extend(line for line in data.splitlines() if line)
+                outputs.append(f.read())
         counters.close()
-    return errors
+
+    lines = [ln for out in outputs for ln in out.splitlines() if ln]
+    if kind == "fill":
+        written = [tuple(int(x) for x in ln.split()) for ln in lines]
+        return sorted(written, key=lambda s: s[1])
+    if failed and not _stop:
+        lines.append(f"FEHLER: {failed} Pruef-Prozess(e) unerwartet beendet")
+    return lines
+
+
+def _verify_parallel(chunks: List[Chunk], builder: PatternBuilder,
+                     limit: Optional[int] = None,
+                     workers: Optional[int] = None) -> List[str]:
+    return _run_parallel("verify", chunks, builder, _segments(chunks, limit), workers)
 
 
 # ---------------------------------------------------------------------------
@@ -550,12 +616,18 @@ def run_cycles(
 
         cycle_errors: List[str] = []
         written_mb = 0
+        written_segs: List[Segment] = []
+        rotation = 0
         try:
             if not _stop:
                 print(f"  Schreibe {name} ({actual_mb} MB) ...", flush=True)
                 t0 = time.monotonic()
-                written = _fill(chunks, builder, t0 + max(0.0, end - t0) * _WRITE_SHARE)
-                written_mb = written // (1024 * 1024)
+                rotation = cycle * (_usable_cpus() // 2 + 1)
+                written_segs = _run_parallel(
+                    "fill", chunks, builder, _segments(chunks, None),
+                    rotation=rotation,
+                    deadline=t0 + max(0.0, end - t0) * _WRITE_SHARE)
+                written_mb = sum(s[2] for s in written_segs) // (1024 * 1024)
                 write_time = time.monotonic() - t0
                 speed = written_mb / write_time if write_time > 0 else 0
                 print(f"  Schreiben fertig: {write_time:.1f}s ({speed:.0f} MB/s)", flush=True)
@@ -566,7 +638,9 @@ def run_cycles(
             if not _stop and written_mb > 0:
                 print(f"  Verifiziere {name} ({written_mb} MB) ...", flush=True)
                 t0 = time.monotonic()
-                errs = _verify_parallel(chunks, builder, written)
+                # Pruefen durch andere CPUs als beim Schreiben (halbe Runde versetzt).
+                errs = _run_parallel("verify", chunks, builder, written_segs,
+                                     rotation=rotation + _usable_cpus() // 2)
                 verify_time = time.monotonic() - t0
                 speed = written_mb / verify_time if verify_time > 0 else 0
 

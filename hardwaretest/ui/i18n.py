@@ -358,7 +358,6 @@ _EN: dict[str, str] = {
     "Core-Details ausblenden ({count}, max. {page_size}/Seite)": "Hide core details ({count}, max. {page_size}/page)",
     "Vorherige": "Previous",
     "Nächste": "Next",
-    "Seite {page}/{pages} – Cores {first}–{last} von {count}": "Page {page}/{pages} – cores {first}–{last} of {count}",
     "Aufgabe": "Task",
     "Ausgewogener RAM/CPU-Test": "Balanced RAM/CPU test",
     "Binary": "Binary",

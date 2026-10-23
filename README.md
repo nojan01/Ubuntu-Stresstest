@@ -5,6 +5,7 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations 
 ### Neu in 0.2.45
 
 - ECC-Anzeige: BMC-Protokoll (iLO/IPMI) wertet nur Ereignisse, die seit App-Start neu hinzukommen; ältere Einträge werden nur gezählt (Details im ProLiant-Info-Tab).
+- Core-Details: Blättern-Buttons sitzen jetzt in der Kopfzeile und sind auch auf kleinen Bildschirmen (z. B. iLO-Konsole 1024×768) erreichbar.
 - Hilfe: Abschnitt zum RAM-Fülltest mit Hinweis auf ausreichend freien Speicher fürs OS bei manueller Speichergröße.
 
 ### Neu in 0.2.44

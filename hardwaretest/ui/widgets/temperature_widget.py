@@ -115,7 +115,7 @@ class _CollapsibleCoreDetail(QWidget):
         page_layout = QHBoxLayout()
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.addWidget(self._previous_btn)
-        page_layout.addWidget(self._page_label, 1)
+        page_layout.addWidget(self._page_label)
         page_layout.addWidget(self._next_btn)
         self._page_widget = QWidget()
         self._page_widget.setLayout(page_layout)
@@ -124,9 +124,15 @@ class _CollapsibleCoreDetail(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        layout.addWidget(self._toggle_btn)
+        # Blättern in derselben Zeile wie der Umschalter: so bleiben die
+        # Buttons auch auf kleinen Bildschirmen sichtbar und bedienbar.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(self._toggle_btn)
+        header.addStretch(1)
+        header.addWidget(self._page_widget)
+        layout.addLayout(header)
         layout.addWidget(self._content)
-        layout.addWidget(self._page_widget)
         self.setLayout(layout)
 
     def _on_toggled(self, checked: bool) -> None:
@@ -212,7 +218,7 @@ class _CollapsibleCoreDetail(QWidget):
         first = start + 1 if count else 0
         last = min(start + len(visible), count)
         self._page_label.setText(language_manager.tr(
-            "Seite {page}/{pages} – Cores {first}–{last} von {count}",
+            "{page}/{pages} ({first}–{last})",
             page=self._page_index + 1,
             pages=page_count,
             first=first,

@@ -452,13 +452,20 @@ class TemperatureWidget(QWidget):
         if bmc is not None:
             stamp = time.strftime("%H:%M", time.localtime(bmc.timestamp))
             en = language_manager.language == "en"
-            text += (f"\nBMC log (iLO/IPMI, as of {stamp}): {bmc.correctable} correctable, "
-                     f"{bmc.uncorrectable} uncorrectable" if en else
-                     f"\nBMC-Protokoll (iLO/IPMI, Stand {stamp}): {bmc.correctable} korrigierbar, "
-                     f"{bmc.uncorrectable} unkorrigierbar")
+            old_total = (bmc.correctable + bmc.uncorrectable
+                         - bmc.new_correctable - bmc.new_uncorrectable)
+            text += (f"\nBMC log (iLO/IPMI, as of {stamp}): new since start: "
+                     f"{bmc.new_correctable} correctable, {bmc.new_uncorrectable} uncorrectable"
+                     if en else
+                     f"\nBMC-Protokoll (iLO/IPMI, Stand {stamp}): neu seit Start: "
+                     f"{bmc.new_correctable} korrigierbar, {bmc.new_uncorrectable} unkorrigierbar")
+            if old_total:
+                text += (f" ({old_total} older entries, see ProLiant Info)" if en else
+                         f" ({old_total} ältere Einträge, siehe ProLiant-Info)")
         self._edac_label.setText(text)
-        if bmc is not None and (bmc.uncorrectable or bmc.correctable):
-            self._edac_label.setStyleSheet(_CSS_RED if bmc.uncorrectable or edac.uncorrectable_errors else _CSS_YELLOW)
+        if bmc is not None and (bmc.new_uncorrectable or bmc.new_correctable):
+            self._edac_label.setStyleSheet(
+                _CSS_RED if bmc.new_uncorrectable or edac.uncorrectable_errors else _CSS_YELLOW)
             return
 
         if not edac.available:

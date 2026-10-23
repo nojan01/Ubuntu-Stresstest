@@ -224,6 +224,22 @@ Kommunikation zwischen CPU-Kernen unter Druck setzen.
 
 <hr>
 
+<h2>Tab: RAM-Fuelltest</h2>
+<p>Belegt in jedem Zyklus fast den gesamten freien RAM, schreibt wechselnde
+Bitmuster (parallel auf allen Kernen bis auf zwei), verifiziert sie, gibt den
+Speicher frei und wiederholt. Die Blöcke wechseln je Zyklus die CPU.</p>
+<ul>
+<li><b>Speicher „automatisch“:</b> nutzt den verfügbaren RAM abzüglich der Reserve.</li>
+<li><b>Reserve (OS/GUI):</b> bleibt für Betriebssystem und Oberfläche frei. Der Test
+erzwingt mindestens 1 % des RAM (1–8 GB).</li>
+<li class="bad"><b>Speicher manuell setzen:</b> Unbedingt genug freien Speicher für das
+Betriebssystem einplanen (empfohlen: mindestens 2–4 GB bzw. 1–2 % des RAM).
+Ohne Swap kann der Testspeicher nicht ausgelagert werden – ist er zu groß,
+friert das System ein.</li>
+<li>Bereiche, die Kernel und Programme belegen, testet der Fülltest nie.
+Für eine lückenlose Prüfung MemTest86 (Boot-Menü) verwenden.</li>
+</ul>
+
 <h2>Tab: Disk (Datei / Geräte / Destruktiv)</h2>
 <p>
 Festplatten-/SSD-Tests mittels <b>fio</b> – optimiert für HPE ProLiant Server
@@ -639,6 +655,21 @@ inter-core communication.
 </ul>
 
 <hr>
+
+<h2>Tab: RAM fill test</h2>
+<p>Each cycle allocates almost all free RAM, writes alternating bit patterns
+(in parallel on all cores except two), verifies them, frees the memory and
+repeats. Blocks move to different CPUs every cycle.</p>
+<ul>
+<li><b>Memory "automatic":</b> uses available RAM minus the reserve.</li>
+<li><b>Reserve (OS/GUI):</b> kept free for the OS and GUI. At least 1 % of RAM
+(1–8 GB) is enforced.</li>
+<li class="bad"><b>Setting memory manually:</b> always leave enough free memory for
+the operating system (recommended: at least 2–4 GB or 1–2 % of RAM). Without swap
+the test memory cannot be paged out – if it is too large the system freezes.</li>
+<li>Memory used by the kernel and programs is never tested by the fill test.
+Use MemTest86 (boot menu) for complete coverage.</li>
+</ul>
 
 <h2>Tab: Disk (File / Device / Destructive)</h2>
 <p>

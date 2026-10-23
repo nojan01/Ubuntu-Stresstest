@@ -2,6 +2,11 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.45
+
+- ECC-Anzeige: BMC-Protokoll (iLO/IPMI) wertet nur Ereignisse, die seit App-Start neu hinzukommen; ältere Einträge werden nur gezählt (Details im ProLiant-Info-Tab).
+- Hilfe: Abschnitt zum RAM-Fülltest mit Hinweis auf ausreichend freien Speicher fürs OS bei manueller Speichergröße.
+
 ### Neu in 0.2.44
 
 - RAM-Fülltest friert große Server nicht mehr ein: Mindestreserve 1 % des RAM (1–8 GB), zwei Kerne bleiben frei, Worker laufen mit niedriger Priorität.
@@ -144,7 +149,7 @@ Lizenztext befindet sich in der Datei `LICENSE`.
 
 ### Variante A – Debian-Paket (empfohlen)
 
-Für die Installation wird nur die Datei `hardwaretest_0.2.44_amd64.deb` benötigt.
+Für die Installation wird nur die Datei `hardwaretest_0.2.45_amd64.deb` benötigt.
 
 1. Die DEB-Datei herunterladen.
 2. Im Dateimanager doppelt anklicken und im Paketinstallationsprogramm
@@ -175,8 +180,8 @@ Das AppImage enthält ebenfalls Python, PySide6 und alle Python-Module. Es kann
 ohne Installation einer Python-Laufzeit gestartet werden:
 
 ```bash
-chmod +x Hardwaretest-0.2.44-x86_64.AppImage
-./Hardwaretest-0.2.44-x86_64.AppImage
+chmod +x Hardwaretest-0.2.45-x86_64.AppImage
+./Hardwaretest-0.2.45-x86_64.AppImage
 ```
 
 Native Diagnoseprogramme müssen auf der jeweiligen Distribution weiterhin über

@@ -145,3 +145,14 @@ def test_parse_iml_gen10_event():
     (e,) = parse_iml(text)
     assert e.number == "178" and e.repaired and e.severity == "info"
     assert e.category == "Hardware / Network" and e.count == "1"
+
+
+def test_sel_counts_only_new_events_since_start(monkeypatch):
+    monkeypatch.setattr(ipmi, "_sel_baseline", None)
+    old = ipmi.SelEvent("1 | Memory | Uncorrectable ECC | Asserted", True)
+    ipmi._remember([old])
+    assert ipmi.last_sel_counts.new_uncorrectable == 0
+    new = ipmi.SelEvent("2 | Memory | Correctable ECC | Asserted", False)
+    ipmi._remember([old, new])
+    c = ipmi.last_sel_counts
+    assert (c.uncorrectable, c.new_correctable, c.new_uncorrectable) == (1, 1, 0)

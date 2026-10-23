@@ -364,6 +364,11 @@ Das Inventar zeigt außerdem aktuelle GPU-/SM-/Speichertakte sowie die aktuelle
 und maximal mögliche PCIe-Generation und Linkbreite. Die Liveüberwachung liest
 im gewählten Intervall Auslastung, Temperatur, VRAM, Leistungsaufnahme und Takte
 der markierten GPUs. Beim Start einer DCGM-Diagnose wird sie automatisch aktiviert.
+Der <b>GPU-Lasttest</b> funktioniert ohne DCGM auf jeder NVIDIA-GPU ab Turing
+(GeForce GTX 16xx/RTX 20xx–50xx, RTX/Quadro, Rechenzentrums-GPUs). Er benötigt nur
+den NVIDIA-Treiber (libcuda.so.1), erzeugt Rechenlast mit Ergebnisvergleich und
+prüft den eingestellten Anteil des freien VRAM fortlaufend mit Bitmustern.
+Rechen- oder Speicherfehler führen zu „FEHLGESCHLAGEN“.
 Die vollständige Installationsanleitung liegt unter
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
 </p>
@@ -799,6 +804,11 @@ The inventory also shows current GPU/SM/memory clocks and the current and maximu
 PCIe generation and link width. Live monitoring samples utilization, temperature,
 VRAM, power and clocks of the selected GPUs at the configured interval. It starts
 automatically with a DCGM diagnostic.
+The <b>GPU stress test</b> works without DCGM on every NVIDIA GPU from Turing on
+(GeForce GTX 16xx/RTX 20xx–50xx, RTX/Quadro, data-center GPUs). It only needs the
+NVIDIA driver (libcuda.so.1), creates compute load with result comparison and
+continuously checks the configured share of free VRAM with bit patterns.
+Compute or memory errors result in “FAILED”.
 The complete installation guide is available at
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
 </p>

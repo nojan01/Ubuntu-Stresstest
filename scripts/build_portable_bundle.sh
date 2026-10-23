@@ -43,6 +43,7 @@ mkdir -p "$DIST_ROOT" "$BUILD_ROOT/work" "$BUILD_ROOT/spec"
     --add-data "$REPO_DIR/LICENSE:." \
     --add-data "$REPO_DIR/README.md:." \
     --add-data "$REPO_DIR/hardwaretest/tests/memory_fill_script.py:hardwaretest/tests" \
+    --add-data "$REPO_DIR/hardwaretest/tests/gpu_stress_script.py:hardwaretest/tests" \
     "$REPO_DIR/scripts/portable_entry.py"
 
 [[ -x "$BUNDLE_DIR/hardwaretest" ]] || {

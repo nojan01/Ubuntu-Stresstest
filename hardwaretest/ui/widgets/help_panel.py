@@ -368,7 +368,14 @@ Der <b>GPU-Lasttest</b> funktioniert ohne DCGM auf jeder NVIDIA-GPU ab Turing
 (GeForce GTX 16xx/RTX 20xx–50xx, RTX/Quadro, Rechenzentrums-GPUs). Er benötigt nur
 den NVIDIA-Treiber (libcuda.so.1), erzeugt Rechenlast mit Ergebnisvergleich und
 prüft den eingestellten Anteil des freien VRAM fortlaufend mit Bitmustern.
-Rechen- oder Speicherfehler führen zu „FEHLGESCHLAGEN“.
+Rechen- oder Speicherfehler führen zu „FEHLGESCHLAGEN“. Ein CUDA-Toolkit ist nicht nötig.
+<br><b>Unterstützte NVIDIA-GPUs</b> (Treiber 595, Open-Kernelmodul, ab Turing):
+GeForce GTX 16xx und RTX 20xx/30xx/40xx/50xx; RTX/Quadro ab Turing;
+Rechenzentrum: Tesla T4, Ampere A2/A10/A16/A30/A40/A100, Ada L4/L40/L40S,
+RTX 2000–6000 Ada, Hopper H100/H200, Blackwell B200/RTX PRO.
+DCGM-Diagnosen sind für Rechenzentrums-GPUs vorgesehen; bei Workstation-Karten
+laufen nur Teile, GeForce-Karten werden nicht unterstützt.
+Nicht unterstützt: Pascal/Volta (GTX 10xx, P4, P40, P100, V100) und älter.
 Die vollständige Installationsanleitung liegt unter
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
 </p>
@@ -808,7 +815,14 @@ The <b>GPU stress test</b> works without DCGM on every NVIDIA GPU from Turing on
 (GeForce GTX 16xx/RTX 20xx–50xx, RTX/Quadro, data-center GPUs). It only needs the
 NVIDIA driver (libcuda.so.1), creates compute load with result comparison and
 continuously checks the configured share of free VRAM with bit patterns.
-Compute or memory errors result in “FAILED”.
+Compute or memory errors result in “FAILED”. No CUDA toolkit is required.
+<br><b>Supported NVIDIA GPUs</b> (driver 595, open kernel module, Turing and newer):
+GeForce GTX 16xx and RTX 20xx/30xx/40xx/50xx; RTX/Quadro from Turing on;
+data center: Tesla T4, Ampere A2/A10/A16/A30/A40/A100, Ada L4/L40/L40S,
+RTX 2000–6000 Ada, Hopper H100/H200, Blackwell B200/RTX PRO.
+DCGM diagnostics target data-center GPUs; on workstation cards only parts run,
+GeForce cards are not supported.
+Not supported: Pascal/Volta (GTX 10xx, P4, P40, P100, V100) and older.
 The complete installation guide is available at
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
 </p>

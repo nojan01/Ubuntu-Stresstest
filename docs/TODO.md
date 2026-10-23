@@ -90,10 +90,13 @@ Ziel: alle Images identisch, einziger Unterschied ist MemTest86 Pro (PassMark, n
 - [ ] DCGM-Weitergabe im öffentlichen ISO klären (DCGM Apache 2.0; mitgelieferte
       CUDA-Bibliotheken: NVIDIA-Lizenz, Weitergabe prüfen) → THIRD-PARTY ergänzen
 - [ ] Hardwaretest: nur noch eine Version (freie Variante mit DCGM-Patches entfällt)
-- [ ] Build-Skript vereinfachen: Standard = NVIDIA + DCGM + AMD/Intel-Firmware + Vulkan;
-      Option nur noch `--memtest86` für die interne Variante
+- [ ] Zwei Größen, sonst identisch:
+  - **Klein:** NVIDIA-Treiber + GPU-Lasttest, AMD/Intel-Firmware + Vulkan, ohne DCGM
+  - **Groß:** wie klein, zusätzlich NVIDIA DCGM
+- [ ] Build-Skript vereinfachen: Optionen nur noch `--dcgm` (groß) und `--memtest86` (intern)
+- [ ] Hardwaretest: DCGM-Bereich automatisch ausblenden, wenn `dcgmi` fehlt (statt nur deaktivieren)
 - [ ] Einheitliche Hintergründe (textfrei, dezentes Copyright/MIT) für alle Images
-- [ ] Größe prüfen (DCGM-Image + ca. 60–80 MB AMD/Intel)
+- [ ] Größe prüfen (klein/groß + ca. 60–80 MB AMD/Intel)
 - [ ] Releases: öffentlich `nojan01/Hardwaretest-Live-ISO`, intern mit MemTest86 Pro
       in `nojan01/HPE-Live-ISO`; README/THIRD-PARTY anpassen
 

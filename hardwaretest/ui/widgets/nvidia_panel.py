@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTextEdit,
     QVBoxLayout,
@@ -94,12 +95,6 @@ class NvidiaPanel(QWidget):
         )
         self.install_hint.setWordWrap(True)
         self.install_hint.setStyleSheet("color: #88bbdd;")
-        self.supported = QLabel("Treiber 595 (Open-Kernelmodul) ab Turing: Tesla T4; Ampere A2, A10, A16, A30, A40, A100; Ada L4, L40, L40S, RTX 2000–6000 Ada; Hopper H100, H200; Blackwell B200, RTX PRO; RTX/Quadro ab Turing. Nicht unterstützt: Pascal/Volta (P4, P40, P100, V100) und älter. DCGM-Diagnosen sind für Rechenzentrums-GPUs vorgesehen; bei Workstation-Karten laufen nur Teile.")
-        self.supported.setWordWrap(True)
-        supported_layout = QVBoxLayout()
-        supported_layout.addWidget(self.supported)
-        self.supported_group = QGroupBox("Unterstützte NVIDIA-GPUs")
-        self.supported_group.setLayout(supported_layout)
         self.inventory = QTextEdit()
         self.inventory.setReadOnly(True)
         self.inventory.setMaximumHeight(190)
@@ -175,15 +170,7 @@ class NvidiaPanel(QWidget):
         stress_buttons = QHBoxLayout()
         stress_buttons.addWidget(self.stress_start_btn)
         stress_buttons.addWidget(self.stress_stop_btn)
-        stress_hint = QLabel(
-            "Rechenlast und VRAM-Mustertest über die CUDA-Treiberbibliothek; "
-            "funktioniert mit GeForce-, RTX/Quadro- und Rechenzentrums-GPUs ab Turing "
-            "(kein CUDA-Toolkit nötig)."
-        )
-        stress_hint.setWordWrap(True)
-        stress_hint.setStyleSheet("color: #bbbbbb; font-style: italic;")
         stress_layout = QVBoxLayout()
-        stress_layout.addWidget(stress_hint)
         stress_layout.addLayout(stress_form)
         stress_layout.addLayout(stress_buttons)
         stress_group = QGroupBox("GPU-Lasttest")
@@ -213,10 +200,10 @@ class NvidiaPanel(QWidget):
         top.addWidget(self.scan_btn)
         top.addWidget(self.linux_check_btn)
         top.addWidget(self.inventory_status, 1)
-        layout = QVBoxLayout(self)
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.addWidget(self.hint)
         layout.addWidget(self.install_hint)
-        layout.addWidget(self.supported_group)
         layout.addLayout(top)
         layout.addWidget(self.driver_result)
         layout.addWidget(select_group)
@@ -225,6 +212,14 @@ class NvidiaPanel(QWidget):
         layout.addWidget(stress_group)
         layout.addWidget(diag_group)
         layout.addWidget(result_group, 1)
+        self.output.setMinimumHeight(160)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(content)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
 
         self.scan_btn.clicked.connect(self._scan)
         self.linux_check_btn.clicked.connect(self._run_linux_check)

@@ -106,6 +106,8 @@ class _CollapsibleCoreDetail(QWidget):
         self._core_labels: List[QLabel] = []
         self._temps: List[CpuTemperature] = []
         self._page_index = 0
+        # Erster sichtbarer Core; bleibt bei Größenänderungen stabil.
+        self._first_index = 0
         # Tatsächliche Seitengröße: so viele Zeilen, wie sichtbar Platz haben.
         self._page_size = self.PAGE_SIZE
         self._content.viewport().installEventFilter(self)
@@ -160,8 +162,6 @@ class _CollapsibleCoreDetail(QWidget):
     def update_cores(self, temps: List[CpuTemperature]) -> None:
         """Update data while keeping at most one page of labels visible."""
         self._temps = list(temps)
-        last_page = max(0, (len(self._temps) - 1) // self.PAGE_SIZE)
-        self._page_index = min(self._page_index, last_page)
         while len(self._core_labels) < min(self.PAGE_SIZE, len(self._temps)):
             label = QLabel()
             position = len(self._core_labels)
@@ -195,14 +195,14 @@ class _CollapsibleCoreDetail(QWidget):
         rows = max(1, (height - margins.top() - margins.bottom()) // row)
         size = max(self.COLUMNS, min(self.PAGE_SIZE, rows * self.COLUMNS))
         if size != self._page_size:
-            first = self._page_index * self._page_size
             self._page_size = size
-            self._page_index = first // size
+            self._page_index = self._first_index // size
             self._render_page()
 
     def _change_page(self, offset: int) -> None:
         page_count = max(1, (len(self._temps) + self._page_size - 1) // self._page_size)
         self._page_index = max(0, min(page_count - 1, self._page_index + offset))
+        self._first_index = self._page_index * self._page_size
         self._render_page()
 
     def _display_names(self) -> List[str]:

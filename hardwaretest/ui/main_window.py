@@ -226,7 +226,8 @@ class MainWindow(QMainWindow):
         self._help_menu.addAction(self._about_action)
         self._update_action = QAction("Nach Updates suchen", self)
         self._update_action.triggered.connect(lambda: self._check_for_updates(manual=True))
-        self._help_menu.addAction(self._update_action)
+        if not update_check_disabled():
+            self._help_menu.addAction(self._update_action)
 
     def _retranslate(self, _language: str | None = None) -> None:
         language_manager.retranslate_widget_tree(self)

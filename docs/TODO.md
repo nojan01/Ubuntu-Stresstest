@@ -1,4 +1,6 @@
-# TODO: GPU-Lasttest und Überwachung für AMD- und Intel-Grafik (Vulkan)
+# TODO Hardwaretest / Live-ISO
+
+## A) GPU-Lasttest und Überwachung für AMD- und Intel-Grafik (Vulkan)
 
 Ziel: Gleichwertiger Test wie der NVIDIA-GPU-Lasttest (0.2.48), aber herstellerneutral
 über Vulkan Compute – für AMD (Radeon RX 400 … RX 9000, Instinct) und Intel
@@ -53,3 +55,34 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
 - [ ] ca. 60–80 MB Mehrgröße prüfen, Verify-Hook um Prüfung der Firmware ergänzen
 - [ ] Test: Boot mit AMD-Karte und Intel-iGPU/Arc, `amdgpu`/`i915`/`xe` geladen, Sensoren sichtbar
 - [ ] THIRD-PARTY-LICENSES ergänzen (Mesa: MIT)
+
+## B) Zusätzliche CPU-Tests (Desktop und Server)
+
+### OpenDCDiag (Intel, Apache 2.0) – Priorität 1
+- [ ] Erkennt Silent Data Errors (stille Rechenfehler) pro Kern; Intel und AMD
+- [ ] Binary/Bundle beschaffen bzw. bauen (github.com/opendcdiag/opendcdiag), Lizenz in THIRD-PARTY
+- [ ] Runner: Dauer, Kernauswahl (alle / einzelne), Ausgabe (YAML) auswerten → fehlerhafte Kerne benennen
+- [ ] UI im CPU-Bereich + optional Schritt im Testplan
+- [ ] In Standard- und freies ISO aufnehmen
+
+### rasdaemon – Priorität 2
+- [ ] Machine-Check-/Cache-/Speicherfehler (MCE) während aller Tests mitschreiben
+- [ ] Anzeige neuer Ereignisse seit Teststart im Ergebnis (`ras-mc-ctl --errors`), Fehler → FEHLGESCHLAGEN
+- [ ] Paket `rasdaemon` ins ISO, Dienst aktivieren
+
+### stress-ng mit Verifikation – Priorität 3
+- [ ] Zusätzliche Lastarten mit `--verify` (cpu, matrix, fft, cache, branch, vecmath …)
+- [ ] Auswahl „Mischlast“ neben Prime95; Fehlerzeilen erkennen
+- [ ] Paket `stress-ng` ins ISO (prüfen, ob schon enthalten)
+
+### Intel In-Field Scan (IFS) – optional
+- [ ] Nur Xeon ab Sapphire Rapids: Treiber `intel_ifs`, sysfs `/sys/devices/virtual/ifs/`
+- [ ] Scan-Images von Intel (`/lib/firmware/intel/ifs_0/`) – Weitergabe/Lizenz klären
+- [ ] Nur anzeigen, wenn die CPU IFS unterstützt
+
+### Weitere Kandidaten (später prüfen)
+- [ ] HPL/Linpack (`hpcc`, BSD): maximale FP-Last, Mehrsockel
+- [ ] y-cruncher: Weitergabe unklar → nur bei Erlaubnis
+
+## C) Sonstiges
+- [ ] Update-Prüfung im ISO abgeschaltet (`HARDWARETEST_NO_UPDATE_CHECK=1`, Menüpunkt ausgeblendet) – umgesetzt, mit nächstem Release/ISO veröffentlichen

@@ -54,8 +54,15 @@ Alle Tests laufen unter Linux und nutzen bewährte Werkzeuge wie
       physische Speicher getestet wird und nicht auf die Festplatte ausgewichen wird.</li>
   <li><b>Temperatur-Monitor:</b> Zeigt pro CPU-Socket eine Zusammenfassung
       (Min/Ø/Max). Bei Dual-Socket-Systemen mit vielen Cores wird die Anzeige
-      automatisch kompakt. Die Detailansicht zeigt höchstens 24 Cores pro Seite;
-      weitere Cores sind über „Vorherige/Nächste“ erreichbar.</li>
+      automatisch kompakt. Die Detailansicht zeigt so viele Cores pro Seite, wie
+      Platz ist (höchstens 24); weitere Cores sind über „Vorherige/Nächste“
+      erreichbar. Gleiche Core-Namen auf mehreren Sockets erhalten ein Präfix
+      (S0, S1).<br><i>Core-Nummern:</i> Die Nummern stammen vom Prozessor selbst
+      (Hardware-Core-ID, Treiber <code>coretemp</code>), nicht von der App. Sie
+      sind daher oft lückenhaft und unsortiert. Beispiel Intel-Hybrid-CPU mit
+      6 P- und 4 E-Cores: P-Cores heißen Core 0, 4, 8, 12, 16, 20, E-Cores
+      Core 24–27. Hyperthreading-Threads teilen sich einen Core und Sensor,
+      deshalb gibt es weniger Einträge als logische CPUs.</li>
   <li><b>ECC/EDAC:</b> Zeigt korrigierbare und unkorrigierbare Speicherfehler an
       (nur bei ECC-RAM und geladenem EDAC-Kernelmodul).</li>
   <li><b>Pass/Fail:</b> Nach dem Test wird automatisch anhand der Ausgabe und des
@@ -487,8 +494,14 @@ using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>, and <b>fio
       memory is tested rather than swapping to disk.</li>
   <li><b>Temperature Monitor:</b> Shows a per-socket summary (Min/Avg/Max). On
       dual-socket systems with many cores the display automatically becomes
-      compact. The detail view shows at most 24 cores per page; use
-      “Previous/Next” to browse additional cores.</li>
+      compact. The detail view shows as many cores per page as fit (at most 24);
+      use “Previous/Next” to browse additional cores. Identical core names on
+      several sockets get a prefix (S0, S1).<br><i>Core numbers:</i> They come
+      from the processor itself (hardware core ID, driver <code>coretemp</code>),
+      not from the app, so they often have gaps and are unsorted. Example Intel
+      hybrid CPU with 6 P- and 4 E-cores: P-cores are Core 0, 4, 8, 12, 16, 20,
+      E-cores Core 24–27. Hyper-threads share one core and sensor, so there are
+      fewer entries than logical CPUs.</li>
   <li><b>ECC/EDAC:</b> Displays correctable and uncorrectable memory errors
       (only with ECC RAM and the EDAC kernel module loaded).</li>
   <li><b>Pass/Fail:</b> After the test, the result is automatically evaluated

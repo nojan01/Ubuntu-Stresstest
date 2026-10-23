@@ -73,3 +73,19 @@ def test_duplicate_core_names_get_socket_prefix():
         for index in range(4)
     ])
     assert detail._display_names() == ["S0 Core 0", "S0 Core 1", "S1 Core 0", "S1 Core 1"]
+
+
+def test_page_survives_updates_and_resizes():
+    _app()
+    detail = _CollapsibleCoreDetail()
+    temps = [CpuTemperature(current=40, label=f"Core {i}", chip_name="coretemp") for i in range(80)]
+    detail.update_cores(temps)
+    detail._toggle_btn.setChecked(True)
+    detail._fit_page_size(10)  # 1 Zeile = 4 Cores
+    for _ in range(5):
+        detail._change_page(1)
+    assert detail._page_index == 5
+    detail._fit_page_size(500)
+    detail._fit_page_size(10)
+    detail.update_cores(temps)
+    assert detail._page_index == 5

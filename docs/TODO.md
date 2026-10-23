@@ -84,5 +84,18 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
 - [ ] HPL/Linpack (`hpcc`, BSD): maximale FP-Last, Mehrsockel
 - [ ] y-cruncher: Weitergabe unklar → nur bei Erlaubnis
 
-## C) Sonstiges
+## C) Ein einheitliches Image für alle
+Ziel: alle Images identisch, einziger Unterschied ist MemTest86 Pro (PassMark, nur intern).
+- [ ] Alle GPUs unterstützt: NVIDIA (Consumer + Enterprise, Treiber + DCGM), AMD, Intel
+- [ ] DCGM-Weitergabe im öffentlichen ISO klären (DCGM Apache 2.0; mitgelieferte
+      CUDA-Bibliotheken: NVIDIA-Lizenz, Weitergabe prüfen) → THIRD-PARTY ergänzen
+- [ ] Hardwaretest: nur noch eine Version (freie Variante mit DCGM-Patches entfällt)
+- [ ] Build-Skript vereinfachen: Standard = NVIDIA + DCGM + AMD/Intel-Firmware + Vulkan;
+      Option nur noch `--memtest86` für die interne Variante
+- [ ] Einheitliche Hintergründe (textfrei, dezentes Copyright/MIT) für alle Images
+- [ ] Größe prüfen (DCGM-Image + ca. 60–80 MB AMD/Intel)
+- [ ] Releases: öffentlich `nojan01/Hardwaretest-Live-ISO`, intern mit MemTest86 Pro
+      in `nojan01/HPE-Live-ISO`; README/THIRD-PARTY anpassen
+
+## D) Sonstiges
 - [ ] Update-Prüfung im ISO abgeschaltet (`HARDWARETEST_NO_UPDATE_CHECK=1`, Menüpunkt ausgeblendet) – umgesetzt, mit nächstem Release/ISO veröffentlichen

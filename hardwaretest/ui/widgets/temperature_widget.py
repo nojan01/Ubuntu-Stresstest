@@ -115,7 +115,7 @@ class _CollapsibleCoreDetail(QWidget):
         page_layout = QHBoxLayout()
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.addWidget(self._previous_btn)
-        page_layout.addWidget(self._page_label, 1)
+        page_layout.addWidget(self._page_label)
         page_layout.addWidget(self._next_btn)
         self._page_widget = QWidget()
         self._page_widget.setLayout(page_layout)
@@ -124,9 +124,15 @@ class _CollapsibleCoreDetail(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        layout.addWidget(self._toggle_btn)
+        # Blättern in derselben Zeile wie der Umschalter: so bleiben die
+        # Buttons auch auf kleinen Bildschirmen sichtbar und bedienbar.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(self._toggle_btn)
+        header.addStretch(1)
+        header.addWidget(self._page_widget)
+        layout.addLayout(header)
         layout.addWidget(self._content)
-        layout.addWidget(self._page_widget)
         self.setLayout(layout)
 
     def _on_toggled(self, checked: bool) -> None:
@@ -212,7 +218,7 @@ class _CollapsibleCoreDetail(QWidget):
         first = start + 1 if count else 0
         last = min(start + len(visible), count)
         self._page_label.setText(language_manager.tr(
-            "Seite {page}/{pages} – Cores {first}–{last} von {count}",
+            "{page}/{pages} ({first}–{last})",
             page=self._page_index + 1,
             pages=page_count,
             first=first,
@@ -452,13 +458,20 @@ class TemperatureWidget(QWidget):
         if bmc is not None:
             stamp = time.strftime("%H:%M", time.localtime(bmc.timestamp))
             en = language_manager.language == "en"
-            text += (f"\nBMC log (iLO/IPMI, as of {stamp}): {bmc.correctable} correctable, "
-                     f"{bmc.uncorrectable} uncorrectable" if en else
-                     f"\nBMC-Protokoll (iLO/IPMI, Stand {stamp}): {bmc.correctable} korrigierbar, "
-                     f"{bmc.uncorrectable} unkorrigierbar")
+            old_total = (bmc.correctable + bmc.uncorrectable
+                         - bmc.new_correctable - bmc.new_uncorrectable)
+            text += (f"\nBMC log (iLO/IPMI, as of {stamp}): new since start: "
+                     f"{bmc.new_correctable} correctable, {bmc.new_uncorrectable} uncorrectable"
+                     if en else
+                     f"\nBMC-Protokoll (iLO/IPMI, Stand {stamp}): neu seit Start: "
+                     f"{bmc.new_correctable} korrigierbar, {bmc.new_uncorrectable} unkorrigierbar")
+            if old_total:
+                text += (f" ({old_total} older entries, see ProLiant Info)" if en else
+                         f" ({old_total} ältere Einträge, siehe ProLiant-Info)")
         self._edac_label.setText(text)
-        if bmc is not None and (bmc.uncorrectable or bmc.correctable):
-            self._edac_label.setStyleSheet(_CSS_RED if bmc.uncorrectable or edac.uncorrectable_errors else _CSS_YELLOW)
+        if bmc is not None and (bmc.new_uncorrectable or bmc.new_correctable):
+            self._edac_label.setStyleSheet(
+                _CSS_RED if bmc.new_uncorrectable or edac.uncorrectable_errors else _CSS_YELLOW)
             return
 
         if not edac.available:

@@ -26,17 +26,27 @@ class SelCounts:
     correctable: int
     uncorrectable: int
     timestamp: float
+    new_correctable: int = 0
+    new_uncorrectable: int = 0
 
 
 # Letzter erfolgreich gelesener Stand des BMC-Protokolls (ProLiant-Info-Tab, Monitoring, Gesamttest).
 # Die ECC-Anzeigen der Testtabs lesen ihn, weil sie selbst keine Root-Rechte haben.
 last_sel_counts: Optional[SelCounts] = None
+# Ereignisse, die beim ersten Lesen nach App-Start schon im Protokoll standen.
+# Nur danach hinzugekommene Ereignisse gelten als neu (Warnfarbe).
+_sel_baseline: Optional[set[str]] = None
 
 
 def _remember(events) -> None:
-    global last_sel_counts
+    global last_sel_counts, _sel_baseline
+    if _sel_baseline is None:
+        _sel_baseline = {e.line for e in events}
+    new = [e for e in events if e.line not in _sel_baseline]
     ue = sum(e.uncorrectable for e in events)
-    last_sel_counts = SelCounts(len(events) - ue, ue, time.time())
+    new_ue = sum(e.uncorrectable for e in new)
+    last_sel_counts = SelCounts(len(events) - ue, ue, time.time(),
+                                len(new) - new_ue, new_ue)
 
 _SERVER_VENDORS = re.compile(r"\b(hpe?|hewlett|dell|supermicro|lenovo|fujitsu|cisco|inspur|quanta|gigabyte|asrock ?rack)\b", re.I)
 _SEL_MEMORY = re.compile(r"memory|ecc|dimm", re.I)

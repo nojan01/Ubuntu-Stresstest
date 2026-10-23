@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from typing import List, Optional
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -63,10 +63,10 @@ def _temp_emoji(temp: float, high: float = 0.0, critical: float = 0.0) -> str:
     crit = critical if critical > 0 else _CRIT_TEMP
     warn = high if high > 0 else _WARN_TEMP
     if temp >= crit:
-        return "🔴"
+        return "●"
     if temp >= warn:
-        return "🟡"
-    return "🟢"
+        return "●"
+    return "●"
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,8 @@ class _CollapsibleCoreDetail(QWidget):
         self._content = QScrollArea()
         self._content.setWidgetResizable(True)
         self._content.setVisible(False)
-        self._content.setMinimumHeight(100)
+        # Klein halten: der Platz bestimmt die Seitengröße, nichts wird abgeschnitten.
+        self._content.setMinimumHeight(self.fontMetrics().height() + 16)
         self._content.setMaximumHeight(165)
         self._content.setFrameShape(QFrame.Shape.NoFrame)
 
@@ -105,6 +106,9 @@ class _CollapsibleCoreDetail(QWidget):
         self._core_labels: List[QLabel] = []
         self._temps: List[CpuTemperature] = []
         self._page_index = 0
+        # Tatsächliche Seitengröße: so viele Zeilen, wie sichtbar Platz haben.
+        self._page_size = self.PAGE_SIZE
+        self._content.viewport().installEventFilter(self)
 
         self._previous_btn = QPushButton(language_manager.tr("Vorherige"))
         self._next_btn = QPushButton(language_manager.tr("Nächste"))
@@ -143,15 +147,13 @@ class _CollapsibleCoreDetail(QWidget):
         count = len(self._temps)
         if checked:
             self._toggle_btn.setText(language_manager.tr(
-                "Core-Details ausblenden ({count}, max. {page_size}/Seite)",
+                "Core-Details ausblenden ({count})",
                 count=count,
-                page_size=self.PAGE_SIZE,
             ))
         else:
             self._toggle_btn.setText(language_manager.tr(
-                "Core-Details anzeigen ({count}, max. {page_size}/Seite)",
+                "Core-Details anzeigen ({count})",
                 count=count,
-                page_size=self.PAGE_SIZE,
             ))
         self._render_page()
 
@@ -173,33 +175,63 @@ class _CollapsibleCoreDetail(QWidget):
         count = len(self._temps)
         if self._toggle_btn.isChecked():
             self._toggle_btn.setText(language_manager.tr(
-                "Core-Details ausblenden ({count}, max. {page_size}/Seite)",
+                "Core-Details ausblenden ({count})",
                 count=count,
-                page_size=self.PAGE_SIZE,
             ))
         else:
             self._toggle_btn.setText(language_manager.tr(
-                "Core-Details anzeigen ({count}, max. {page_size}/Seite)",
+                "Core-Details anzeigen ({count})",
                 count=count,
-                page_size=self.PAGE_SIZE,
             ))
 
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._content.viewport() and event.type() == QEvent.Type.Resize:
+            self._fit_page_size(event.size().height())
+        return super().eventFilter(obj, event)
+
+    def _fit_page_size(self, height: int) -> None:
+        margins = self._grid_layout.contentsMargins()
+        row = max(1, self.fontMetrics().height() + 4 + self._grid_layout.spacing())
+        rows = max(1, (height - margins.top() - margins.bottom()) // row)
+        size = max(self.COLUMNS, min(self.PAGE_SIZE, rows * self.COLUMNS))
+        if size != self._page_size:
+            first = self._page_index * self._page_size
+            self._page_size = size
+            self._page_index = first // size
+            self._render_page()
+
     def _change_page(self, offset: int) -> None:
-        page_count = max(1, (len(self._temps) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        page_count = max(1, (len(self._temps) + self._page_size - 1) // self._page_size)
         self._page_index = max(0, min(page_count - 1, self._page_index + offset))
         self._render_page()
 
+    def _display_names(self) -> List[str]:
+        """Doppelte Core-Namen (je Socket gleich) mit Socket-Nummer versehen."""
+        labels = [t.label or f"Core {i}" for i, t in enumerate(self._temps)]
+        duplicated = {n for n in labels if labels.count(n) > 1}
+        seen: dict[str, int] = {}
+        names = []
+        for name in labels:
+            if name in duplicated:
+                socket = seen.get(name, 0)
+                seen[name] = socket + 1
+                name = f"S{socket} {name}"
+            names.append(name)
+        return names
+
     def _render_page(self) -> None:
         count = len(self._temps)
-        page_count = max(1, (count + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
-        start = self._page_index * self.PAGE_SIZE
-        visible = self._temps[start:start + self.PAGE_SIZE]
+        page_count = max(1, (count + self._page_size - 1) // self._page_size)
+        self._page_index = min(self._page_index, page_count - 1)
+        start = self._page_index * self._page_size
+        visible = self._temps[start:start + self._page_size]
+        names = self._display_names()
         for position, label in enumerate(self._core_labels):
             if position >= len(visible):
                 label.setVisible(False)
                 continue
             temperature = visible[position]
-            name = temperature.label or f"Core {start + position}"
+            name = names[start + position]
             emoji = _temp_emoji(
                 temperature.current, temperature.high, temperature.critical
             )

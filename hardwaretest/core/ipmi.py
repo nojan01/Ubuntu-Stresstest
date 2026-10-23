@@ -38,11 +38,17 @@ last_sel_counts: Optional[SelCounts] = None
 _sel_baseline: Optional[set[str]] = None
 
 
+def _sel_id(line: str) -> str:
+    return line.split("|", 1)[0].strip().lower().lstrip("0") or "0"
+
+
 def _remember(events) -> None:
     global last_sel_counts, _sel_baseline
+    # Schlüssel ist die Eintragsnummer (erste Spalte): ``sel list`` und
+    # ``sel elist`` formatieren dieselben Einträge unterschiedlich.
     if _sel_baseline is None:
-        _sel_baseline = {e.line for e in events}
-    new = [e for e in events if e.line not in _sel_baseline]
+        _sel_baseline = {_sel_id(e.line) for e in events}
+    new = [e for e in events if _sel_id(e.line) not in _sel_baseline]
     ue = sum(e.uncorrectable for e in events)
     new_ue = sum(e.uncorrectable for e in new)
     last_sel_counts = SelCounts(len(events) - ue, ue, time.time(),

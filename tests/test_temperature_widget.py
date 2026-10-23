@@ -56,10 +56,20 @@ def test_page_limit_is_visible_even_on_small_cpu():
         for index in range(10)
     ])
 
-    assert "24" in detail._toggle_btn.text()
+    assert "(10)" in detail._toggle_btn.text()
     detail._toggle_btn.setChecked(True)
     assert not detail._page_widget.isHidden()
     assert "1/1" in detail._page_label.text()
     assert "10" in detail._page_label.text()
     assert not detail._previous_btn.isEnabled()
     assert not detail._next_btn.isEnabled()
+
+
+def test_duplicate_core_names_get_socket_prefix():
+    _app()
+    detail = _CollapsibleCoreDetail()
+    detail.update_cores([
+        CpuTemperature(current=40, label=f"Core {index % 2}", chip_name="coretemp")
+        for index in range(4)
+    ])
+    assert detail._display_names() == ["S0 Core 0", "S0 Core 1", "S1 Core 0", "S1 Core 1"]

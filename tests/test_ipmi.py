@@ -156,3 +156,10 @@ def test_sel_counts_only_new_events_since_start(monkeypatch):
     ipmi._remember([old, new])
     c = ipmi.last_sel_counts
     assert (c.uncorrectable, c.new_correctable, c.new_uncorrectable) == (1, 1, 0)
+
+
+def test_sel_baseline_matches_list_and_elist_formats(monkeypatch):
+    monkeypatch.setattr(ipmi, "_sel_baseline", None)
+    ipmi._remember([ipmi.SelEvent("  1a | 10/15/2026 | 12:00:00 | Memory #0x01 | Uncorrectable ECC | Asserted", True)])
+    ipmi._remember([ipmi.SelEvent("1a | Pre-Init |0000001234| Memory #0x01 | Uncorrectable ECC | Asserted", True)])
+    assert ipmi.last_sel_counts.new_uncorrectable == 0

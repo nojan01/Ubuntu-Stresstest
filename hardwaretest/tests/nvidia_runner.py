@@ -98,3 +98,53 @@ def _extract_json(output: str) -> Optional[object]:
         return json.loads(output[start:end + 1])
     except json.JSONDecodeError:
         return None
+
+
+def cuda_driver_available() -> bool:
+    """True, wenn die CUDA-Treiberbibliothek (Teil des NVIDIA-Treibers) da ist."""
+    import ctypes
+
+    try:
+        ctypes.CDLL("libcuda.so.1")
+    except OSError:
+        return False
+    return True
+
+
+class GpuStressRunner(BaseTestRunner):
+    """GPU-Lasttest (Rechenlast + VRAM-Muster) über die CUDA-Treiber-API."""
+
+    def __init__(
+        self,
+        params: TestParameters,
+        gpu_indices: Sequence[int],
+        memory_percent: int = 80,
+        log_fn=None,
+    ) -> None:
+        if not gpu_indices:
+            raise TestExecutionError("Keine NVIDIA-GPU ausgewählt")
+        super().__init__(params, log_fn=log_fn)
+        self.gpu_indices = sorted(set(int(index) for index in gpu_indices))
+        self.memory_percent = memory_percent
+
+    def build_command(self) -> list[str]:
+        import sys
+        from pathlib import Path
+
+        if not cuda_driver_available():
+            raise TestExecutionError(
+                "libcuda.so.1 nicht gefunden – NVIDIA-Treiber mit CUDA-Unterstützung nötig"
+            )
+        duration = self.params.duration_seconds
+        script_duration = duration - 5 if duration > 10 else duration
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--gpu-stress-worker"]
+        else:
+            cmd = [sys.executable, str(Path(__file__).with_name("gpu_stress_script.py"))]
+        return [*cmd, "--gpus", ",".join(str(index) for index in self.gpu_indices), "--duration", str(script_duration), "--memory-percent", str(self.memory_percent)]
+
+    def _check_line_for_errors(self, line: str) -> None:
+        if "FEHLER" in line:
+            self._remember_error(line.strip())
+            return
+        super()._check_line_for_errors(line)

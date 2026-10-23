@@ -30,7 +30,12 @@ from hardwaretest.core.nvidia import (
     list_nvidia_gpus,
 )
 from hardwaretest.core.test_runner import TestParameters
-from hardwaretest.tests.nvidia_runner import DcgmDiagnosticRunner, dcgmi_available
+from hardwaretest.tests.nvidia_runner import (
+    DcgmDiagnosticRunner,
+    GpuStressRunner,
+    cuda_driver_available,
+    dcgmi_available,
+)
 from hardwaretest.ui.i18n import language_manager
 
 
@@ -68,8 +73,8 @@ class NvidiaPanel(QWidget):
         self._linux_status: Optional[LinuxNvidiaStatus] = None
 
         self.hint = QLabel(
-            "nvidia-smi liefert Inventar- und Gesundheitsdaten. NVIDIA DCGM führt optional aktive "
-            "Bereitschafts-, Speicher-, PCIe- und Belastungsdiagnosen aus."
+            "nvidia-smi liefert Inventar- und Gesundheitsdaten. Der GPU-Lasttest läuft auf jeder "
+            "NVIDIA-GPU ab Turing; NVIDIA DCGM führt optional weitere Diagnosen aus."
         )
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("color: #bbbbbb; font-style: italic;")
@@ -152,6 +157,38 @@ class NvidiaPanel(QWidget):
         self.output.setReadOnly(True)
         self.output.setStyleSheet("font-family: monospace; font-size: 11px;")
 
+        self.stress_duration = QSpinBox()
+        self.stress_duration.setRange(1, 1440)
+        self.stress_duration.setValue(10)
+        self.stress_duration.setSuffix(" min")
+        self.stress_memory = QSpinBox()
+        self.stress_memory.setRange(10, 95)
+        self.stress_memory.setValue(80)
+        self.stress_memory.setSuffix(" %")
+        self.stress_start_btn = QPushButton("GPU-Lasttest starten")
+        self.stress_stop_btn = QPushButton("GPU-Lasttest stoppen")
+        self.stress_start_btn.setEnabled(False)
+        self.stress_stop_btn.setEnabled(False)
+        stress_form = QFormLayout()
+        stress_form.addRow("Dauer", self.stress_duration)
+        stress_form.addRow("Anteil des freien VRAM", self.stress_memory)
+        stress_buttons = QHBoxLayout()
+        stress_buttons.addWidget(self.stress_start_btn)
+        stress_buttons.addWidget(self.stress_stop_btn)
+        stress_hint = QLabel(
+            "Rechenlast und VRAM-Mustertest über die CUDA-Treiberbibliothek; "
+            "funktioniert mit GeForce-, RTX/Quadro- und Rechenzentrums-GPUs ab Turing "
+            "(kein CUDA-Toolkit nötig)."
+        )
+        stress_hint.setWordWrap(True)
+        stress_hint.setStyleSheet("color: #bbbbbb; font-style: italic;")
+        stress_layout = QVBoxLayout()
+        stress_layout.addWidget(stress_hint)
+        stress_layout.addLayout(stress_form)
+        stress_layout.addLayout(stress_buttons)
+        stress_group = QGroupBox("GPU-Lasttest")
+        stress_group.setLayout(stress_layout)
+
         diag_form = QFormLayout()
         diag_form.addRow("DCGM-Diagnosestufe", self.level_box)
         diag_buttons = QHBoxLayout()
@@ -160,12 +197,17 @@ class NvidiaPanel(QWidget):
         diag_layout = QVBoxLayout()
         diag_layout.addLayout(diag_form)
         diag_layout.addLayout(diag_buttons)
-        diag_layout.addWidget(self.result)
-        diag_layout.addWidget(self.progress)
-        diag_layout.addWidget(self.diag_status)
-        diag_layout.addWidget(self.output)
         diag_group = QGroupBox("NVIDIA-DCGM-Diagnose")
         diag_group.setLayout(diag_layout)
+        self.diag_group = diag_group
+
+        result_layout = QVBoxLayout()
+        result_layout.addWidget(self.result)
+        result_layout.addWidget(self.progress)
+        result_layout.addWidget(self.diag_status)
+        result_layout.addWidget(self.output)
+        result_group = QGroupBox("Testergebnis")
+        result_group.setLayout(result_layout)
 
         top = QHBoxLayout()
         top.addWidget(self.scan_btn)
@@ -180,13 +222,17 @@ class NvidiaPanel(QWidget):
         layout.addWidget(select_group)
         layout.addWidget(self.inventory)
         layout.addWidget(monitor_group)
-        layout.addWidget(diag_group, 1)
+        layout.addWidget(stress_group)
+        layout.addWidget(diag_group)
+        layout.addWidget(result_group, 1)
 
         self.scan_btn.clicked.connect(self._scan)
         self.linux_check_btn.clicked.connect(self._run_linux_check)
         self.select_all.toggled.connect(self._select_all)
         self.start_btn.clicked.connect(self._start_diagnostic)
         self.stop_btn.clicked.connect(self._stop_diagnostic)
+        self.stress_start_btn.clicked.connect(self._start_stress)
+        self.stress_stop_btn.clicked.connect(self._stop_diagnostic)
         self.monitor_start_btn.clicked.connect(self._start_monitoring)
         self.monitor_stop_btn.clicked.connect(self._stop_monitoring)
         self._timer = QTimer(self)
@@ -368,6 +414,54 @@ class NvidiaPanel(QWidget):
         self._start_monitoring()
         self._timer.start()
 
+    def _start_stress(self) -> None:
+        indices = self._selected_indices()
+        if not indices:
+            QMessageBox.warning(
+                self,
+                language_manager.tr("Keine NVIDIA-GPU ausgewählt"),
+                language_manager.tr("Bitte mindestens eine NVIDIA-GPU auswählen."),
+            )
+            return
+        if not cuda_driver_available():
+            QMessageBox.warning(
+                self,
+                language_manager.tr("GPU-Lasttest nicht möglich"),
+                language_manager.tr(
+                    "libcuda.so.1 fehlt. Der NVIDIA-Treiber muss mit CUDA-Unterstützung installiert sein."
+                ),
+            )
+            return
+        minutes = self.stress_duration.value()
+        lines: list[str] = []
+        try:
+            runner = GpuStressRunner(
+                TestParameters(duration_seconds=minutes * 60),
+                indices,
+                memory_percent=self.stress_memory.value(),
+                log_fn=lines.append,
+            )
+            runner.start()
+        except Exception as exc:  # pragma: no cover - treiberabhängig
+            QMessageBox.warning(self, language_manager.tr("GPU-Lasttest fehlgeschlagen"), str(exc))
+            return
+        runner._ui_log_lines = lines
+        self._runner = runner
+        self.output.clear()
+        self._set_runtime_text(self.result, "⌛ GPU-Lasttest läuft")
+        self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+        self._set_runtime_text(
+            self.diag_status,
+            "GPU-Lasttest läuft {minutes} min auf {count} GPU(s) …",
+            minutes=minutes,
+            count=len(indices),
+        )
+        self.progress.setRange(0, 0)
+        self.progress.setVisible(True)
+        self._set_running(True)
+        self._start_monitoring()
+        self._timer.start()
+
     def _start_monitoring(self) -> None:
         if not self._gpus:
             return
@@ -457,6 +551,9 @@ class NvidiaPanel(QWidget):
             return
         self._timer.stop()
         result = runner.get_result()
+        if isinstance(runner, GpuStressRunner):
+            self._finish_stress(runner, result, aborted)
+            return
         counts = runner.status_counts()
         self.output.setPlainText("\n".join(runner.output_lines))
         self._runner = None
@@ -483,6 +580,29 @@ class NvidiaPanel(QWidget):
                 failed=counts["fail"],
             )
 
+    def _finish_stress(self, runner, result, aborted: bool) -> None:
+        self.output.setPlainText("\n".join(getattr(runner, "_ui_log_lines", [])))
+        self._runner = None
+        self.progress.setVisible(False)
+        self._set_running(False)
+        if aborted:
+            self._set_runtime_text(self.result, "? GPU-Lasttest abgebrochen")
+            self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(self.diag_status, "GPU-Lasttest wurde manuell beendet.")
+        elif result is not None and result.passed:
+            self._set_runtime_text(self.result, "✓ GPU-Lasttest BESTANDEN")
+            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(self.diag_status, "Keine Rechen- oder Speicherfehler gefunden.")
+        else:
+            self._set_runtime_text(self.result, "✗ GPU-Lasttest FEHLGESCHLAGEN")
+            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            errors = len(result.errors) if result is not None else 0
+            self._set_runtime_text(
+                self.diag_status,
+                "{count} Fehlermeldung(en). Details stehen im Protokoll.",
+                count=errors,
+            )
+
     def _set_running(self, running: bool) -> None:
         self.scan_btn.setEnabled(not running)
         self.linux_check_btn.setEnabled(not running)
@@ -492,9 +612,14 @@ class NvidiaPanel(QWidget):
         for checkbox in self._gpu_checks.values():
             checkbox.setEnabled(not running)
         self.start_btn.setEnabled(not running and bool(self._gpus) and dcgmi_available())
+        self.stress_start_btn.setEnabled(not running and bool(self._gpus) and cuda_driver_available())
+        self.stress_stop_btn.setEnabled(running)
+        self.stress_duration.setEnabled(not running)
+        self.stress_memory.setEnabled(not running)
 
     def _set_diagnostic_enabled(self, enabled: bool) -> None:
         self.start_btn.setEnabled(enabled)
+        self.stress_start_btn.setEnabled(bool(self._gpus) and cuda_driver_available())
         self.level_box.setEnabled(enabled)
         self.select_all.setEnabled(bool(self._gpus))
 

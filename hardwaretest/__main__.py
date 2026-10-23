@@ -45,6 +45,10 @@ def main() -> int:
         from hardwaretest.tests.memory_fill_script import main as memory_fill_main
 
         return memory_fill_main(sys.argv[2:])
+    if sys.argv[1:2] == ["--gpu-stress-worker"]:
+        from hardwaretest.tests.gpu_stress_script import main as gpu_stress_main
+
+        return gpu_stress_main(sys.argv[2:])
     if "--version" in sys.argv[1:]:
         print(f"Hardwaretest {__version__}")
         return 0

@@ -7,10 +7,21 @@ Ablauf pro Zyklus:
   3. Mehrere Bitmuster nacheinander schreiben + verifizieren:
        - 0xAA, 0x55, 0xFF, 0x00 (Stuck-Bit-Erkennung)
        - Walking-Ones / Walking-Zeros (Bit-Aliasing)
-       - Address-in-Data       (Adress-Decoder-Fehler)
+       - Address-in-Data, auch invertiert (Adress-Decoder-Fehler)
        - Pseudo-Random         (mit Seed, reproduzierbar)
+     Der geschriebene Speicher wird per mlock gegen Auslagern gesperrt.
+     Im Vollmodus folgt bei genug Restzeit eine Moving Inversion (lesen,
+     vergleichen, invertiert schreiben, erneut pruefen).
   4. Alle Chunks freigeben (munmap).
   5. Naechster Zyklus, bis die Dauer abgelaufen ist.
+
+Zusaetzlich (aus adaptive-ramtest uebernommen):
+  - Speicherdruck-Ueberwachung: wird der freie RAM knapp, werden Bloecke vom
+    Ende her verworfen statt das System einfrieren zu lassen.
+  - Datenleitungstest (Vollmodus, einmal je Musterrunde): 64-Bit
+    Walking-One/Zero ueber 128 MB, meldet die betroffenen Datenbits.
+  - Physische Adresse bei Fehlern (/proc/self/pagemap, nur als root).
+  - oom_score_adj 500: bei Speichermangel wird zuerst der Test beendet.
 
 Exit-Codes:
   0 – Kein Fehler erkannt.
@@ -22,6 +33,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
+import errno
 import gc
 import mmap
 import os
@@ -139,6 +152,9 @@ def _free_chunks(chunks: List[Chunk]) -> None:
     """
     failed = 0
     for m, size in chunks:
+        # Gesperrte Bereiche lassen sich nicht per madvise freigeben.
+        with contextlib.suppress(Exception):
+            _munlock(m, size)
         # 1. Physische Seiten sofort zurueckgeben.
         if hasattr(m, "madvise") and hasattr(mmap, "MADV_DONTNEED"):
             with contextlib.suppress(OSError, ValueError, BufferError):
@@ -156,6 +172,189 @@ def _free_chunks(chunks: List[Chunk]) -> None:
     if failed:
         print(f"  WARNUNG: {failed} Speicherblock/-bloecke konnten nicht "
               f"geschlossen werden (Buffer noch in Benutzung).", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# mlock, physische Adressen, OOM-Schutz, Speicherdruck
+# ---------------------------------------------------------------------------
+
+_LIBC = None
+
+
+def _libc():
+    global _LIBC
+    if _LIBC is None:
+        try:
+            lib = ctypes.CDLL(None, use_errno=True)
+            for fn in (lib.mlock, lib.munlock):
+                fn.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+                fn.restype = ctypes.c_int
+            _LIBC = lib
+        except Exception:
+            _LIBC = False
+    return _LIBC or None
+
+
+def _chunk_addr(m: mmap.mmap) -> Optional[int]:
+    """Virtuelle Startadresse eines mmap (Buffer-Export sofort wieder freigeben)."""
+    try:
+        obj = ctypes.c_char.from_buffer(m)
+    except (TypeError, ValueError, BufferError):
+        return None
+    addr = ctypes.addressof(obj)
+    del obj
+    return addr
+
+
+def _mlock(m: mmap.mmap, length: int) -> int:
+    """Sperrt die ersten *length* Bytes gegen Auslagern; liefert 0 oder errno."""
+    lib = _libc()
+    addr = _chunk_addr(m)
+    if lib is None or addr is None:
+        return errno.ENOSYS
+    if lib.mlock(addr, length) != 0:
+        return ctypes.get_errno() or errno.EPERM
+    return 0
+
+
+def _munlock(m: mmap.mmap, length: int) -> None:
+    lib = _libc()
+    addr = _chunk_addr(m)
+    if lib is not None and addr is not None:
+        lib.munlock(addr, length)
+
+
+def _lock_segments(chunks: List[Chunk], segs: List["Segment"]) -> Tuple[int, int]:
+    """Sperrt die beschriebenen Segmente; liefert (gesperrte Bytes, errno)."""
+    locked = 0
+    for idx, _off, length in segs:
+        if _stop:
+            break
+        err = _mlock(chunks[idx][0], length)
+        if err:
+            return locked, err
+        locked += length
+    return locked, 0
+
+
+def _raise_memlock_limit() -> None:
+    """RLIMIT_MEMLOCK anheben (als root unbegrenzt, sonst bis zum Hard-Limit)."""
+    with contextlib.suppress(Exception):
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_MEMLOCK)
+        if os.geteuid() == 0:
+            hard = resource.RLIM_INFINITY
+        if soft != hard:
+            resource.setrlimit(resource.RLIMIT_MEMLOCK, (hard, hard))
+
+
+def _swap_active() -> bool:
+    try:
+        with open("/proc/swaps", encoding="utf-8") as f:
+            return len(f.read().strip().splitlines()) > 1
+    except OSError:
+        return False
+
+
+def _set_oom_score_adj(value: int = 500) -> None:
+    """Bei Speichermangel soll der Kernel zuerst den Test beenden, nicht OS/GUI."""
+    with contextlib.suppress(OSError, ValueError), \
+            open("/proc/self/oom_score_adj", "r+", encoding="ascii") as f:
+        if int(f.read().strip() or 0) < value:
+            f.seek(0)
+            f.write(str(value))
+
+
+def _phys_addr(vaddr: int) -> Optional[int]:
+    """Physische Adresse ueber /proc/self/pagemap (PFN nur mit CAP_SYS_ADMIN)."""
+    page = mmap.PAGESIZE
+    try:
+        with open("/proc/self/pagemap", "rb") as f:
+            f.seek((vaddr // page) * 8)
+            raw = f.read(8)
+    except OSError:
+        return None
+    if len(raw) != 8:
+        return None
+    entry = int.from_bytes(raw, "little")
+    pfn = entry & ((1 << 55) - 1)
+    if not (entry >> 63) & 1 or pfn == 0:
+        return None
+    return pfn * page + vaddr % page
+
+
+def _phys_suffix(m: mmap.mmap, offset: int) -> str:
+    addr = _chunk_addr(m)
+    phys = _phys_addr(addr + offset) if addr is not None else None
+    return f", phys. Adresse 0x{phys:X}" if phys is not None else ""
+
+
+class _Pressure:
+    """Ueberwacht den freien RAM und verwirft bei Knappheit Bloecke vom Ende her.
+
+    Die Kennzeichen liegen in einem geteilten mmap, damit geforkte Worker
+    verworfene Bloecke ueberspringen. Verworfene Seiten (MADV_REMOVE) lesen
+    sich als Nullen und duerfen daher nicht als Fehler zaehlen.
+    """
+
+    def __init__(self, chunks: List[Chunk], reserve_mb: int,
+                 interval: float = 0.2) -> None:
+        self.chunks = chunks
+        self.reserve_mb = reserve_mb
+        self.interval = interval
+        self.flags = mmap.mmap(-1, max(1, len(chunks)),
+                               flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
+        self.dropped_bytes = 0
+        self.events = 0
+        self._tail = len(chunks)
+        self._next = 0.0
+
+    def is_dropped(self, idx: int) -> bool:
+        return self.flags[idx] != 0
+
+    def drop(self, idx: int) -> None:
+        m, size = self.chunks[idx]
+        self.flags[idx] = 1
+        with contextlib.suppress(Exception):
+            _munlock(m, size)
+        if hasattr(mmap, "MADV_REMOVE"):
+            with contextlib.suppress(OSError, ValueError):
+                m.madvise(mmap.MADV_REMOVE, 0, size)
+        self.dropped_bytes += size
+
+    def poll(self) -> None:
+        now = time.monotonic()
+        if now < self._next:
+            return
+        self._next = now + self.interval
+        avail = _available_memory_mb()
+        if avail >= self.reserve_mb // 2 or self._tail == 0:
+            return
+        before = self.dropped_bytes
+        while avail < self.reserve_mb and self._tail > 0:
+            self._tail -= 1
+            self.drop(self._tail)
+            avail = _available_memory_mb()
+        self.events += 1
+        print(f"    WARNUNG: Speicher knapp – {(self.dropped_bytes - before) >> 20} MB "
+              f"verworfen (jetzt verfuegbar {avail} MB, Reserve "
+              f"{self.reserve_mb} MB).", flush=True)
+
+    def reapply(self) -> None:
+        """Seiten verworfener Bloecke erneut freigeben (Worker-Nachzuegler)."""
+        if not hasattr(mmap, "MADV_REMOVE"):
+            return
+        for idx in range(self._tail, len(self.chunks)):
+            m, size = self.chunks[idx]
+            with contextlib.suppress(OSError, ValueError):
+                m.madvise(mmap.MADV_REMOVE, 0, size)
+
+    def keep(self, segs: List["Segment"]) -> List["Segment"]:
+        return [s for s in segs if not self.is_dropped(s[0])]
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self.flags.close()
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +427,24 @@ def _address_builder() -> PatternBuilder:
     return build
 
 
+_INVERT_TABLE = bytes(255 - i for i in range(256))
+
+
+def _inverted_builder(builder: PatternBuilder) -> PatternBuilder:
+    """Bitweise invertierte Variante eines Musters."""
+    def build(offset: int, size: int) -> bytes:
+        return builder(offset, size).translate(_INVERT_TABLE)
+    return build
+
+
+def _data_line_patterns() -> List[Tuple[str, int]]:
+    """64-Bit Walking-One/Zero: jede Datenleitung einmal allein 1 bzw. 0."""
+    mask = (1 << 64) - 1
+    pats = [(f"WalkingOne64 Bit {b}", 1 << b) for b in range(64)]
+    pats += [(f"WalkingZero64 Bit {b}", ~(1 << b) & mask) for b in range(64)]
+    return pats
+
+
 def _build_pattern_plan(
     quick: bool, cycle: int = 1
 ) -> List[Tuple[str, PatternBuilder]]:
@@ -270,6 +487,7 @@ def _build_pattern_plan(
         (f"Word 0x{word_a:016X}", _const_word_builder(word_a)),
         (f"Word 0x{word_b:016X}", _const_word_builder(word_b)),
         ("Address", _address_builder()),
+        ("Address invertiert", _inverted_builder(_address_builder())),
         (f"Random seed=0x{rseed1:08X}", _random_builder(rseed1)),
         (f"Random seed=0x{rseed2:08X}", _random_builder(rseed2)),
     ]
@@ -373,9 +591,21 @@ def _segments(chunks: List[Chunk], limit: Optional[int]) -> List[Segment]:
     return segs
 
 
-def _verify_segments(chunks: List[Chunk], builder: PatternBuilder,
-                     segs: List[Segment],
-                     on_progress: Optional[Callable[[int], None]] = None) -> List[str]:
+def _mismatch_msg(m: mmap.mmap, idx: int, global_offset: int, pos: int,
+                  actual: bytes, expected: bytes) -> Optional[str]:
+    for byte_idx, (got, want) in enumerate(zip(actual, expected, strict=False)):
+        if got != want:
+            return (f"MISMATCH bei Offset {global_offset + pos + byte_idx} "
+                    f"(Chunk {idx}): erwartet 0x{want:02X}, gelesen 0x{got:02X}"
+                    f"{_phys_suffix(m, pos + byte_idx)}")
+    return None
+
+
+def _check_segments(chunks: List[Chunk], builder: PatternBuilder,
+                    segs: List[Segment],
+                    on_progress: Optional[Callable[[int], None]] = None,
+                    dropped=None, invert: bool = False) -> List[str]:
+    """Prueft *segs*; mit *invert* wird danach das invertierte Muster geschrieben."""
     errors: List[str] = []
     done = 0
     for idx, global_offset, total in segs:
@@ -384,33 +614,34 @@ def _verify_segments(chunks: List[Chunk], builder: PatternBuilder,
         m = chunks[idx][0]
         pos = 0
         while pos < total:
-            if _stop:
+            if _stop or (dropped is not None and dropped[idx]):
                 break
             piece = min(_BUF_SIZE, total - pos)
             expected = builder(global_offset + pos, piece)
             actual = m[pos:pos + piece]
-            if actual != expected:
-                for byte_idx, (got, want) in enumerate(
-                    zip(actual, expected, strict=False)
-                ):
-                    if got != want:
-                        abs_offset = global_offset + pos + byte_idx
-                        errors.append(
-                            f"MISMATCH bei Offset {abs_offset} "
-                            f"(Chunk {idx}): erwartet 0x{want:02X}, "
-                            f"gelesen 0x{got:02X}"
-                        )
-                        break
+            if actual != expected and not (dropped is not None and dropped[idx]):
+                msg = _mismatch_msg(m, idx, global_offset, pos, actual, expected)
+                if msg:
+                    errors.append(msg)
                 if len(errors) >= 50:
                     errors.append(
                         "... weitere Fehler unterdrueckt (>50 Treffer)"
                     )
                     return errors
+            if invert:
+                m[pos:pos + piece] = expected.translate(_INVERT_TABLE)
             pos += piece
             done += piece
             if on_progress is not None:
                 on_progress(done)
     return errors
+
+
+def _verify_segments(chunks: List[Chunk], builder: PatternBuilder,
+                     segs: List[Segment],
+                     on_progress: Optional[Callable[[int], None]] = None,
+                     dropped=None) -> List[str]:
+    return _check_segments(chunks, builder, segs, on_progress, dropped)
 
 
 def _verify(chunks: List[Chunk], builder: PatternBuilder, limit: Optional[int] = None) -> List[str]:
@@ -425,25 +656,44 @@ def _verify(chunks: List[Chunk], builder: PatternBuilder, limit: Optional[int] =
 
 def _fill_segments(chunks: List[Chunk], builder: PatternBuilder,
                    segs: List[Segment], deadline: float = float("inf"),
-                   on_progress: Optional[Callable[[int], None]] = None) -> List[Segment]:
+                   on_progress: Optional[Callable[[int], None]] = None,
+                   dropped=None) -> List[Segment]:
     """Schreibt das Muster in *segs* bis *deadline*; liefert die beschriebenen Teile."""
     written: List[Segment] = []
     done = 0
     for idx, global_offset, total in segs:
+        if dropped is not None and dropped[idx]:
+            continue
         m = chunks[idx][0]
         pos = 0
         while pos < total and not _stop and time.monotonic() < deadline:
+            if dropped is not None and dropped[idx]:
+                break
             piece = min(_BUF_SIZE, total - pos)
             m[pos:pos + piece] = builder(global_offset + pos, piece)
             pos += piece
             done += piece
             if on_progress is not None:
                 on_progress(done)
+        if dropped is not None and dropped[idx]:
+            continue
         if pos:
             written.append((idx, global_offset, pos))
         if pos < total:
             break
     return written
+
+
+def _all_cpus() -> List[int]:
+    if hasattr(os, "sched_getaffinity"):
+        return sorted(os.sched_getaffinity(0))
+    return []
+
+
+def _spare_cpus(cpus: List[int], workers: int, cpu_offset: int) -> List[int]:
+    """CPUs, die bei *cpu_offset* keinen Worker bekommen (frei fuer OS/GUI)."""
+    used = {cpus[(w + cpu_offset) % len(cpus)] for w in range(workers)} if cpus else set()
+    return [c for c in cpus if c not in used]
 
 
 def _set_parent_death_signal() -> None:
@@ -456,17 +706,23 @@ def _set_parent_death_signal() -> None:
 
 def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
                   segs: List[Segment], workers: Optional[int] = None,
-                  rotation: int = 0, deadline: float = float("inf")):
-    """Fuehrt Schreiben (``kind='fill'``) oder Pruefen (``'verify'``) parallel aus.
+                  rotation: int = 0, deadline: float = float("inf"),
+                  pressure: Optional[_Pressure] = None, cpu_offset: int = 0):
+    """Fuehrt Schreiben (``kind='fill'``), Pruefen (``'verify'``) oder Pruefen
+    mit anschliessendem invertiertem Schreiben (``'invert'``) parallel aus.
 
     Der Speicher ist ``MAP_SHARED``; geforkte Worker schreiben/lesen daher
     direkt im selben RAM. Jeder Worker ist an eine CPU gebunden. Ueber
     *rotation* bekommen die Bloecke je Zyklus andere CPUs (und damit auf
     Mehrsockel-Systemen wechselnd lokale und entfernte Speicherzugriffe).
+    Mit *pressure* ueberwacht der Hauptprozess den freien RAM und verwirft
+    bei Knappheit Bloecke; die Worker ueberspringen diese.
+    *cpu_offset* verschiebt die genutzten CPUs, damit die fuer OS/GUI frei
+    gelassenen Kerne von Zyklus zu Zyklus wechseln und alle Kerne testen.
 
-    Liefert bei ``fill`` die beschriebenen Segmente, bei ``verify`` die Fehler.
+    Liefert bei ``fill`` die beschriebenen Segmente, sonst die Fehler.
     """
-    cpus = sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else []
+    cpus = _all_cpus()
     if workers is None:
         workers = _usable_cpus()
     workers = max(1, min(workers, len(segs)))
@@ -474,13 +730,26 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
     for j, seg in enumerate(segs):
         parts[(j + rotation) % workers].append(seg)
     grand_total = sum(s[2] for s in segs)
-    verb = "geschrieben" if kind == "fill" else "geprueft"
+    verb = {"fill": "geschrieben", "invert": "invertiert"}.get(kind, "geprueft")
+    dropped = pressure.flags if pressure is not None else None
+
+    def _work(part: List[Segment], progress: Callable[[int], None]):
+        if kind == "fill":
+            return _fill_segments(chunks, builder, part, deadline, progress, dropped)
+        return _check_segments(chunks, builder, part, progress, dropped,
+                               invert=kind == "invert")
 
     if workers == 1 or not hasattr(os, "fork"):
         reporter = _ProgressReporter(verb, grand_total)
-        if kind == "fill":
-            return _fill_segments(chunks, builder, segs, deadline, reporter.update)
-        return _verify_segments(chunks, builder, segs, reporter.update)
+
+        def _progress(done: int) -> None:
+            reporter.update(done)
+            if pressure is not None:
+                pressure.poll()
+        result = _work(segs, _progress)
+        if pressure is not None:
+            pressure.reapply()
+        return result
 
     print(f"    {workers} Prozesse auf CPUs, Rotation {rotation % workers} ...",
           flush=True)
@@ -499,15 +768,14 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
                     os.nice(10)
                 if cpus:
                     with contextlib.suppress(OSError):
-                        os.sched_setaffinity(0, {cpus[w % len(cpus)]})
+                        os.sched_setaffinity(
+                            0, {cpus[(w + cpu_offset) % len(cpus)]})
 
                 def _report(done: int, _w: int = w) -> None:
                     struct.pack_into("<Q", counters, 8 * _w, done)
-                if kind == "fill":
-                    res = _fill_segments(chunks, builder, parts[w], deadline, _report)
-                    lines = [f"{i} {o} {n}" for i, o, n in res]
-                else:
-                    lines = _verify_segments(chunks, builder, parts[w], _report)
+                res = _work(parts[w], _report)
+                lines = ([f"{i} {o} {n}" for i, o, n in res]
+                         if kind == "fill" else res)
                 with os.fdopen(wfd, "w", encoding="utf-8") as f:
                     f.write("\n".join(lines))
             except BaseException:
@@ -537,12 +805,16 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
                 reporter.update(sum(
                     struct.unpack_from("<Q", counters, 8 * i)[0]
                     for i in range(workers)))
+                if pressure is not None:
+                    pressure.poll()
     finally:
         outputs = []
         for _pid, r in procs:
             with os.fdopen(r, "r", encoding="utf-8") as f:
                 outputs.append(f.read())
         counters.close()
+        if pressure is not None:
+            pressure.reapply()
 
     lines = [ln for out in outputs for ln in out.splitlines() if ln]
     if kind == "fill":
@@ -557,6 +829,95 @@ def _verify_parallel(chunks: List[Chunk], builder: PatternBuilder,
                      limit: Optional[int] = None,
                      workers: Optional[int] = None) -> List[str]:
     return _run_parallel("verify", chunks, builder, _segments(chunks, limit), workers)
+
+
+_DATA_LINE_MB = 128  # groesser als typische L3-Caches -> echte DRAM-Zugriffe
+
+
+def _data_line_test(size_mb: int = _DATA_LINE_MB,
+                    deadline: float = float("inf"),
+                    patterns: Optional[List[Tuple[str, int]]] = None,
+                    corrupt: Optional[Callable[[mmap.mmap], None]] = None
+                    ) -> Tuple[int, List[str]]:
+    """64-Bit Walking-One/Zero ueber einen kleinen Bereich.
+
+    Liefert (geprufte Muster, Fehler). Fehler nennen die betroffenen
+    Datenbits (XOR von erwartetem und gelesenem 64-Bit-Wort). *corrupt*
+    dient nur Tests (wird nach jedem Schreiben aufgerufen).
+    """
+    size = size_mb * 1024 * 1024
+    try:
+        m = mmap.mmap(-1, size, flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
+    except (OSError, ValueError):
+        return 0, []
+    _mlock(m, size)
+    errors: List[str] = []
+    done = 0
+    try:
+        for name, word in patterns or _data_line_patterns():
+            if _stop or time.monotonic() >= deadline:
+                break
+            builder = _const_word_builder(word)
+            for pos in range(0, size, _BUF_SIZE):
+                piece = min(_BUF_SIZE, size - pos)
+                m[pos:pos + piece] = builder(pos, piece)
+            if corrupt is not None:
+                corrupt(m)
+            for pos in range(0, size, _BUF_SIZE):
+                piece = min(_BUF_SIZE, size - pos)
+                actual = m[pos:pos + piece]
+                if actual == builder(pos, piece):
+                    continue
+                for q in range(0, piece, 8):
+                    got = int.from_bytes(actual[q:q + 8], "little")
+                    if got == word:
+                        continue
+                    diff = got ^ word
+                    bits = ",".join(str(b) for b in range(64) if diff >> b & 1)
+                    errors.append(
+                        f"MISMATCH bei Offset {pos + q} (Datenleitungstest, "
+                        f"{name}): erwartet 0x{word:016X}, gelesen 0x{got:016X}, "
+                        f"Datenbit(s) {bits}{_phys_suffix(m, pos + q)}")
+                    break
+                if len(errors) >= 50:
+                    errors.append("... weitere Fehler unterdrueckt (>50 Treffer)")
+                    return done, errors
+            done += 1
+    finally:
+        _free_chunks([(m, size)])
+    return done, errors
+
+
+def _moving_inversion(chunks: List[Chunk], builder: PatternBuilder,
+                      segs: List[Segment], rotation: int, half: int,
+                      pressure: Optional[_Pressure] = None,
+                      workers: Optional[int] = None,
+                      cpu_offset: int = 0) -> List[str]:
+    """Lesen + vergleichen + invertiert schreiben, danach das Invertierte pruefen.
+
+    Erkennt Bits, die zwischen Schreiben und erneutem Lesen kippen
+    (Haltefehler) und Kopplungen beim Umschalten aller Bits.
+    """
+    print("  Moving Inversion: pruefen und invertieren ...", flush=True)
+    t0 = time.monotonic()
+    errs = _run_parallel("invert", chunks, builder, segs, workers=workers,
+                         rotation=rotation + 1, pressure=pressure,
+                         cpu_offset=cpu_offset)
+    if not errs and not _stop:
+        if pressure is not None:
+            segs = pressure.keep(segs)
+        errs = _run_parallel("verify", chunks, _inverted_builder(builder), segs,
+                             workers=workers, rotation=rotation + 1 + half,
+                             pressure=pressure, cpu_offset=cpu_offset)
+    secs = time.monotonic() - t0
+    if errs:
+        print(f"  Moving Inversion: FEHLER ({len(errs)} Treffer, {secs:.1f}s)",
+              flush=True)
+        for e in errs:
+            print(f"    *** {e}", flush=True)
+    else:
+        print(f"  Moving Inversion: OK ({secs:.1f}s)", flush=True)
+    return errs
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +946,18 @@ def run_cycles(
           f"Chunk: {chunk_mb} MB | Pause: {pause_seconds:.0f}s")
     print("Ablauf je Zyklus: allokieren -> Muster schreiben -> verifizieren "
           "-> freigeben -> Pause (Speicher sichtbar leer).")
+    _set_oom_score_adj(500)
+    _raise_memlock_limit()
     print(flush=True)
+
+    lock_warned = False
+    lock_max_mb = 0
+    dropped_total_mb = 0
+    pressure_events = 0
+    inversion_done = 0
+    inversion_skipped = 0
+    data_line_runs = 0
+    data_line_errors = 0
 
     # Muster-Plan; wird nach jedem Durchlauf mit neuem Seed neu erzeugt, damit
     # die Muster von Runde zu Runde wechseln.
@@ -603,6 +975,25 @@ def run_cycles(
             plan_round += 1
             plan = _build_pattern_plan(quick=quick, cycle=plan_round)
             plan_idx = 0
+
+        # Datenleitungstest einmal je Musterrunde (nur Vollmodus).
+        if plan_idx == 0 and not quick:
+            print(f"--- Datenleitungstest: 64-Bit Walking-One/Zero ueber "
+                  f"{_DATA_LINE_MB} MB ---", flush=True)
+            t0 = time.monotonic()
+            n_pat, dl_errs = _data_line_test(deadline=end)
+            if n_pat:
+                data_line_runs += 1
+            data_line_errors += len(dl_errs)
+            total_errors += len(dl_errs)
+            for e in dl_errs:
+                print(f"    *** {e}", flush=True)
+            print(f"  Datenleitungstest: {'FEHLER' if dl_errs else 'OK'} "
+                  f"({n_pat}/128 Muster, {time.monotonic() - t0:.1f}s)", flush=True)
+            print(flush=True)
+            if _stop or time.monotonic() >= end:
+                break
+
         name, builder = plan[plan_idx]
         plan_idx += 1
 
@@ -643,30 +1034,62 @@ def run_cycles(
         written_mb = 0
         written_segs: List[Segment] = []
         rotation = 0
+        half = _usable_cpus() // 2
+        # Die fuer OS/GUI frei gelassenen Kerne wechseln je Zyklus.
+        all_cpus = _all_cpus()
+        cpu_offset = (cycle - 1) * max(1, len(all_cpus) - _usable_cpus())
+        pressure = _Pressure(chunks, reserve_mb)
         try:
             if not _stop:
                 print(f"  Schreibe {name} ({actual_mb} MB) ...", flush=True)
+                spare = _spare_cpus(all_cpus, min(_usable_cpus(), len(chunks)),
+                                    cpu_offset)
+                if spare and len(chunks) >= _usable_cpus():
+                    print(f"    Frei fuer OS/GUI: CPU {', '.join(map(str, spare))}",
+                          flush=True)
                 t0 = time.monotonic()
-                rotation = cycle * (_usable_cpus() // 2 + 1)
-                written_segs = _run_parallel(
+                rotation = cycle * (half + 1)
+                written_segs = pressure.keep(_run_parallel(
                     "fill", chunks, builder, _segments(chunks, None),
                     rotation=rotation,
-                    deadline=t0 + max(0.0, end - t0) * _WRITE_SHARE)
+                    deadline=t0 + max(0.0, end - t0) * _WRITE_SHARE,
+                    pressure=pressure, cpu_offset=cpu_offset))
                 written_mb = sum(s[2] for s in written_segs) // (1024 * 1024)
                 write_time = time.monotonic() - t0
                 speed = written_mb / write_time if write_time > 0 else 0
                 print(f"  Schreiben fertig: {write_time:.1f}s ({speed:.0f} MB/s)", flush=True)
-                if not _stop and written_mb < actual_mb:
+                if not _stop and written_mb < actual_mb and not pressure.dropped_bytes:
                     print(f"  Testzeit reicht nicht fuer den ganzen Zyklus – "
                           f"pruefe die geschriebenen {written_mb} MB.", flush=True)
+
+            if not _stop and written_mb > 0:
+                t0 = time.monotonic()
+                locked, err = _lock_segments(chunks, written_segs)
+                lock_max_mb = max(lock_max_mb, locked >> 20)
+                if err and not lock_warned:
+                    lock_warned = True
+                    print(f"  WARNUNG: Speicher nur teilweise gegen Auslagern "
+                          f"gesperrt ({locked >> 20} von {written_mb} MB, mlock: "
+                          f"{os.strerror(err)}). Als root ausfuehren fuer volle "
+                          f"Sperre.", flush=True)
+                    if _swap_active():
+                        print("  WARNUNG: Swap ist aktiv – ungesperrter Testspeicher "
+                              "kann ausgelagert werden; der Test prueft dann "
+                              "teilweise die Auslagerung statt des RAM.", flush=True)
+                elif not err:
+                    print(f"  Gesperrt (mlock): {locked >> 20} MB "
+                          f"({time.monotonic() - t0:.1f}s)", flush=True)
 
             if not _stop and written_mb > 0:
                 print(f"  Verifiziere {name} ({written_mb} MB) ...", flush=True)
                 t0 = time.monotonic()
                 # Pruefen durch andere CPUs als beim Schreiben (halbe Runde versetzt).
                 errs = _run_parallel("verify", chunks, builder, written_segs,
-                                     rotation=rotation + _usable_cpus() // 2)
+                                     rotation=rotation + half, pressure=pressure,
+                                     cpu_offset=cpu_offset)
                 verify_time = time.monotonic() - t0
+                written_segs = pressure.keep(written_segs)
+                written_mb = sum(s[2] for s in written_segs) // (1024 * 1024)
                 speed = written_mb / verify_time if verify_time > 0 else 0
 
                 if errs:
@@ -675,17 +1098,36 @@ def run_cycles(
                     for e in errs:
                         print(f"    *** {e}", flush=True)
                     cycle_errors.extend(errs)
-                else:
+                elif written_mb > 0:
                     print(f"  Verifizieren: OK ({verify_time:.1f}s, {speed:.0f} MB/s)",
                           flush=True)
                     verified_cycles += 1
                     verified_mb += written_mb
+                    if not quick and not _stop:
+                        need = (write_time + 2 * verify_time) * 1.1
+                        if end - time.monotonic() < need:
+                            inversion_skipped += 1
+                            print(f"  Moving Inversion uebersprungen (Restzeit < "
+                                  f"{need:.0f}s).", flush=True)
+                        else:
+                            errs = _moving_inversion(
+                                chunks, builder, written_segs, rotation, half,
+                                pressure, cpu_offset=cpu_offset)
+                            cycle_errors.extend(errs)
+                            if not _stop:
+                                inversion_done += 1
         finally:
+            dropped_total_mb += pressure.dropped_bytes >> 20
+            pressure_events += pressure.events
+            pressure.close()
             print(f"  Freigabe {actual_mb} MB ...", end="", flush=True)
             t0 = time.monotonic()
             _free_chunks(chunks)
             free_time = time.monotonic() - t0
             print(f" {free_time:.1f}s", flush=True)
+            if pressure.dropped_bytes:
+                print(f"  Wegen Speicherdruck verworfen (nicht geprueft): "
+                      f"{pressure.dropped_bytes >> 20} MB", flush=True)
 
         total_errors += len(cycle_errors)
         elapsed = time.monotonic() - start
@@ -717,6 +1159,18 @@ def run_cycles(
     print(f"Zyklen: {cycle} | Dauer: {total_time:.0f}s | "
           f"Fehler gesamt: {total_errors} | Verifiziert: "
           f"{verified_cycles} Zyklen / {verified_mb} MB")
+    if lock_warned:
+        print(f"Speichersperre (mlock): teilweise, max. {lock_max_mb} MB")
+    elif lock_max_mb:
+        print(f"Speichersperre (mlock): aktiv, max. {lock_max_mb} MB")
+    if dropped_total_mb:
+        print(f"Speicherdruck: {pressure_events} Mal, {dropped_total_mb} MB "
+              f"verworfen")
+    if not quick:
+        print(f"Moving Inversion: {inversion_done} Durchlaeufe, "
+              f"{inversion_skipped} uebersprungen (Zeit)")
+        print(f"Datenleitungstest: {data_line_runs} Durchlaeufe, "
+              f"{data_line_errors} Fehler")
     if total_errors > 0:
         print(f"ERGEBNIS: FEHLER GEFUNDEN – {total_errors} Verifikationsfehler")
         return 1

@@ -232,19 +232,75 @@ Kommunikation zwischen CPU-Kernen unter Druck setzen.
 <hr>
 
 <h2>Tab: RAM-Fuelltest</h2>
-<p>Belegt in jedem Zyklus fast den gesamten freien RAM, schreibt wechselnde
-Bitmuster (parallel auf allen Kernen bis auf zwei), verifiziert sie, gibt den
-Speicher frei und wiederholt. Die Blöcke wechseln je Zyklus die CPU.</p>
+<p>Belegt in jedem Zyklus fast den gesamten freien RAM, schreibt ein Bitmuster
+(parallel auf allen Kernen bis auf zwei), verifiziert es, gibt den Speicher frei
+und wiederholt. Die Blöcke wechseln je Zyklus die CPU.</p>
+
+<h3>Ablauf eines Zyklus</h3>
+<ol>
+<li><b>Allokieren:</b> verfügbarer RAM minus Reserve, in 256-MB-Blöcken.</li>
+<li><b>Schreiben:</b> ein Muster pro Zyklus, jeder Prozess fest an eine CPU gebunden.
+Zwei Kerne bleiben für OS/GUI frei; welche das sind, wechselt jeden Zyklus, sodass
+über mehrere Zyklen alle Kerne testen.</li>
+<li><b>Sperren (mlock):</b> der beschriebene Speicher wird gegen Auslagern
+gesperrt, damit wirklich RAM und nicht Swap geprüft wird.</li>
+<li><b>Verifizieren:</b> durch <i>andere</i> CPUs als beim Schreiben (auf
+Mehrsockel-Systemen damit auch über den anderen Speichercontroller).</li>
+<li><b>Moving Inversion</b> (nur Vollmodus, wenn die Restzeit reicht): erneut
+lesen und vergleichen, invertiert schreiben, das Invertierte prüfen. Findet Bits,
+die mit der Zeit kippen, und Kopplungen beim Umschalten aller Bits.</li>
+<li><b>Freigeben</b> und kurze Pause (Speicherrückgang in btop sichtbar).</li>
+</ol>
+
+<h3>Muster</h3>
 <ul>
-<li><b>Speicher „automatisch“:</b> nutzt den verfügbaren RAM abzüglich der Reserve.</li>
-<li><b>Reserve (OS/GUI):</b> bleibt für Betriebssystem und Oberfläche frei. Der Test
-erzwingt mindestens 1 % des RAM (1–8 GB).</li>
+<li>0xAA, 0x55, 0xFF, 0x00 – hängende Bits.</li>
+<li>Walking-One/Zero je Byte – Bit-Verwechslungen.</li>
+<li>Zufällige 64-Bit-Wörter und Zufallsdaten (wechseln jede Runde).</li>
+<li>Address-in-Data und invertiert – Fehler der Adressdecodierung.</li>
+<li><b>Datenleitungstest</b> (Vollmodus, einmal je Musterrunde): 64-Bit
+Walking-One/Zero über 128 MB. Meldet die betroffenen Datenbits.</li>
+<li>Schnellmodus: nur 0xAA, 0x55, Address und Zufall.</li>
+</ul>
+
+<h3>Schutz des Systems</h3>
+<ul>
+<li><b>Reserve (OS/GUI):</b> bleibt frei; der Test erzwingt mindestens 1 % des RAM
+(1–8 GB).</li>
+<li><b>Speicherdruck:</b> fällt der freie RAM während des Tests unter die halbe
+Reserve (z.&nbsp;B. weil ein anderes Programm wächst), werden Blöcke vom Ende her
+verworfen und nicht geprüft. Das steht im Protokoll.</li>
+<li><b>OOM-Schutz:</b> wird der Speicher trotzdem knapp, beendet der Kernel zuerst
+den Test, nicht OS oder GUI.</li>
 <li class="bad"><b>Speicher manuell setzen:</b> Unbedingt genug freien Speicher für das
 Betriebssystem einplanen (empfohlen: mindestens 2–4 GB bzw. 1–2 % des RAM).
 Ohne Swap kann der Testspeicher nicht ausgelagert werden – ist er zu groß,
 friert das System ein.</li>
-<li>Bereiche, die Kernel und Programme belegen, testet der Fülltest nie.
-Für eine lückenlose Prüfung MemTest86 (Boot-Menü) verwenden.</li>
+</ul>
+
+<h3>Fehlermeldungen</h3>
+<p><code>MISMATCH bei Offset …</code> nennt die Position im Testspeicher, erwarteten
+und gelesenen Wert. Als root wird zusätzlich die <b>physische Adresse</b>
+angegeben; damit lässt sich das Modul (DIMM) über die Herstellerunterlagen bzw.
+<code>edac-util</code> eingrenzen. Ohne root fehlt diese Angabe.</p>
+
+<h3>Grenzen</h3>
+<ul>
+<li>Speicher von Kernel, Treibern und laufenden Programmen sowie die Reserve
+werden <b>nie</b> getestet.</li>
+<li>Der Test läuft unter einem laufenden Betriebssystem. Die Prüfung erfolgt
+seitenweise über virtuelle Adressen; welche physischen Adressen getroffen werden,
+bestimmt der Kernel. Lückenlos ist das nicht.</li>
+<li>Ohne root ist die Sperre gegen Auslagern auf das Limit
+(<code>ulimit -l</code>) begrenzt; mit aktivem Swap kann dann ein Teil
+ausgelagert werden. Es erscheint eine Warnung.</li>
+<li>ECC-Speicher korrigiert Einzelbitfehler selbst; diese sieht der Test nicht,
+sondern nur das Systemprotokoll bzw. EDAC/iLO. Der Test findet nicht
+korrigierbare oder nicht abgesicherte Fehler.</li>
+<li>Python erreicht etwa 2–4 GB/s je Kern. Bei sehr viel RAM passt ein Zyklus
+eventuell nicht in die Testzeit; dann wird nur der geschriebene Teil geprüft.</li>
+<li>Für eine vollständige Prüfung (inkl. Hammer- und Bitfade-Tests)
+MemTest86 im Boot-Menü verwenden.</li>
 </ul>
 
 <h2>Tab: Disk (Datei / Geräte / Destruktiv)</h2>
@@ -682,18 +738,71 @@ inter-core communication.
 <hr>
 
 <h2>Tab: RAM fill test</h2>
-<p>Each cycle allocates almost all free RAM, writes alternating bit patterns
-(in parallel on all cores except two), verifies them, frees the memory and
-repeats. Blocks move to different CPUs every cycle.</p>
+<p>Each cycle allocates almost all free RAM, writes one bit pattern (in parallel
+on all cores except two), verifies it, frees the memory and repeats. Blocks move
+to different CPUs every cycle.</p>
+
+<h3>Cycle steps</h3>
+<ol>
+<li><b>Allocate:</b> available RAM minus the reserve, in 256 MB blocks.</li>
+<li><b>Write:</b> one pattern per cycle, each process pinned to one CPU. Two cores
+stay free for the OS/GUI; they change every cycle so that all cores are used over
+several cycles.</li>
+<li><b>Lock (mlock):</b> written memory is locked against swapping so that RAM,
+not swap, is tested.</li>
+<li><b>Verify:</b> by <i>different</i> CPUs than the writers (on multi-socket
+systems this also goes through the other memory controller).</li>
+<li><b>Moving inversion</b> (full mode only, if enough time is left): read and
+compare again, write the inverted pattern, verify it. Finds bits that flip over
+time and coupling faults when all bits toggle.</li>
+<li><b>Free</b> and short pause (the memory drop is visible in btop).</li>
+</ol>
+
+<h3>Patterns</h3>
 <ul>
-<li><b>Memory "automatic":</b> uses available RAM minus the reserve.</li>
-<li><b>Reserve (OS/GUI):</b> kept free for the OS and GUI. At least 1 % of RAM
-(1–8 GB) is enforced.</li>
+<li>0xAA, 0x55, 0xFF, 0x00 – stuck bits.</li>
+<li>Walking one/zero per byte – bit aliasing.</li>
+<li>Random 64-bit words and random data (change every round).</li>
+<li>Address-in-data and inverted – address decoder faults.</li>
+<li><b>Data line test</b> (full mode, once per pattern round): 64-bit walking
+one/zero over 128 MB. Reports the affected data bits.</li>
+<li>Quick mode: only 0xAA, 0x55, address and random.</li>
+</ul>
+
+<h3>System protection</h3>
+<ul>
+<li><b>Reserve (OS/GUI):</b> kept free; at least 1 % of RAM (1–8 GB) is enforced.</li>
+<li><b>Memory pressure:</b> if free RAM drops below half the reserve during the
+test (e.g. another program grows), blocks are discarded from the end and not
+verified. This is logged.</li>
+<li><b>OOM protection:</b> if memory still runs out, the kernel kills the test
+first, not the OS or GUI.</li>
 <li class="bad"><b>Setting memory manually:</b> always leave enough free memory for
 the operating system (recommended: at least 2–4 GB or 1–2 % of RAM). Without swap
 the test memory cannot be paged out – if it is too large the system freezes.</li>
-<li>Memory used by the kernel and programs is never tested by the fill test.
-Use MemTest86 (boot menu) for complete coverage.</li>
+</ul>
+
+<h3>Error messages</h3>
+<p><code>MISMATCH bei Offset …</code> shows the position in the test memory and the
+expected and read value. When run as root the <b>physical address</b> is added,
+which helps to locate the DIMM via vendor documentation or
+<code>edac-util</code>. Without root it is omitted.</p>
+
+<h3>Limits</h3>
+<ul>
+<li>Memory used by the kernel, drivers and running programs as well as the
+reserve is <b>never</b> tested.</li>
+<li>The test runs inside an operating system using virtual addresses; the kernel
+decides which physical pages are used. Coverage is not complete.</li>
+<li>Without root, locking is limited by <code>ulimit -l</code>; with active swap
+part of the memory may be paged out. A warning is shown.</li>
+<li>ECC memory corrects single-bit errors itself; the test does not see them –
+check the system log, EDAC or iLO. The test finds uncorrectable or unprotected
+errors.</li>
+<li>Python reaches about 2–4 GB/s per core. With very large RAM a cycle may not
+fit into the test time; then only the written part is verified.</li>
+<li>For a complete check (including hammer and bit-fade tests) use MemTest86
+from the boot menu.</li>
 </ul>
 
 <h2>Tab: Disk (File / Device / Destructive)</h2>

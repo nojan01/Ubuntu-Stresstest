@@ -125,7 +125,7 @@ def collect_proliant(run) -> dict:
     if data["proliant"]:
         data["iml"], data["iml_error"] = ipmi.read_iml(run)
     else:
-        data["iml_error"] = _t("Kein HPE ProLiant.", "No HPE ProLiant.")
+        data["iml_error"] = _t("Kein HPE ProLiant/Synergy.", "No HPE ProLiant/Synergy.")
     if not shutil.which("ipmitool"):
         data["bmc_error"] = _t("ipmitool nicht installiert.", "ipmitool not installed.")
         return data
@@ -306,9 +306,9 @@ class ProliantPanel(QWidget):
 
     def retranslate(self, *_):
         self.notice.setText(_t(
-            "Kein HPE ProLiant erkannt – die iLO-Informationen (Sensoren, Ereignisprotokoll) sind auf diesem System "
+            "Kein HPE ProLiant/Synergy erkannt – die iLO-Informationen (Sensoren, Ereignisprotokoll) sind auf diesem System "
             "nicht aktiv. Speicher/ECC und ggf. ein anderer BMC (IPMI) können trotzdem manuell ausgelesen werden.",
-            "No HPE ProLiant detected – iLO information (sensors, event log) is not active on this system. "
+            "No HPE ProLiant/Synergy detected – iLO information (sensors, event log) is not active on this system. "
             "Memory/ECC and possibly another BMC (IPMI) can still be read manually."))
         self.hint.setText(_t(
             "Liest über ipmitool direkt vom iLO: Systemdaten, alle Sensoren (Temperaturen, Lüfter, Netzteile, "
@@ -428,7 +428,7 @@ class ProliantPanel(QWidget):
             if dmi.get(key):
                 lines.append(f"{label}: {dmi[key]}")
         lines.append(f"BIOS/ROM: {identity.get('bios') or '?'} ({identity.get('bios_date') or '?'})")
-        lines.append(_t("ProLiant erkannt: ", "ProLiant detected: ") + (_t("ja", "yes") if data["proliant"] else _t("nein", "no")))
+        lines.append(_t("ProLiant/Synergy erkannt: ", "ProLiant/Synergy detected: ") + (_t("ja", "yes") if data["proliant"] else _t("nein", "no")))
         lines.append("")
         lines.append(_t("== iLO / BMC ==", "== iLO / BMC =="))
         if data["bmc_error"]:

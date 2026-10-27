@@ -264,10 +264,15 @@ def refresh_sel_counts_async(max_age: float = 60.0) -> None:
 # ---------------------------------------------------------------------------
 # ProLiant-Info: Erkennung, Systemdaten, alle Sensoren, komplettes Ereignisprotokoll
 
+# HPE-Server mit iLO: ProLiant und Synergy-Compute-Module (z. B. "Synergy 480 Gen10").
+_HPE_ILO_MODELS = re.compile(r"proliant|synergy", re.I)
+
+
 def is_proliant() -> bool:
     vendor = _read("/sys/class/dmi/id/sys_vendor")
     product = _read("/sys/class/dmi/id/product_name")
-    return bool(re.search(r"\bhpe?\b|hewlett", vendor, re.I)) and "proliant" in product.lower()
+    return bool(re.search(r"\bhpe?\b|hewlett", vendor, re.I)
+                and _HPE_ILO_MODELS.search(product))
 
 
 def system_identity() -> dict[str, str]:

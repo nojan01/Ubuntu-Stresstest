@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
-from hardwaretest.core.filesystem_check import list_filesystems, result_text, worker_command
+from hardwaretest.core.filesystem_check import VMFS_TYPES, list_filesystems, result_text, worker_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
 
@@ -47,9 +47,9 @@ class FilesystemPanel(QWidget):
         hint.setWordWrap(True)
         self.bind(hint,
                   "Eingehängte Dateisysteme: Statusdiagnose mit Einhängezustand, Speicherplatz und verfügbaren Fehlerhinweisen. "
-                  "Vollständige Strukturprüfung für ext2/3/4, xfs, vfat und squashfs, Reparatur (außer squashfs) nur ausgehängt; für die Systempartition ein Live-USB verwenden.",
+                  "Vollständige Strukturprüfung für ext2/3/4, xfs, vfat, squashfs und VMFS, Reparatur (außer squashfs/VMFS) nur ausgehängt; für die Systempartition ein Live-USB verwenden.",
                   "Mounted filesystems: status diagnosis with mount state, free space and available error indications. "
-                  "Full integrity check for ext2/3/4, xfs, vfat and squashfs and repair (except squashfs) require an unmounted filesystem; use a live USB for the system partition.")
+                  "Full integrity check for ext2/3/4, xfs, vfat, squashfs and VMFS and repair (except squashfs/VMFS) require an unmounted filesystem; use a live USB for the system partition.")
         layout.addWidget(hint)
         self.devices = QComboBox()
         self.devices.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -180,6 +180,9 @@ class FilesystemPanel(QWidget):
             message = self.text("Dieses Dateisystem wird noch nicht unterstützt. Keine Reparatur verfügbar.", "This filesystem is not supported yet. Repair unavailable.")
         elif not allowed:
             message = self.text("Eingehängt/in Benutzung – Prüfung und Reparatur gesperrt. Live-USB verwenden.", "Mounted/in use – check and repair blocked. Use a live USB.")
+        elif not device.repairable and device.fstype in VMFS_TYPES:
+            message = self.text("Offline-Kandidat. VMFS (ESXi): lesende Metadatenprüfung mit fsck.vmfs; Reparatur nur mit VMware VOMA unter ESXi.",
+                                "Offline candidate. VMFS (ESXi): read-only metadata check with fsck.vmfs; repair only with VMware VOMA on ESXi.")
         elif not device.repairable:
             message = self.text("Offline-Kandidat. squashfs ist schreibgeschützt: nur Prüfung, keine Reparatur möglich.",
                                 "Offline candidate. squashfs is read-only: check only, repair impossible.")

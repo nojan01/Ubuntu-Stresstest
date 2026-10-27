@@ -1,3 +1,5 @@
+import pytest
+
 from hardwaretest.core import ipmi
 
 
@@ -163,3 +165,19 @@ def test_sel_baseline_matches_list_and_elist_formats(monkeypatch):
     ipmi._remember([ipmi.SelEvent("  1a | 10/15/2026 | 12:00:00 | Memory #0x01 | Uncorrectable ECC | Asserted", True)])
     ipmi._remember([ipmi.SelEvent("1a | Pre-Init |0000001234| Memory #0x01 | Uncorrectable ECC | Asserted", True)])
     assert ipmi.last_sel_counts.new_uncorrectable == 0
+
+
+
+@pytest.mark.parametrize(("vendor", "product", "expected"), [
+    ("HPE", "ProLiant DL380 Gen10", True),
+    ("HPE", "Synergy 480 Gen10 w/ PCIe Exp Mod", True),
+    ("Hewlett Packard Enterprise", "Synergy 660 Gen10", True),
+    ("HP", "ProLiant ML350 Gen9", True),
+    ("Dell Inc.", "PowerEdge R740", False),
+    ("Lenovo", "ThinkSystem Synergy", False),
+    ("HPE", "EliteDesk 800", False),
+])
+def test_is_proliant_recognizes_hpe_ilo_servers(monkeypatch, vendor, product, expected):
+    values = {"/sys/class/dmi/id/sys_vendor": vendor, "/sys/class/dmi/id/product_name": product}
+    monkeypatch.setattr(ipmi, "_read", lambda path, *a, **k: values.get(path, ""))
+    assert ipmi.is_proliant() is expected

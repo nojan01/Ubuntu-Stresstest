@@ -15,16 +15,31 @@ import sys
 from hardwaretest.core.paths import self_command_for_root
 
 
-CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs"}
-# squashfs ist ein schreibgeschütztes Abbild und kann nicht repariert werden.
-REPAIRABLE_TYPES = CHECKABLE_TYPES - {"squashfs"}
+# VMware ESXi-Datenspeicher; blkid meldet je nach Lage VMFS oder VMFS_volume_member.
+VMFS_TYPES = {"VMFS", "VMFS_volume_member"}
+CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs", *VMFS_TYPES}
+# squashfs ist ein schreibgeschütztes Abbild; für VMFS gibt es unter Linux nur
+# eine lesende Metadatenprüfung (Reparatur nur mit VMware VOMA unter ESXi).
+REPAIRABLE_TYPES = CHECKABLE_TYPES - {"squashfs", *VMFS_TYPES}
 
 _TOOLS = {
     "e2fsck": ("/usr/sbin/e2fsck", "/sbin/e2fsck", "e2fsprogs"),
     "xfs_repair": ("/usr/sbin/xfs_repair", "/sbin/xfs_repair", "xfsprogs"),
     "fsck.fat": ("/usr/sbin/fsck.fat", "/sbin/fsck.fat", "dosfstools"),
     "unsquashfs": ("/usr/bin/unsquashfs", "/usr/sbin/unsquashfs", "squashfs-tools"),
+    "fsck.vmfs6": ("/usr/sbin/fsck.vmfs6", "/sbin/fsck.vmfs6", "vmfs6-tools"),
+    "fsck.vmfs": ("/usr/sbin/fsck.vmfs", "/sbin/fsck.vmfs", "vmfs-tools"),
 }
+
+# Ausgabe von fsck.fat, die bei ESXi-Bootbanks (BOOTBANK1/2) immer auftritt: ESXi
+# schreibt das Label nur in den Bootsektor. Das ist kein Dateisystemfehler.
+_VFAT_BENIGN = re.compile(
+    r"^(\s*|fsck\.fat \d.*|Leaving filesystem unchanged\.|\S+: \d+ files, \d+/\d+ clusters"
+    r"|Label in boot sector is '.*', but there is no volume label in root directory\."
+    r"|\s+Auto-removing label from boot sector\.)$")
+_VFAT_LABEL = re.compile(r"^Label in boot sector is '.*', but there is no volume label in root directory\.$")
+_VMFS_SUMMARY = re.compile(r"^(Unallocated blocks|Lost blocks|Undefined inodes|Orphaned inodes|Directory errors)\s*:\s*(\d+)\s*$")
+_VMFS_MAX_DETAIL_LINES = 200
 
 
 def _tool(name: str) -> str:
@@ -107,7 +122,7 @@ def validate_device(expected: FilesystemDevice, action: str = "check") -> Filesy
     """Fail closed on identity changes, mounts, active layers or unreadable state."""
     current = validate_identity(expected)
     if not current.supported or current.kind not in {"part", "disk", "lvm", "crypt", "loop", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10", "md"}:
-        raise ValueError("Only offline ext2/3/4, xfs, vfat, squashfs / Nur ext2/3/4, xfs, vfat, squashfs offline unterstützt.")
+        raise ValueError("Only offline ext2/3/4, xfs, vfat, squashfs, VMFS / Nur ext2/3/4, xfs, vfat, squashfs, VMFS offline unterstützt.")
     if action == "check" and current.checkable_while_mounted:
         return current
     numbers = mounted_numbers(Path("/proc/self/mountinfo").read_text())
@@ -140,6 +155,12 @@ def checker_command(action: str, device: str, fstype: str = "ext4") -> list[str]
             return [_tool("unsquashfs"), "-no-progress", "-pf", "/dev/null", device]
         # Ältere squashfs-tools (< 4.6): nur Superblock, Inode- und Verzeichnistabellen.
         return [_tool("unsquashfs"), "-no-progress", "-lls", device]
+    if fstype in VMFS_TYPES:
+        if not check:
+            raise ValueError("VMFS: no repair on Linux, use VMware VOMA on ESXi / "
+                             "VMFS: keine Reparatur unter Linux, dafür VMware VOMA unter ESXi.")
+        # fsck.vmfs(6) liest nur und schreibt nie. VMFS6 zuerst, VMFS3/5 als Rückfall.
+        return [_tool("fsck.vmfs6"), device]
     if fstype not in {"ext2", "ext3", "ext4"}:
         raise ValueError(f"Unsupported filesystem / Nicht unterstützt: {fstype}")
     # -n is strictly read-only. -p repairs only problems e2fsck considers safe;
@@ -270,16 +291,79 @@ def normalize_exit(fstype: str, action: str, code: int, output: str = "") -> int
         return 8
     if fstype == "squashfs":
         return 0 if code == 0 else 4
+    if fstype in VMFS_TYPES:
+        return 0 if code == 0 else 8
     return code
+
+
+def vfat_only_boot_label_mismatch(output: str) -> bool:
+    """True, wenn fsck.fat nur das fehlende Wurzelverzeichnis-Label bemängelt (ESXi-Bootbank)."""
+    lines = output.splitlines()
+    return any(_VFAT_LABEL.match(line) for line in lines) and all(_VFAT_BENIGN.match(line) for line in lines)
+
+
+def vmfs_findings(output: str) -> dict[str, int] | None:
+    """Zählerstände aus der Zusammenfassung von fsck.vmfs; None, wenn sie fehlt."""
+    found = {m[1]: int(m[2]) for line in output.splitlines() if (m := _VMFS_SUMMARY.match(line.strip()))}
+    return found if len(found) == 5 else None
+
+
+def _run_vmfs_check(device: str, env: dict) -> int:
+    def run(tool: str) -> tuple[int, str]:
+        command = [_tool(tool), device]
+        print("$ " + " ".join(command), flush=True)
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                errors="replace", env=env)
+        return result.returncode, result.stdout + result.stderr
+
+    available = [t for t in ("fsck.vmfs6", "fsck.vmfs") if os.path.exists(_tool(t))]
+    if not available:
+        print("fsck.vmfs6/fsck.vmfs fehlen / missing. Installation: sudo apt install vmfs6-tools vmfs-tools", flush=True)
+        return 8
+    code, output = run(available[0])
+    if "Unsupported version" in output and len(available) > 1:
+        print(output.strip(), flush=True)
+        print("Kein VMFS6 – Prüfung mit fsck.vmfs (VMFS3/5) / Not VMFS6 – checking with fsck.vmfs (VMFS3/5).", flush=True)
+        code, output = run(available[1])
+    detail = 0
+    for line in output.splitlines():
+        # Verlorene/doppelte Blöcke werden einzeln gemeldet, bei großen Datenspeichern sehr viele.
+        if re.search(r"\bBlock 0x[0-9a-f]+ is\b", line):
+            detail += 1
+            if detail > _VMFS_MAX_DETAIL_LINES:
+                continue
+        print(line, flush=True)
+    if detail > _VMFS_MAX_DETAIL_LINES:
+        print(f"… {detail - _VMFS_MAX_DETAIL_LINES} weitere Blockmeldungen ausgelassen / further block messages omitted.", flush=True)
+    findings = vmfs_findings(output)
+    if code != 0 or findings is None:
+        print("VMFS konnte nicht geöffnet bzw. nicht vollständig geprüft werden (z. B. VMFS-L/OSData, "
+              "mehrere Extents, Versionswechsel) / VMFS could not be opened or fully checked.", flush=True)
+        return 8
+    print("Nur Metadaten geprüft (Inodes, Blockzuordnung, Verzeichnisse), keine Datenblöcke. Reparatur nur mit "
+          "VMware VOMA unter ESXi / Metadata only, no data blocks. Repair only with VMware VOMA on ESXi.", flush=True)
+    return 4 if any(findings.values()) else 0
 
 
 def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
     env = {**os.environ, "LC_ALL": "C"}
     command = checker_command(action, device, fstype)
+    if fstype in VMFS_TYPES:
+        return _run_vmfs_check(device, env)
     if not os.path.exists(command[0]):
         package = next(p for n, (a, b, p) in _TOOLS.items() if command[0] in (a, b))
         print(f"{command[0]} fehlt / missing. Installation: sudo apt install {package}", flush=True)
         return 8
+    if fstype == "vfat" and action == "repair":
+        # Nur Bootsektor-Label ohne Wurzelverzeichnis-Label (ESXi-Bootbank): nichts zu
+        # reparieren; fsck.fat -a würde das Label sonst aus dem Bootsektor löschen.
+        probe = subprocess.run([command[0], "-n", device], stdin=subprocess.DEVNULL, capture_output=True,
+                               text=True, errors="replace", env=env)
+        if probe.returncode == 1 and vfat_only_boot_label_mismatch(probe.stdout + probe.stderr):
+            print(probe.stdout + probe.stderr, end="", flush=True)
+            print("Nur Bootsektor-Label (typisch für ESXi-Bootbanks) – keine Reparatur nötig, Label bleibt erhalten. / "
+                  "Boot sector label only (typical for ESXi boot banks) – no repair needed, label kept.", flush=True)
+            return 0
     print("$ " + " ".join(command), flush=True)
     declined_fix = False
     skipped_journal = False
@@ -287,6 +371,7 @@ def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
     # unsquashfs -lls listet jede Datei; nur eine Zusammenfassung ausgeben.
     listing = fstype == "squashfs" and "-lls" in command
     listed = 0
+    collected = []
     with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True, errors="replace", env=env) as process:
         for line in process.stdout:
@@ -294,6 +379,7 @@ def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
                 listed += 1
                 continue
             print(line, end="", flush=True)
+            collected.append(line)
             if fstype in {"ext2", "ext3", "ext4"}:
                 declined_fix |= bool(re.search(r"\?\s*no\b", line))
                 skipped_journal |= "skipping journal recovery" in line.lower()
@@ -306,6 +392,10 @@ def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
         print("XFS-Journal nicht leer: Dateisystem einmal einhängen und sauber aushängen, dann erneut prüfen. "
               "Kein xfs_repair -L (Datenverlust). / XFS log dirty: mount and cleanly unmount once, then check again.",
               flush=True)
+    if fstype == "vfat" and action == "check" and code == 1 and vfat_only_boot_label_mismatch("".join(collected)):
+        print("Hinweis: Label nur im Bootsektor (typisch für ESXi-Bootbanks BOOTBANK1/2) – kein Fehler. / "
+              "Note: label in boot sector only (typical for ESXi boot banks) – not an error.", flush=True)
+        return 0
     if fstype not in {"ext2", "ext3", "ext4"}:
         return normalize_exit(fstype, action, code)
     # Some e2fsck versions return 0 for a declined free-block-count correction.

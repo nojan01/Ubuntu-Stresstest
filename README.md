@@ -2,6 +2,12 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.51
+
+- ProLiant Info: HPE Synergy-Compute-Module (z. B. Synergy 480/660 Gen10) werden erkannt; Sensoren, Ereignisprotokoll und IML werden automatisch ausgelesen.
+- Dateisystem-Tab: VMware-ESXi-Datenspeicher (VMFS3/5/6) werden lesend geprüft (`fsck.vmfs6`/`fsck.vmfs`, nur Metadaten; Reparatur nur mit VMware VOMA unter ESXi).
+- Dateisystem-Tab: Das Label im Bootsektor der ESXi-Bootbanks (vfat) wird nicht mehr als Fehler gemeldet und bei einer Reparatur nicht gelöscht.
+
 ### Neu in 0.2.50
 
 - RAM-Fülltest erweitert (Ideen aus adaptive-ramtest): Speicher wird per mlock gegen Auslagern gesperrt, Moving Inversion, 64-Bit-Datenleitungstest, Muster „Address invertiert“, Verwerfen von Blöcken bei Speicherdruck statt Einfrieren, OOM-Schutz für OS/GUI, physische Adresse bei Fehlern (als root).
@@ -174,7 +180,7 @@ Lizenztext befindet sich in der Datei `LICENSE`.
 
 ### Variante A – Debian-Paket (empfohlen)
 
-Für die Installation wird nur die Datei `hardwaretest_0.2.50_amd64.deb` benötigt.
+Für die Installation wird nur die Datei `hardwaretest_0.2.51_amd64.deb` benötigt.
 
 1. Die DEB-Datei herunterladen.
 2. Im Dateimanager doppelt anklicken und im Paketinstallationsprogramm
@@ -205,8 +211,8 @@ Das AppImage enthält ebenfalls Python, PySide6 und alle Python-Module. Es kann
 ohne Installation einer Python-Laufzeit gestartet werden:
 
 ```bash
-chmod +x Hardwaretest-0.2.50-x86_64.AppImage
-./Hardwaretest-0.2.50-x86_64.AppImage
+chmod +x Hardwaretest-0.2.51-x86_64.AppImage
+./Hardwaretest-0.2.51-x86_64.AppImage
 ```
 
 Native Diagnoseprogramme müssen auf der jeweiligen Distribution weiterhin über

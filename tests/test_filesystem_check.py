@@ -192,3 +192,110 @@ def test_mounted_squashfs_check_allowed(monkeypatch):
     assert fs.validate_device(dev, "check") == dev
     with pytest.raises(ValueError):
         fs.validate_device(dev, "repair")
+
+
+VMFS_SUMMARY = """Unallocated blocks : 0
+Lost blocks        : {lost}
+Undefined inodes   : 0
+Orphaned inodes    : 0
+Directory errors   : 0
+"""
+
+
+def fake_vmfs_tools(monkeypatch, tmp_path, results):
+    """results: tool -> (returncode, output); records the order of calls."""
+    calls = []
+    for tool in ("fsck.vmfs6", "fsck.vmfs"):
+        path = tmp_path / tool
+        if tool in results:
+            path.write_text("")
+        monkeypatch.setitem(fs._TOOLS, tool, (str(path), str(path), tool))
+
+    def run(command, **kwargs):
+        tool = Path(command[0]).name
+        calls.append(tool)
+        code, output = results[tool]
+        return SimpleNamespace(returncode=code, stdout=output, stderr="")
+
+    monkeypatch.setattr(fs.subprocess, "run", run)
+    return calls
+
+
+@pytest.mark.parametrize("fstype", sorted(fs.VMFS_TYPES))
+def test_vmfs_is_checkable_but_never_repairable(fstype):
+    dev = fs.FilesystemDevice("/dev/sdb7", fstype, "", "8:23", (), "part")
+    assert dev.supported and not dev.repairable
+    assert Path(fs.checker_command("check", "/dev/sdb7", fstype)[0]).name == "fsck.vmfs6"
+    with pytest.raises(ValueError):
+        fs.checker_command("repair", "/dev/sdb7", fstype)
+
+
+@pytest.mark.parametrize(("lost", "expected"), [(0, 0), (3, 4)])
+def test_vmfs_check_evaluates_summary_not_exit_code(monkeypatch, tmp_path, capsys, lost, expected):
+    # fsck.vmfs endet immer mit 0; entscheidend ist die Zusammenfassung.
+    calls = fake_vmfs_tools(monkeypatch, tmp_path, {"fsck.vmfs6": (0, VMFS_SUMMARY.format(lost=lost))})
+    assert fs.run_checker("check", "/dev/sdb7", "VMFS_volume_member") == expected
+    assert calls == ["fsck.vmfs6"]
+    assert "VOMA" in capsys.readouterr().out
+
+
+def test_vmfs5_falls_back_to_fsck_vmfs(monkeypatch, tmp_path):
+    calls = fake_vmfs_tools(monkeypatch, tmp_path, {
+        "fsck.vmfs6": (1, "VMFS version: 5\nVMFS: Unsupported version 5\nUnable to open filesystem\n"),
+        "fsck.vmfs": (0, VMFS_SUMMARY.format(lost=0)),
+    })
+    assert fs.run_checker("check", "/dev/sdb7", "VMFS") == 0
+    assert calls == ["fsck.vmfs6", "fsck.vmfs"]
+
+
+@pytest.mark.parametrize("results", [
+    {"fsck.vmfs6": (1, "Unable to open filesystem\n")},
+    {"fsck.vmfs6": (0, "Lost blocks : 0\n")},  # unvollständige Zusammenfassung
+    {},  # Werkzeuge fehlen
+])
+def test_vmfs_unopenable_or_incomplete_is_unknown(monkeypatch, tmp_path, results):
+    fake_vmfs_tools(monkeypatch, tmp_path, results)
+    assert fs.run_checker("check", "/dev/sdb7", "VMFS") == 8
+
+
+def test_vmfs_block_messages_are_limited(monkeypatch, tmp_path, capsys):
+    lines = "".join(f"File Block 0x{i:08x} is lost.\n" for i in range(500))
+    fake_vmfs_tools(monkeypatch, tmp_path, {"fsck.vmfs6": (0, lines + VMFS_SUMMARY.format(lost=500))})
+    assert fs.run_checker("check", "/dev/sdb7", "VMFS") == 4
+    out = capsys.readouterr().out
+    assert out.count(" is lost.") == fs._VMFS_MAX_DETAIL_LINES
+    assert "300 weitere" in out
+
+
+BOOTBANK_OUTPUT = """fsck.fat 4.2 (2021-01-31)
+Label in boot sector is 'BOOTBANK2', but there is no volume label in root directory.
+  Auto-removing label from boot sector.
+
+Leaving filesystem unchanged.
+/dev/sdb6: 115 files, 5397/65515 clusters
+"""
+
+
+def test_vfat_boot_label_only_is_recognized():
+    assert fs.vfat_only_boot_label_mismatch(BOOTBANK_OUTPUT)
+    assert not fs.vfat_only_boot_label_mismatch(BOOTBANK_OUTPUT + "Free cluster summary wrong (1 vs. really 2)\n")
+    assert not fs.vfat_only_boot_label_mismatch("fsck.fat 4.2 (2021-01-31)\n/dev/x: 1 files, 1/2 clusters\n")
+
+
+@pytest.mark.skipif(not all(shutil.which(c) or os.path.exists(f"/usr/sbin/{c}") for c in ("mkfs.fat", "fsck.fat")),
+                    reason="dosfstools missing")
+def test_esxi_bootbank_real_image_is_clean_and_label_kept(tmp_path):
+    # Reguläre Datei im Temp-Verzeichnis, NIE ein Blockgerät des Benutzers.
+    image = tmp_path / "bootbank.img"
+    with image.open("wb") as file:
+        file.truncate(64 * 1024 * 1024)
+    mkfs = shutil.which("mkfs.fat") or "/usr/sbin/mkfs.fat"
+    subprocess.run([mkfs, "-n", "BOOTBANK2", str(image)], check=True, capture_output=True)
+    data = bytearray(image.read_bytes())
+    entry = data.find(b"BOOTBANK2  ", 512)  # Label-Eintrag im Wurzelverzeichnis löschen (wie ESXi)
+    assert entry > 0
+    data[entry] = 0xE5
+    image.write_bytes(bytes(data))
+    assert fs.run_checker("check", str(image), "vfat") == 0
+    assert fs.run_checker("repair", str(image), "vfat") == 0
+    assert image.read_bytes() == bytes(data)  # Label im Bootsektor bleibt erhalten

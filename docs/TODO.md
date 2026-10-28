@@ -59,11 +59,14 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
 ## B) Zusätzliche CPU-Tests (Desktop und Server)
 
 ### OpenDCDiag (Intel, Apache 2.0) – Priorität 1
-- [ ] Erkennt Silent Data Errors (stille Rechenfehler) pro Kern; Intel und AMD
-- [ ] Binary/Bundle beschaffen bzw. bauen (github.com/opendcdiag/opendcdiag), Lizenz in THIRD-PARTY
-- [ ] Runner: Dauer, Kernauswahl (alle / einzelne), Ausgabe (YAML) auswerten → fehlerhafte Kerne benennen
-- [ ] UI im CPU-Bereich + optional Schritt im Testplan
-- [ ] In Standard- und freies ISO aufnehmen
+- [x] Erkennt Silent Data Errors (stille Rechenfehler) pro Kern; Intel und AMD
+- [x] Binary bauen: `scripts/build_opendcdiag.sh` (fester Commit, AVX2- und generische Variante),
+      Lizenz in `vendor/opendcdiag/` und README
+- [x] Runner: Dauer, Kernauswahl (`--cpuset`), YAML auswerten → fehlerhafte Kerne benennen
+      (`hardwaretest/tests/opendcdiag.py`)
+- [x] Tab „OpenDCDiag“ + optionaler Schritt im Testplan
+- [x] In Standard- und freies ISO aufnehmen (kommt über das `.deb`)
+- [ ] Praxistest auf ProLiant (Gen8 ohne AVX2 → generische Variante, mit root)
 
 ### rasdaemon – Priorität 2
 - [x] Machine-Check-/Cache-/Speicherfehler (MCE) während aller Tests mitschreiben

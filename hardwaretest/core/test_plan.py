@@ -29,6 +29,12 @@ from hardwaretest.core.system_info import read_system_info
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.network import NetworkRunner, threshold_failures
 from hardwaretest.tests.fio_runner import FioNvmeFullReadRunner
+from hardwaretest.tests.opendcdiag import (
+    OpenDcDiagRunner,
+    default_opendcdiag_path,
+    opendcdiag_available,
+    runs_as_root,
+)
 from hardwaretest.tests.nvidia_runner import DcgmDiagnosticRunner, dcgmi_available
 from hardwaretest.tests.stress_ng import StressNgRunner
 
@@ -46,6 +52,8 @@ class TestPlanConfig:
     stop_on_error: bool = False
     cpu_enabled: bool = True
     cpu_seconds: int = 60
+    opendcdiag_enabled: bool = False
+    opendcdiag_seconds: int = 300
     ram_enabled: bool = True
     ram_seconds: int = 60
     ram_percent: int = 70
@@ -166,6 +174,8 @@ class TestPlanExecutor:
         steps: list[str] = []
         if config.cpu_enabled:
             steps.append("cpu")
+        if config.opendcdiag_enabled:
+            steps.append("opendcdiag")
         if config.ram_enabled:
             steps.append("ram")
         if config.nvme_enabled:
@@ -219,6 +229,7 @@ class TestPlanExecutor:
         csv_path = directory / f"testplan-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}.csv"
         handlers = {
             "cpu": self._run_cpu,
+            "opendcdiag": self._run_opendcdiag,
             "ram": self._run_ram,
             "nvme": self._run_nvme,
             "nvme_read": self._run_nvme_read,
@@ -348,6 +359,17 @@ class TestPlanExecutor:
             log_fn=self._log,
         )
         return self._run_process_step("cpu", runner)
+
+    def _run_opendcdiag(self) -> TestPlanStepResult:
+        if not opendcdiag_available():
+            return self._skipped("opendcdiag", "OpenDCDiag ist nicht installiert.")
+        runner = OpenDcDiagRunner(TestParameters(self.config.opendcdiag_seconds), log_fn=self._log)
+        self._attach_root(runner)
+        result = self._run_process_step("opendcdiag", runner)
+        summary = runner.summary_text(self.config.language)
+        if summary:
+            result.summary += " | " + summary
+        return result
 
     def _run_ram(self) -> TestPlanStepResult:
         if not shutil.which("stress-ng"):
@@ -692,6 +714,8 @@ class TestPlanExecutor:
             return False
         keys = set(self.selected_step_keys())
         return (bool(keys & {"nvme", "nvme_read"}) or ("dcgm" in keys and dcgmi_available())
+                or ("opendcdiag" in keys and opendcdiag_available()
+                    and not runs_as_root(default_opendcdiag_path()))
                 or (self.config.monitoring_enabled and ipmi.ipmi_available()))
 
     def _authorize_root(self) -> None:
@@ -848,6 +872,7 @@ def _step_name(key: str, language: str) -> str:
     names = {
         "monitoring": ("Langzeitmonitoring", "Long-term monitoring"),
         "cpu": ("CPU-Stresstest", "CPU stress test"),
+        "opendcdiag": ("OpenDCDiag – stille Datenfehler je Kern", "OpenDCDiag – silent data errors per core"),
         "ram": ("RAM-Verifikation", "RAM verification"),
         "nvme": ("NVMe-/Laufwerksgesundheit", "NVMe / drive health"),
         "nvme_read": ("NVMe – vollständiger Lesetest", "NVMe – full read test"),
@@ -975,6 +1000,8 @@ def _text(source: str, language: str) -> str:
         "ping ist nicht installiert.": "ping is not installed.",
         "iperf3 ist nicht installiert.": "iperf3 is not installed.",
         "NVIDIA DCGM ist nicht installiert.": "NVIDIA DCGM is not installed.",
+        "OpenDCDiag ist nicht installiert.": "OpenDCDiag is not installed.",
+        "OpenDCDiag-Protokoll fehlt oder ist nicht lesbar.": "OpenDCDiag log is missing or unreadable.",
         "Keine NVIDIA-GPU für DCGM gefunden.": "No NVIDIA GPU was found for DCGM.",
     }
     if language == "en":

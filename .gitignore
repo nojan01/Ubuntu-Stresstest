@@ -38,6 +38,13 @@ vendor/prime95/mprime
 vendor/prime95/libgmp.so*
 vendor/prime95/*.txt
 
+# OpenDCDiag – wird mit scripts/build_opendcdiag.sh gebaut
+vendor/opendcdiag/opendcdiag
+vendor/opendcdiag/opendcdiag-generic
+vendor/opendcdiag/LICENSE
+vendor/opendcdiag/LICENSE.3rdparty
+vendor/opendcdiag/COMMIT
+
 # mprime Laufzeitdateien
 vendor/prime95/prime.txt
 vendor/prime95/local.txt

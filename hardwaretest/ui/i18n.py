@@ -425,6 +425,25 @@ _EN: dict[str, str] = {
     "Noch keine Datenträger gescannt.": "No drives scanned yet.",
     "Pfad wählen": "Choose path",
     "Prime95 starten": "Start Prime95",
+    "OpenDCDiag starten": "Start OpenDCDiag",
+    "CPU-Auswahl": "CPU selection",
+    "leer = alle CPUs, z. B. 0-7,16 oder p1 für Sockel 1": "empty = all CPUs, e.g. 0-7,16 or p1 for socket 1",
+    "Ohne root werden Tests mit MSR-Zugriff und Intel In-Field Scan übersprungen.":
+        "Without root, tests needing MSR access and Intel In-Field Scan are skipped.",
+    "OpenDCDiag prüft jeden CPU-Kern mit Rechenaufgaben und bekannten Ergebnissen auf stille Datenfehler. "
+    "Gewählt: AVX2-Variante.":
+        "OpenDCDiag checks every CPU core for silent data errors using calculations with known results. "
+        "Selected: AVX2 build.",
+    "OpenDCDiag prüft jeden CPU-Kern mit Rechenaufgaben und bekannten Ergebnissen auf stille Datenfehler. "
+    "Gewählt: generische Variante (CPU ohne AVX2).":
+        "OpenDCDiag checks every CPU core for silent data errors using calculations with known results. "
+        "Selected: generic build (CPU without AVX2).",
+    "OpenDCDiag-Binary nicht gefunden.": "OpenDCDiag binary not found.",
+    "Läuft per sudo als root (ohne Passwort, siehe /etc/sudoers.d/hardwaretest-opendcdiag).":
+        "Runs as root via sudo (no password, see /etc/sudoers.d/hardwaretest-opendcdiag).",
+    "OpenDCDiag – stille Datenfehler je Kern": "OpenDCDiag – silent data errors per core",
+    "OpenDCDiag ist nicht installiert; der Schritt wird nicht angeboten.":
+        "OpenDCDiag is not installed; this step is not offered.",
     "RAM-Fuelltest": "RAM fill test",
     "RAM-Fuelltest starten": "Start RAM fill test",
     "RAM-Bandbreite (Durchsatz)": "RAM bandwidth (throughput)",

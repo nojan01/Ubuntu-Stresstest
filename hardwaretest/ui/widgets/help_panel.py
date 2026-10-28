@@ -42,7 +42,7 @@ _HELP_DE = """\
 Diese Anwendung führt verschiedene Hardware-Stresstests durch, um die
 Stabilität von CPU, RAM, Speichercontroller und Festplatten zu prüfen.
 Alle Tests laufen unter Linux und nutzen bewährte Werkzeuge wie
-<b>stress-ng</b>, <b>Prime95 (mprime)</b> und <b>fio</b>.
+<b>stress-ng</b>, <b>Prime95 (mprime)</b>, <b>OpenDCDiag</b> und <b>fio</b>.
 </p>
 
 <h2>Allgemeine Bedienhinweise</h2>
@@ -156,6 +156,29 @@ Fallback: <code>~/Prime95/mprime</code> oder <code>mprime</code> im PATH. Kann a
 <b>Direktmodus:</b> Nutzt die bestehende <code>prime.txt</code>/<code>local.txt</code>
 ohne sie zu überschreiben.
 </p>
+
+<hr>
+
+<h2>Tab: OpenDCDiag</h2>
+<p>
+<b>OpenDCDiag</b> (Intel, Apache 2.0) sucht <b>stille Datenfehler</b>: Kerne, die unter Last
+falsch rechnen, ohne abzustürzen oder einen Machine Check zu melden. Jeder Kern rechnet
+Aufgaben mit bekanntem Ergebnis (Eigen-Matrizen, zlib/zstd-Kompression, Intel In-Field Scan)
+und vergleicht. Läuft auf Intel und AMD.
+</p>
+<ul>
+  <li><b>Ergebnis:</b> Fehlerhafte Kerne werden mit Sockel, Kern und logischer CPU genannt,
+      z. B. <code>S1 Core 3 (CPU 35)</code>. Ein einziger Fehler bedeutet: Prozessor tauschen.</li>
+  <li><b>CPU-Auswahl:</b> leer = alle CPUs; sonst z. B. <code>0-7,16</code> oder
+      <code>p1</code> (Sockel 1).</li>
+  <li><b>Variante:</b> Auf CPUs ohne AVX2 (z. B. ProLiant Gen8) wird automatisch die
+      generische Variante gewählt.</li>
+  <li><b>Rechte:</b> Ohne root werden Tests mit MSR-Zugriff und In-Field Scan übersprungen
+      (im Protokoll aufgeführt). Im Gesamttest läuft OpenDCDiag über die Root-Sitzung. Das .deb erlaubt Mitgliedern der
+      Gruppe sudo, OpenDCDiag ohne Passwort als root zu starten
+      (/etc/sudoers.d/hardwaretest-opendcdiag); der Tab nutzt das automatisch.</li>
+  <li><b>Dauer:</b> 10 Minuten als Schnelltest, für Abnahmen 1 Stunde oder mehr.</li>
+</ul>
 
 <hr>
 
@@ -565,7 +588,7 @@ _HELP_EN = """\
 <p>
 This application runs various hardware stress tests to verify the stability
 of CPU, RAM, memory controllers, and storage devices. All tests run on Linux
-using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>, and <b>fio</b>.
+using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>, <b>OpenDCDiag</b>, and <b>fio</b>.
 </p>
 
 <h2>General Usage Notes</h2>
@@ -676,6 +699,29 @@ Fallback: <code>~/Prime95/mprime</code> or <code>mprime</code> in PATH. Can be c
 <b>Direct Mode:</b> Uses the existing <code>prime.txt</code>/<code>local.txt</code>
 without overwriting them.
 </p>
+
+<hr>
+
+<h2>Tab: OpenDCDiag</h2>
+<p>
+<b>OpenDCDiag</b> (Intel, Apache 2.0) looks for <b>silent data errors</b>: cores that compute
+wrong results under load without crashing or reporting a machine check. Every core runs
+workloads with known results (Eigen matrices, zlib/zstd compression, Intel In-Field Scan)
+and compares them. Works on Intel and AMD.
+</p>
+<ul>
+  <li><b>Result:</b> Faulty cores are reported with socket, core and logical CPU,
+      e.g. <code>S1 Core 3 (CPU 35)</code>. A single error means: replace the processor.</li>
+  <li><b>CPU selection:</b> empty = all CPUs; otherwise e.g. <code>0-7,16</code> or
+      <code>p1</code> (socket 1).</li>
+  <li><b>Build:</b> On CPUs without AVX2 (e.g. ProLiant Gen8) the generic build is chosen
+      automatically.</li>
+  <li><b>Permissions:</b> Without root, tests needing MSR access and In-Field Scan are skipped
+      (listed in the log). In the test plan OpenDCDiag runs in the root session. The .deb lets members of the
+      sudo group start OpenDCDiag as root without a password
+      (/etc/sudoers.d/hardwaretest-opendcdiag); the tab uses this automatically.</li>
+  <li><b>Duration:</b> 10 minutes as a quick test, 1 hour or more for acceptance testing.</li>
+</ul>
 
 <hr>
 

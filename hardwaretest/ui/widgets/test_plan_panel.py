@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardwaretest.tests.opendcdiag import opendcdiag_available
 from hardwaretest.core.test_plan import (
     STATUS_CANCELLED,
     STATUS_FAILED,
@@ -95,6 +96,12 @@ class TestPlanPanel(QWidget):
         self.cpu_check = QCheckBox("CPU-Stresstest (stress-ng)")
         self.cpu_check.setChecked(True)
         self.cpu_duration = self._seconds_spin(60)
+        self.opendcdiag_check = QCheckBox("OpenDCDiag – stille Datenfehler je Kern")
+        self.opendcdiag_duration = self._seconds_spin(300)
+        self.opendcdiag_check.setEnabled(opendcdiag_available())
+        self.opendcdiag_duration.setEnabled(opendcdiag_available())
+        if not opendcdiag_available():
+            self.opendcdiag_check.setToolTip("OpenDCDiag ist nicht installiert; der Schritt wird nicht angeboten.")
         self.ram_check = QCheckBox("RAM-Verifikation (stress-ng)")
         self.ram_check.setChecked(True)
         self.ram_duration = self._seconds_spin(60)
@@ -105,6 +112,7 @@ class TestPlanPanel(QWidget):
 
         stress_form = QFormLayout()
         stress_form.addRow(self.cpu_check, self.cpu_duration)
+        stress_form.addRow(self.opendcdiag_check, self.opendcdiag_duration)
         stress_form.addRow(self.ram_check, self.ram_duration)
         stress_form.addRow("RAM-Anteil des verfügbaren Speichers", self.ram_percent)
         stress_group = QGroupBox("CPU und Arbeitsspeicher")
@@ -501,6 +509,8 @@ class TestPlanPanel(QWidget):
             stop_on_error=self.stop_on_error.isChecked(),
             cpu_enabled=self.cpu_check.isChecked(),
             cpu_seconds=self.cpu_duration.value(),
+            opendcdiag_enabled=self.opendcdiag_check.isChecked(),
+            opendcdiag_seconds=self.opendcdiag_duration.value(),
             ram_enabled=self.ram_check.isChecked(),
             ram_seconds=self.ram_duration.value(),
             ram_percent=self.ram_percent.value(),
@@ -529,6 +539,7 @@ class TestPlanPanel(QWidget):
     def _any_test_selected(self) -> bool:
         return any(checkbox.isChecked() for checkbox in (
             self.cpu_check,
+            self.opendcdiag_check,
             self.ram_check,
             self.nvme_check,
             self.nvme_read_check,
@@ -543,7 +554,7 @@ class TestPlanPanel(QWidget):
         self.stop_btn.setEnabled(running)
         self.choose_dir_btn.setEnabled(not running)
         for widget in (
-            self.cpu_check, self.cpu_duration, self.ram_check, self.ram_duration,
+            self.cpu_check, self.cpu_duration, self.opendcdiag_check, self.opendcdiag_duration, self.ram_check, self.ram_duration,
             self.ram_percent, self.nvme_check, self.ping_check, self.ping_count,
             self.nvme_read_check, self.drives, self.drive_scan_btn, self.select_all_btn, self.rounds,
             self.iperf_check, self.iperf_duration, self.network_target,
@@ -554,6 +565,9 @@ class TestPlanPanel(QWidget):
             self.sensor_limits_btn,
         ):
             widget.setEnabled(not running)
+        if not running and not opendcdiag_available():
+            self.opendcdiag_check.setEnabled(False)
+            self.opendcdiag_duration.setEnabled(False)
         if not running and not dcgmi_available():
             self.dcgm_check.setEnabled(False)
             self.dcgm_level.setEnabled(False)

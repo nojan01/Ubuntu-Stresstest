@@ -117,6 +117,28 @@ def test_mlock_and_free_locked_chunk():
     assert m.closed
 
 
+@pytest.mark.skipif(not hasattr(mmap, "MADV_REMOVE"), reason="nur Linux")
+def test_free_releases_shmem_even_if_buffer_still_exported(capsys):
+    # Haengt noch eine Referenz (close() -> BufferError) oder haelt ein
+    # Worker das Mapping, muss der Shmem trotzdem sofort frei werden.
+    size = 64 * 1024 * 1024
+    m = mmap.mmap(-1, size, flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
+    block = b"\x55" * (4 * 1024 * 1024)
+    for pos in range(0, size, len(block)):
+        m[pos:pos + len(block)] = block
+    view = memoryview(m)
+    try:
+        before = mfs._meminfo_fields("Shmem")["Shmem"]
+        mfs._free_chunks([(m, size)])
+        after = mfs._meminfo_fields("Shmem")["Shmem"]
+        assert "nicht geschlossen" in capsys.readouterr().out
+        assert before - after >= 48  # MB, Rest Rauschen anderer Prozesse
+        assert view[0] == 0 and view[size - 1] == 0  # Seiten ausgestanzt
+    finally:
+        view.release()
+        m.close()
+
+
 def test_lock_failure_is_reported(monkeypatch):
     chunks = _chunks(2)
     monkeypatch.setattr(mfs, "_mlock", lambda m, n: 12)

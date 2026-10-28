@@ -180,10 +180,13 @@ def _allocate_chunks(total_mb: int, chunk_mb: int) -> List[Chunk]:
 def _free_chunks(chunks: List[Chunk]) -> None:
     """Gibt alle Chunks frei und stellt sicher, dass der RAM ans OS zurueck geht.
 
-    ``madvise(MADV_DONTNEED)`` gibt die physischen Seiten sofort frei (auch
-    wenn ein Buffer noch exportiert ist), anschliessend schliesst ``close()``
-    das Mapping. Fehler werden gemeldet statt stillschweigend verschluckt,
-    damit ein haengender Buffer nicht unbemerkt RAM belegt laesst.
+    Die Bloecke sind ``MAP_SHARED`` (Shmem, in btop/free als "Cached"). Shmem
+    gibt der Kernel erst frei, wenn *alle* Mappings weg sind; ``MADV_DONTNEED``
+    entfernt nur die Seitentabellen-Eintraege, die Seiten bleiben belegt.
+    ``MADV_REMOVE`` stanzt die Seiten (auch ausgelagerte) sofort aus dem
+    Shmem-Objekt – unabhaengig davon, ob noch ein Buffer exportiert ist oder
+    ein Worker das Mapping haelt. Danach schliesst ``close()`` das Mapping.
+    Fehler werden gemeldet statt stillschweigend verschluckt.
     """
     failed = 0
     for m, size in chunks:
@@ -191,9 +194,14 @@ def _free_chunks(chunks: List[Chunk]) -> None:
         with contextlib.suppress(Exception):
             _munlock(m, size)
         # 1. Physische Seiten sofort zurueckgeben.
-        if hasattr(m, "madvise") and hasattr(mmap, "MADV_DONTNEED"):
-            with contextlib.suppress(OSError, ValueError, BufferError):
-                m.madvise(mmap.MADV_DONTNEED, 0, size)
+        released = False
+        if hasattr(m, "madvise"):
+            for advice in ("MADV_REMOVE", "MADV_DONTNEED"):
+                if released or not hasattr(mmap, advice):
+                    continue
+                with contextlib.suppress(OSError, ValueError, BufferError):
+                    m.madvise(getattr(mmap, advice), 0, size)
+                    released = True
         # 2. Mapping schliessen (munmap).
         try:
             m.close()

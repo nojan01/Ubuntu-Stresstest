@@ -249,7 +249,8 @@ Mehrsockel-Systemen damit auch über den anderen Speichercontroller).</li>
 <li><b>Moving Inversion</b> (nur Vollmodus, wenn die Restzeit reicht): erneut
 lesen und vergleichen, invertiert schreiben, das Invertierte prüfen. Findet Bits,
 die mit der Zeit kippen, und Kopplungen beim Umschalten aller Bits.</li>
-<li><b>Freigeben</b> und kurze Pause (Speicherrückgang in btop sichtbar). Bei sehr
+<li><b>Freigeben</b> und kurze Pause (Speicherrückgang in btop sichtbar). Der Testspeicher
+ist Shmem (in btop „Cached“) und wird per MADV_REMOVE sofort ausgestanzt. Bei sehr
 großem RAM (TB-Bereich) braucht der Kernel einige Zeit, bis der Speicher wieder
 als verfügbar gilt; der Test wartet darauf (ca. 1 s je 8 GB, max. 10 min) und
 protokolliert die Wartezeit.</li>
@@ -758,7 +759,8 @@ systems this also goes through the other memory controller).</li>
 <li><b>Moving inversion</b> (full mode only, if enough time is left): read and
 compare again, write the inverted pattern, verify it. Finds bits that flip over
 time and coupling faults when all bits toggle.</li>
-<li><b>Free</b> and short pause (the memory drop is visible in btop). With very
+<li><b>Free</b> and short pause (the memory drop is visible in btop). The test memory
+is shmem (shown as "Cached" in btop) and is punched out at once via MADV_REMOVE. With very
 large RAM (terabytes) the kernel needs some time until the memory is reported as
 available again; the test waits for it (about 1 s per 8 GB, max. 10 min) and logs
 the waiting time.</li>

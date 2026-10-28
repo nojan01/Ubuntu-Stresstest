@@ -2,7 +2,7 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
-### Neu in 0.2.53 (in Arbeit)
+### Neu in 0.2.53
 
 - Alle Tests werten neue Hardwarefehler aus **rasdaemon** aus (CPU-Machine-Checks, EDAC-Speicherfehler, PCIe-AER, aussortierte Speicherseiten), die während des Tests protokolliert wurden: unkorrigierbare Fehler → Test fehlgeschlagen, korrigierte → Warnung im Protokoll und im Bericht des Gesamttests. Ohne rasdaemon ändert sich nichts; die Datenbank wird bei Bedarf über root (`sudo -n` bzw. die Root-Sitzung des Testplans) gelesen.
 

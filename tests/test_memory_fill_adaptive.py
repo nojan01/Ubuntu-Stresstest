@@ -117,6 +117,28 @@ def test_mlock_and_free_locked_chunk():
     assert m.closed
 
 
+@pytest.mark.skipif(not hasattr(mmap, "MADV_REMOVE"), reason="nur Linux")
+def test_free_releases_shmem_even_if_buffer_still_exported(capsys):
+    # Haengt noch eine Referenz (close() -> BufferError) oder haelt ein
+    # Worker das Mapping, muss der Shmem trotzdem sofort frei werden.
+    size = 64 * 1024 * 1024
+    m = mmap.mmap(-1, size, flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
+    block = b"\x55" * (4 * 1024 * 1024)
+    for pos in range(0, size, len(block)):
+        m[pos:pos + len(block)] = block
+    view = memoryview(m)
+    try:
+        before = mfs._meminfo_fields("Shmem")["Shmem"]
+        mfs._free_chunks([(m, size)])
+        after = mfs._meminfo_fields("Shmem")["Shmem"]
+        assert "nicht geschlossen" in capsys.readouterr().out
+        assert before - after >= 48  # MB, Rest Rauschen anderer Prozesse
+        assert view[0] == 0 and view[size - 1] == 0  # Seiten ausgestanzt
+    finally:
+        view.release()
+        m.close()
+
+
 def test_lock_failure_is_reported(monkeypatch):
     chunks = _chunks(2)
     monkeypatch.setattr(mfs, "_mlock", lambda m, n: 12)
@@ -157,3 +179,29 @@ def test_spare_cpus_rotate_so_every_cpu_is_tested():
     assert seen_spare == set(cpus)
     assert mfs._spare_cpus(cpus, workers, 0) == [14, 15]
     assert mfs._spare_cpus(cpus, workers, 2) == [0, 1]
+
+
+def test_wait_for_release_waits_until_memory_returns(monkeypatch):
+    values = iter([100, 200, 900, 1000])
+    monkeypatch.setattr(mfs, "_available_memory_mb", lambda: next(values))
+    monkeypatch.setattr(mfs.time, "sleep", lambda _s: None)
+    ok, avail, _waited = mfs._wait_for_release(900, timeout_s=60)
+    assert ok and avail == 900
+
+
+def test_wait_for_release_times_out(monkeypatch):
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr(mfs.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(mfs.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(mfs, "_available_memory_mb", lambda: 100)
+    ok, avail, waited = mfs._wait_for_release(900, timeout_s=20)
+    assert not ok and avail == 100 and waited >= 20
+
+
+def test_release_timeout_scales_with_ram(monkeypatch):
+    monkeypatch.setattr(mfs, "_read_meminfo_total_mb", lambda: 16 * 1024)
+    assert mfs._release_timeout_s() == 10
+    monkeypatch.setattr(mfs, "_read_meminfo_total_mb", lambda: 1024 * 1024)
+    assert mfs._release_timeout_s() == 128
+    monkeypatch.setattr(mfs, "_read_meminfo_total_mb", lambda: 8 * 1024 * 1024)
+    assert mfs._release_timeout_s() == 600

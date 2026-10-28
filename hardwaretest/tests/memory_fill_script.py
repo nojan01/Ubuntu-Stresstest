@@ -120,6 +120,41 @@ def _available_memory_mb() -> int:
     return sys_mb
 
 
+def _meminfo_fields(*names: str) -> dict:
+    """Ausgewaehlte /proc/meminfo-Werte in MB (fehlende Felder fehlen)."""
+    out = {}
+    with contextlib.suppress(OSError, ValueError, IndexError), \
+            open("/proc/meminfo", encoding="utf-8") as f:
+        for line in f:
+            key = line.split(":", 1)[0]
+            if key in names:
+                out[key] = int(line.split()[1]) // 1024
+    return out
+
+
+def _release_timeout_s() -> float:
+    """Wartezeit auf die Freigabe: mind. 10 s, ca. 1 s je 8 GB RAM, max. 10 min."""
+    return float(min(600, max(10, _read_meminfo_total_mb() // 8192)))
+
+
+def _wait_for_release(expected_mb: int, timeout_s: float,
+                      poll_s: float = 0.5) -> Tuple[bool, int, float]:
+    """Wartet, bis der Kernel den freigegebenen Speicher wieder als verfuegbar
+    meldet (bei mehreren hundert GB kann das deutlich dauern).
+
+    Liefert (erreicht, verfuegbar MB, Wartezeit s).
+    """
+    t0 = time.monotonic()
+    avail = _available_memory_mb()
+    while avail < expected_mb and not _stop:
+        waited = time.monotonic() - t0
+        if waited >= timeout_s:
+            return False, avail, waited
+        time.sleep(min(poll_s, timeout_s - waited))
+        avail = _available_memory_mb()
+    return avail >= expected_mb, avail, time.monotonic() - t0
+
+
 # Typ-Alias: (mmap-Objekt, Groesse in Bytes)
 Chunk = Tuple[mmap.mmap, int]
 
@@ -145,10 +180,13 @@ def _allocate_chunks(total_mb: int, chunk_mb: int) -> List[Chunk]:
 def _free_chunks(chunks: List[Chunk]) -> None:
     """Gibt alle Chunks frei und stellt sicher, dass der RAM ans OS zurueck geht.
 
-    ``madvise(MADV_DONTNEED)`` gibt die physischen Seiten sofort frei (auch
-    wenn ein Buffer noch exportiert ist), anschliessend schliesst ``close()``
-    das Mapping. Fehler werden gemeldet statt stillschweigend verschluckt,
-    damit ein haengender Buffer nicht unbemerkt RAM belegt laesst.
+    Die Bloecke sind ``MAP_SHARED`` (Shmem, in btop/free als "Cached"). Shmem
+    gibt der Kernel erst frei, wenn *alle* Mappings weg sind; ``MADV_DONTNEED``
+    entfernt nur die Seitentabellen-Eintraege, die Seiten bleiben belegt.
+    ``MADV_REMOVE`` stanzt die Seiten (auch ausgelagerte) sofort aus dem
+    Shmem-Objekt – unabhaengig davon, ob noch ein Buffer exportiert ist oder
+    ein Worker das Mapping haelt. Danach schliesst ``close()`` das Mapping.
+    Fehler werden gemeldet statt stillschweigend verschluckt.
     """
     failed = 0
     for m, size in chunks:
@@ -156,9 +194,14 @@ def _free_chunks(chunks: List[Chunk]) -> None:
         with contextlib.suppress(Exception):
             _munlock(m, size)
         # 1. Physische Seiten sofort zurueckgeben.
-        if hasattr(m, "madvise") and hasattr(mmap, "MADV_DONTNEED"):
-            with contextlib.suppress(OSError, ValueError, BufferError):
-                m.madvise(mmap.MADV_DONTNEED, 0, size)
+        released = False
+        if hasattr(m, "madvise"):
+            for advice in ("MADV_REMOVE", "MADV_DONTNEED"):
+                if released or not hasattr(mmap, advice):
+                    continue
+                with contextlib.suppress(OSError, ValueError, BufferError):
+                    m.madvise(getattr(mmap, advice), 0, size)
+                    released = True
         # 2. Mapping schliessen (munmap).
         try:
             m.close()
@@ -1125,6 +1168,18 @@ def run_cycles(
             _free_chunks(chunks)
             free_time = time.monotonic() - t0
             print(f" {free_time:.1f}s", flush=True)
+            # Erst weiter, wenn der Kernel den RAM wieder als verfuegbar meldet.
+            expected = avail - max(2048, avail // 50)
+            ok, now_avail, waited = _wait_for_release(expected, _release_timeout_s())
+            if ok and waited >= 1:
+                print(f"  Speicher wieder verfuegbar: {now_avail} MB "
+                      f"(nach {waited:.0f}s)", flush=True)
+            elif not ok and not _stop:
+                info = _meminfo_fields("Shmem", "Mlocked", "Unevictable")
+                details = ", ".join(f"{k} {v} MB" for k, v in info.items())
+                print(f"  WARNUNG: Nach {waited:.0f}s erst {now_avail} von "
+                      f"erwarteten {expected} MB wieder verfuegbar"
+                      f"{' (' + details + ')' if details else ''}.", flush=True)
             if pressure.dropped_bytes:
                 print(f"  Wegen Speicherdruck verworfen (nicht geprueft): "
                       f"{pressure.dropped_bytes >> 20} MB", flush=True)

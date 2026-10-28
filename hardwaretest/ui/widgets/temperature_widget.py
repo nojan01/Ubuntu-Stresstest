@@ -206,8 +206,15 @@ class _CollapsibleCoreDetail(QWidget):
         self._render_page()
 
     def _display_names(self) -> List[str]:
-        """Doppelte Core-Namen (je Socket gleich) mit Socket-Nummer versehen."""
+        """Core-Namen bei mehreren Sockeln mit Socket-Nummer versehen."""
         labels = [t.label or f"Core {i}" for i, t in enumerate(self._temps)]
+        sockets = {t.socket for t in self._temps if t.socket >= 0}
+        if len(sockets) > 1:
+            # Alle Cores mit Sockel beschriften, auch Core-IDs, die nur auf
+            # einem Sockel vorkommen (lueckenhafte IDs bei Xeon).
+            return [f"S{t.socket} {name}" if t.socket >= 0 else name
+                    for t, name in zip(self._temps, labels, strict=True)]
+        # Ohne Sockel-Info: doppelte Namen nach Reihenfolge nummerieren.
         duplicated = {n for n in labels if labels.count(n) > 1}
         seen: dict[str, int] = {}
         names = []

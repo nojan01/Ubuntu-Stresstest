@@ -2,6 +2,13 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.52
+
+- Temperaturen: Bei mehreren Sockeln tragen alle Core-Namen das Sockel-Präfix (S0/S1). Bisher fehlte es bei Core-IDs, die nur auf einem Sockel vorkommen (lückenhafte IDs bei Xeon, z. B. „Core 8“), teils mit falscher Sockelzuordnung.
+- RAM-Fülltest: Testspeicher wird zuverlässig freigegeben. Er liegt als Shmem vor (in btop/free „Cached“) und blieb auf großen Servern teils komplett belegt; jetzt wird er per `MADV_REMOVE` sofort ausgestanzt, auch wenn noch eine Referenz hängt oder Teile ausgelagert sind.
+- RAM-Fülltest: Nach der Freigabe wartet der Test, bis der Kernel den Speicher wieder als verfügbar meldet (bei TB-RAM dauert das; ca. 1 s je 8 GB, max. 10 min). Wartezeit bzw. Shmem/Mlocked-Werte stehen im Protokoll.
+- RAM-Fülltest: Die Abbruchfrist nach Testende wächst mit der RAM-Größe (2 TB: ca. 17 min), damit große Server nicht vor Ende der Freigabe hart beendet werden.
+
 ### Neu in 0.2.51
 
 - ProLiant Info: HPE Synergy-Compute-Module (z. B. Synergy 480/660 Gen10) werden erkannt; Sensoren, Ereignisprotokoll und IML werden automatisch ausgelesen.
@@ -180,7 +187,7 @@ Lizenztext befindet sich in der Datei `LICENSE`.
 
 ### Variante A – Debian-Paket (empfohlen)
 
-Für die Installation wird nur die Datei `hardwaretest_0.2.51_amd64.deb` benötigt.
+Für die Installation wird nur die Datei `hardwaretest_0.2.52_amd64.deb` benötigt.
 
 1. Die DEB-Datei herunterladen.
 2. Im Dateimanager doppelt anklicken und im Paketinstallationsprogramm
@@ -211,7 +218,7 @@ Das AppImage enthält ebenfalls Python, PySide6 und alle Python-Module. Es kann
 ohne Installation einer Python-Laufzeit gestartet werden:
 
 ```bash
-chmod +x Hardwaretest-0.2.51-x86_64.AppImage
+chmod +x Hardwaretest-0.2.52-x86_64.AppImage
 ./Hardwaretest-0.2.51-x86_64.AppImage
 ```
 

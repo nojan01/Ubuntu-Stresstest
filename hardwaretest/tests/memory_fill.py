@@ -19,10 +19,27 @@ from typing import List
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 
 
+def _total_ram_mb() -> int:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def _terminate_grace_for(total_mb: int) -> int:
+    """Frist nach SIGTERM: mind. 300 s, ca. 1 s je 2 GB RAM (2 TB -> 1024 s)."""
+    return max(300, total_mb // 2048)
+
+
 class MemoryFillRunner(BaseTestRunner):
     """Runner der den zyklischen RAM-Fuelltest als Subprozess startet."""
 
-    # Freigeben von mehreren hundert GB dauert länger als 10 s.
+    # Freigeben von mehreren hundert GB dauert länger als 10 s; bei TB-RAM
+    # wird die Frist in __init__ mit der RAM-Größe skaliert.
     terminate_grace_seconds = 300
 
     def __init__(
@@ -35,6 +52,7 @@ class MemoryFillRunner(BaseTestRunner):
         **kwargs,
     ) -> None:
         super().__init__(params, **kwargs)
+        self.terminate_grace_seconds = _terminate_grace_for(_total_ram_mb())
         self.memory_mb = memory_mb
         self.reserve_mb = reserve_mb
         self.chunk_mb = chunk_mb

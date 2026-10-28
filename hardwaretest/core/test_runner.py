@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import ctypes
 import os
 import re
@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable, List, Optional, Union
+
+from hardwaretest.core import ras
 
 
 LogCallback = Callable[[str], None]
@@ -62,6 +64,7 @@ _FAILURE_PATTERNS = [
 # fio beendet sich nach SIGTERM/SIGINT selbst mit Exit-Code 128.
 _TERMINATED_EXIT_CODES = {-15, -9, -2, 128, 143, 137, 130}
 _MAX_STORED_ERRORS = 200
+RAS_UNREADABLE = "rasdaemon: Ereignisse konnten nicht gelesen werden."
 
 
 def _child_preexec() -> None:
@@ -77,6 +80,8 @@ class TestResult:
     errors: List[str]
     duration_actual: float
     exit_code: Optional[int]
+    # Hinweise, die das Ergebnis nicht verschlechtern (z. B. korrigierte Hardwarefehler).
+    warnings: List[str] = field(default_factory=list)
 
     @property
     def status_text(self) -> str:
@@ -133,6 +138,12 @@ class BaseTestRunner:
         self.root_broker = None
         self._broker_job: Optional[str] = None
         self._dropped_error_count = 0
+        # rasdaemon-Stand beim Start; am Ende werden neue Hardwarefehler ausgewertet.
+        self.check_ras = True
+        self._ras_baseline: Optional[dict] = None
+        self._ras_lock = threading.Lock()
+        self._ras_errors: List[str] = []
+        self._ras_warnings: List[str] = []
 
     def build_command(self) -> List[str]:  # pragma: no cover - abstract hook
         raise NotImplementedError
@@ -144,6 +155,9 @@ class BaseTestRunner:
         self._result = None
         self._aborted = False
         cmd = self.build_command()
+        self._ras_errors = []
+        self._ras_warnings = []
+        self._ras_baseline = ras.snapshot(self._ras_runner()) if self.check_ras else None
         if self.root_broker is not None:
             self._broker_job = self.root_broker.submit(cmd)
             self._log(f"Starte (root): {' '.join(cmd)}")
@@ -234,6 +248,8 @@ class BaseTestRunner:
         if self._start_time:
             elapsed = time.time() - self._start_time
         exit_code = self._process.returncode if self._process else None
+        if self._ras_baseline is not None and (self._process is None or self._process.poll() is not None):
+            self._collect_ras()
         # Nicht-Null Exit-Code als Fehler werten
         non_zero_exit = exit_code is not None and exit_code != 0
         # Bei bewusstem Abbruch durch den Benutzer wurde der Prozess von uns
@@ -243,15 +259,41 @@ class BaseTestRunner:
             exit_code is None or exit_code == 0 or exit_code in _TERMINATED_EXIT_CODES
         ):
             non_zero_exit = False
-        has_errors = len(self._collected_errors) > 0 or non_zero_exit
+        has_errors = len(self._collected_errors) > 0 or non_zero_exit or bool(self._ras_errors)
         if non_zero_exit and not self._collected_errors:
             self._remember_error(f"Prozess beendet mit Exit-Code {exit_code}")
         self._result = TestResult(
             passed=not has_errors,
-            errors=list(self._collected_errors),
+            errors=[*self._collected_errors, *self._ras_errors],
             duration_actual=elapsed,
             exit_code=exit_code,
+            warnings=list(self._ras_warnings),
         )
+
+    def _ras_runner(self):
+        if self.root_broker is not None:
+            return self.root_broker.run
+        return ras.default_runner()
+
+    def _collect_ras(self) -> None:
+        """Neue rasdaemon-Ereignisse einmalig nach Testende lesen.
+
+        Unkorrigierbare Fehler lassen den Test fehlschlagen, korrigierte sind Warnungen.
+        """
+        with self._ras_lock:
+            baseline, self._ras_baseline = self._ras_baseline, None
+            if baseline is None:
+                return
+            report = ras.new_events(baseline, self._ras_runner())
+            if report is None:
+                self._ras_warnings.append(RAS_UNREADABLE)
+                return
+            for event in report.corrected:
+                self._log("Warnung: " + event.describe())
+                self._ras_warnings.append(event.describe())
+            for event in report.uncorrected:
+                self._log(event.describe())
+                self._ras_errors.append(event.describe())
 
     def _watchdog_timer(self) -> None:
         """Wartet die eingestellte Testdauer ab und beendet den Prozess automatisch."""

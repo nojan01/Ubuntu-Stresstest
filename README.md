@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.53
+
+- Alle Tests werten neue Hardwarefehler aus **rasdaemon** aus (CPU-Machine-Checks, EDAC-Speicherfehler, PCIe-AER, aussortierte Speicherseiten), die während des Tests protokolliert wurden: unkorrigierbare Fehler → Test fehlgeschlagen, korrigierte → Warnung im Protokoll und im Bericht des Gesamttests. Ohne rasdaemon ändert sich nichts; die Datenbank wird bei Bedarf über root (`sudo -n` bzw. die Root-Sitzung des Testplans) gelesen.
+
 ### Neu in 0.2.52
 
 - Temperaturen: Bei mehreren Sockeln tragen alle Core-Namen das Sockel-Präfix (S0/S1). Bisher fehlte es bei Core-IDs, die nur auf einem Sockel vorkommen (lückenhafte IDs bei Xeon, z. B. „Core 8“), teils mit falscher Sockelzuordnung.

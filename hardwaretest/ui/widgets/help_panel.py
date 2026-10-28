@@ -67,6 +67,17 @@ Alle Tests laufen unter Linux und nutzen bewährte Werkzeuge wie
       (nur bei ECC-RAM und geladenem EDAC-Kernelmodul).</li>
   <li><b>Pass/Fail:</b> Nach dem Test wird automatisch anhand der Ausgabe und des
       Exit-Codes bewertet, ob Fehler aufgetreten sind.</li>
+  <li><b>Hardwarefehler (rasdaemon):</b> Ist <code>rasdaemon</code> installiert
+      (im Live-ISO immer), wertet jeder Test zusätzlich die Hardwarefehler aus, die
+      während des Tests neu protokolliert wurden: Machine Checks der CPU (Cache,
+      Bus, Speichercontroller), EDAC-Speicherfehler, PCIe-AER und Speicherseiten,
+      die der Kernel aussortiert hat. Ein <b>unkorrigierbarer</b> Fehler (UE) lässt
+      den Test fehlschlagen. <b>Korrigierte</b> Fehler (CE) sind nur eine Warnung
+      im Protokoll und im Bericht des Gesamttests – sie kommen gelegentlich vor,
+      eine Häufung deutet aber auf ein schwaches Modul oder einen schwachen Kern.
+      Hinweis: Korrigierte CPU-Fehler meldet der Kernel teils erst nach bis zu
+      5 Minuten; nach sehr kurzen Tests fehlen sie dann noch. Alle Einträge:
+      <code>sudo ras-mc-ctl --errors</code>.</li>
 </ul>
 
 <hr>
@@ -578,6 +589,15 @@ using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>, and <b>fio
       (only with ECC RAM and the EDAC kernel module loaded).</li>
   <li><b>Pass/Fail:</b> After the test, the result is automatically evaluated
       based on the output and exit code.</li>
+  <li><b>Hardware errors (rasdaemon):</b> If <code>rasdaemon</code> is installed
+      (always on the live ISO), every test also evaluates the hardware errors
+      logged during the test: CPU machine checks (cache, bus, memory controller),
+      EDAC memory errors, PCIe AER and memory pages retired by the kernel. An
+      <b>uncorrected</b> error (UE) fails the test. <b>Corrected</b> errors (CE)
+      are only a warning in the log and in the test plan report – they happen
+      occasionally, but many of them point to a weak module or core. Note: the
+      kernel may report corrected CPU errors up to 5 minutes late, so very short
+      tests can miss them. All entries: <code>sudo ras-mc-ctl --errors</code>.</li>
 </ul>
 
 <hr>

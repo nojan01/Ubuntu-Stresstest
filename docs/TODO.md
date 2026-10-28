@@ -66,9 +66,12 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
 - [ ] In Standard- und freies ISO aufnehmen
 
 ### rasdaemon – Priorität 2
-- [ ] Machine-Check-/Cache-/Speicherfehler (MCE) während aller Tests mitschreiben
-- [ ] Anzeige neuer Ereignisse seit Teststart im Ergebnis (`ras-mc-ctl --errors`), Fehler → FEHLGESCHLAGEN
-- [ ] Paket `rasdaemon` ins ISO, Dienst aktivieren
+- [x] Machine-Check-/Cache-/Speicherfehler (MCE) während aller Tests mitschreiben
+      (`core/ras.py`, zentral in `BaseTestRunner`; liest die rasdaemon-SQLite-DB)
+- [x] Anzeige neuer Ereignisse seit Teststart im Ergebnis; unkorrigierbar → FEHLGESCHLAGEN,
+      korrigiert → Warnung (Protokoll, Bericht Gesamttest)
+- [x] Paket `rasdaemon` ins ISO, Dienst aktivieren (war schon enthalten und aktiv)
+- [ ] Praxistest auf dem ProLiant (`ras-mc-ctl --errors` gegen Testergebnis)
 
 ### stress-ng mit Verifikation – Priorität 3
 - [ ] Zusätzliche Lastarten mit `--verify` (cpu, matrix, fft, cache, branch, vecmath …)

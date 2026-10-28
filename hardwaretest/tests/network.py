@@ -161,8 +161,8 @@ class NetworkRunner(BaseTestRunner):
         # The requested transfer has effectively completed.  Preserve the
         # warning for the UI/log but do not report the network itself as bad.
         self.completion_warning = "iperf3_cleanup_error"
-        self._result.passed = True
-        self._result.errors = []
+        self._result.passed = not self._ras_errors
+        self._result.errors = list(self._ras_errors)
 
     def failure(self) -> Optional[tuple[str, str]]:
         """Classify expected connection failures and retain the raw message."""

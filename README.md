@@ -4,6 +4,7 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations 
 
 ### Neu in 0.2.52
 
+- Temperaturen: Bei mehreren Sockeln tragen alle Core-Namen das Sockel-Präfix (S0/S1). Bisher fehlte es bei Core-IDs, die nur auf einem Sockel vorkommen (lückenhafte IDs bei Xeon, z. B. „Core 8“), teils mit falscher Sockelzuordnung.
 - RAM-Fülltest: Testspeicher wird zuverlässig freigegeben. Er liegt als Shmem vor (in btop/free „Cached“) und blieb auf großen Servern teils komplett belegt; jetzt wird er per `MADV_REMOVE` sofort ausgestanzt, auch wenn noch eine Referenz hängt oder Teile ausgelagert sind.
 - RAM-Fülltest: Nach der Freigabe wartet der Test, bis der Kernel den Speicher wieder als verfügbar meldet (bei TB-RAM dauert das; ca. 1 s je 8 GB, max. 10 min). Wartezeit bzw. Shmem/Mlocked-Werte stehen im Protokoll.
 - RAM-Fülltest: Die Abbruchfrist nach Testende wächst mit der RAM-Größe (2 TB: ca. 17 min), damit große Server nicht vor Ende der Freigabe hart beendet werden.

@@ -89,3 +89,44 @@ def test_page_survives_updates_and_resizes():
     detail._fit_page_size(10)
     detail.update_cores(temps)
     assert detail._page_index == 5
+
+
+def test_all_cores_get_socket_prefix_with_sparse_core_ids():
+    # Xeon: Core-IDs lueckenhaft und je Sockel verschieden (z. B. Core 8 nur
+    # auf Sockel 0, Core 10 nur auf Sockel 1).
+    _app()
+    detail = _CollapsibleCoreDetail()
+    detail.update_cores([
+        CpuTemperature(current=40, label="Core 0", chip_name="coretemp", socket=0),
+        CpuTemperature(current=40, label="Core 8", chip_name="coretemp", socket=0),
+        CpuTemperature(current=40, label="Core 0", chip_name="coretemp", socket=1),
+        CpuTemperature(current=40, label="Core 10", chip_name="coretemp", socket=1),
+    ])
+    assert detail._display_names() == [
+        "S0 Core 0", "S0 Core 8", "S1 Core 0", "S1 Core 10"]
+
+
+def test_single_socket_keeps_plain_names():
+    _app()
+    detail = _CollapsibleCoreDetail()
+    detail.update_cores([
+        CpuTemperature(current=40, label=f"Core {i}", chip_name="coretemp", socket=0)
+        for i in range(2)
+    ])
+    assert detail._display_names() == ["Core 0", "Core 1"]
+
+
+def test_read_cpu_temperatures_assigns_socket(monkeypatch):
+    from types import SimpleNamespace as NS
+    from hardwaretest.core import system_info
+
+    def entry(label):
+        return NS(label=label, current=40.0, high=80.0, critical=90.0)
+    monkeypatch.setattr(system_info.psutil, "sensors_temperatures", lambda: {
+        "coretemp": [entry("Package id 0"), entry("Core 0"), entry("Core 8"),
+                     entry("Package id 1"), entry("Core 0"), entry("Core 10")],
+    })
+    temps = system_info.read_cpu_temperatures()
+    assert [(t.label, t.socket) for t in temps] == [
+        ("Package id 0", 0), ("Core 0", 0), ("Core 8", 0),
+        ("Package id 1", 1), ("Core 0", 1), ("Core 10", 1)]

@@ -26,6 +26,7 @@ class CpuTemperature:
     critical: float = 0.0
     label: str = ""
     chip_name: str = ""  # Hardware-Sensor-Gruppe (z.B. "coretemp", "acpitz")
+    socket: int = -1  # Sockel aus "Package id N" (coretemp), -1 = unbekannt
 
 
 def read_cpu_temperatures() -> List[CpuTemperature]:
@@ -39,13 +40,23 @@ def read_cpu_temperatures() -> List[CpuTemperature]:
     # psutil liefert z.B. {"coretemp": [...], "k10temp": [...]}
     for chip_name in ("coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz"):
         if chip_name in temps:
+            # coretemp liefert je Sockel "Package id N", gefolgt von dessen
+            # Cores. Core-IDs sind auf Xeons lueckenhaft und je Sockel
+            # verschieden, daher den Sockel hier mitgeben.
+            socket = -1
             for entry in temps[chip_name]:
+                label = entry.label or chip_name
+                parts = label.split()
+                if (label.lower().startswith("package id") and len(parts) >= 3
+                        and parts[-1].isdigit()):
+                    socket = int(parts[-1])
                 results.append(CpuTemperature(
                     current=entry.current or 0.0,
                     high=entry.high or 0.0,
                     critical=entry.critical or 0.0,
-                    label=entry.label or chip_name,
+                    label=label,
                     chip_name=chip_name,
+                    socket=socket,
                 ))
     if not results and temps:
         # Fallback: erste verfuegbare Sensor-Gruppe

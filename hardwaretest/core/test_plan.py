@@ -665,6 +665,13 @@ class TestPlanExecutor:
                     f"Paketverlust: {values.get('packet_loss_percent', 0):.1f} %"
                 )
         details.extend(_text(line, self.config.language) for line in result.errors)
+        warnings = getattr(result, "warnings", None) or []
+        corrected = sum(1 for line in warnings if line.startswith("rasdaemon CE"))
+        if corrected:
+            summary_parts.append(_text("rasdaemon: korrigierte Hardwarefehler", self.config.language)
+                                 + f": {corrected}")
+        details.extend(_text("WARNUNG", self.config.language) + ": " + _text(line, self.config.language)
+                       for line in warnings)
         output_lines = getattr(runner, "output_lines", None)
         if structured_summary and isinstance(runner, NetworkRunner):
             details.extend(runner.compact_report_lines(self.config.language))
@@ -947,6 +954,8 @@ def _text(source: str, language: str) -> str:
         "NVMe-Prüfung abgebrochen.": "NVMe check cancelled.",
         "Kein auswertbares Testergebnis.": "No usable test result.",
         "WARNUNG": "WARNING",
+        "rasdaemon: korrigierte Hardwarefehler": "rasdaemon: corrected hardware errors",
+        "rasdaemon: Ereignisse konnten nicht gelesen werden.": "rasdaemon: events could not be read.",
         "Netzwerk-Messwerte fehlen oder sind ungültig.": "Network measurements are missing or invalid.",
         "Beginn": "Start",
         "Ende": "End",

@@ -116,6 +116,8 @@ class BaseTestRunner:
     _use_watchdog = True
     # Zeit zwischen SIGTERM und SIGKILL nach Ablauf der Testzeit.
     terminate_grace_seconds = 10
+    # Zusätzliche Wartezeit vor dem Watchdog-Abbruch für Programme mit eigener Zeitsteuerung.
+    watchdog_slack_seconds = 0
 
     def __init__(
         self,
@@ -298,7 +300,7 @@ class BaseTestRunner:
     def _watchdog_timer(self) -> None:
         """Wartet die eingestellte Testdauer ab und beendet den Prozess automatisch."""
         duration = self.params.duration_seconds
-        if self._watchdog_cancel.wait(timeout=duration):
+        if self._watchdog_cancel.wait(timeout=duration + self.watchdog_slack_seconds):
             return
         if self._process and self._process.poll() is None:
             self._log(

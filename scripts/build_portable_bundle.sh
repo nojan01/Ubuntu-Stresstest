@@ -22,6 +22,11 @@ if ! "$PYTHON" -c 'import PyInstaller, PySide6, psutil' >/dev/null 2>&1; then
     exit 1
 fi
 
+if [[ ! -x "$REPO_DIR/vendor/opendcdiag/opendcdiag" || ! -x "$REPO_DIR/vendor/opendcdiag/opendcdiag-generic" ]]; then
+    echo "OpenDCDiag fehlt in vendor/opendcdiag – wird gebaut ..."
+    bash "$SCRIPT_DIR/build_opendcdiag.sh"
+fi
+
 rm -rf "$DIST_ROOT" "$BUILD_ROOT/work" "$BUILD_ROOT/spec"
 mkdir -p "$DIST_ROOT" "$BUILD_ROOT/work" "$BUILD_ROOT/spec"
 
@@ -54,6 +59,7 @@ mkdir -p "$DIST_ROOT" "$BUILD_ROOT/work" "$BUILD_ROOT/spec"
 if [[ -f "$BUNDLE_DIR/_internal/vendor/prime95/mprime" ]]; then
     chmod 0755 "$BUNDLE_DIR/_internal/vendor/prime95/mprime"
 fi
+chmod 0755 "$BUNDLE_DIR"/_internal/vendor/opendcdiag/opendcdiag*
 find "$BUNDLE_DIR/_internal/scripts" -type f -name '*.sh' -exec chmod 0755 {} +
 
 VERSION="$($BUNDLE_DIR/hardwaretest --version)"

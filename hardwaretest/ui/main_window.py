@@ -17,6 +17,7 @@ from hardwaretest.core.update_check import (
 )
 from hardwaretest.ui.widgets.test_panel import TestPanel
 from hardwaretest.ui.widgets.mprime_panel import MprimePanel
+from hardwaretest.ui.widgets.opendcdiag_panel import OpenDcDiagPanel
 from hardwaretest.ui.widgets.memory_controller_panel import MemoryControllerPanel
 from hardwaretest.ui.widgets.memory_fill_panel import MemoryFillPanel
 from hardwaretest.ui.widgets.info_panel import InfoPanel
@@ -63,6 +64,9 @@ class MainWindow(QMainWindow):
         prime_panel = MprimePanel()
         self._tabs.addTab(prime_panel, "Prime95")
 
+        opendcdiag_panel = OpenDcDiagPanel()
+        self._tabs.addTab(opendcdiag_panel, "OpenDCDiag")
+
         mem_ctrl_panel = MemoryControllerPanel()
         self._tabs.addTab(mem_ctrl_panel, "Speichercontroller")
 
@@ -100,10 +104,10 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self.monitoring_panel, "Langzeitmonitoring")
         self.proliant_panel = ProliantPanel()
         self._tabs.addTab(self.proliant_panel, "ProLiant Info")
-        self._test_panels = [ram_panel, prime_panel, mem_ctrl_panel, mem_fill_panel,
+        self._test_panels = [ram_panel, prime_panel, opendcdiag_panel, mem_ctrl_panel, mem_fill_panel,
                              file_disk_panel, device_disk_panel, destructive_disk_panel,
                              nvme_panel, nvidia_panel, network_panel, test_plan_panel]
-        self._stop_callbacks = [panel.stop_test for panel in self._test_panels[:7]] + [
+        self._stop_callbacks = [panel.stop_test for panel in self._test_panels[:8]] + [
             nvme_panel._stop_io_test, nvidia_panel._stop_diagnostic,
             network_panel._stop, test_plan_panel._stop,
         ]

@@ -50,6 +50,9 @@ if [[ ! -f vendor/prime95/mprime ]]; then
     warn "vendor/prime95/mprime fehlt – das ZIP wird ohne gebuendeltes Prime95 erstellt."
     warn "Der Installer laedt mprime dann zur Laufzeit nach."
 fi
+if [[ ! -f vendor/opendcdiag/opendcdiag ]]; then
+    warn "vendor/opendcdiag fehlt – erst scripts/build_opendcdiag.sh ausfuehren, sonst fehlt OpenDCDiag im ZIP."
+fi
 
 # ── Bestehendes Artefakt entfernen ───────────────────────────────────────────
 rm -f "$OUTPUT"

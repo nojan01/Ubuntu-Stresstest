@@ -157,3 +157,29 @@ def test_spare_cpus_rotate_so_every_cpu_is_tested():
     assert seen_spare == set(cpus)
     assert mfs._spare_cpus(cpus, workers, 0) == [14, 15]
     assert mfs._spare_cpus(cpus, workers, 2) == [0, 1]
+
+
+def test_wait_for_release_waits_until_memory_returns(monkeypatch):
+    values = iter([100, 200, 900, 1000])
+    monkeypatch.setattr(mfs, "_available_memory_mb", lambda: next(values))
+    monkeypatch.setattr(mfs.time, "sleep", lambda _s: None)
+    ok, avail, _waited = mfs._wait_for_release(900, timeout_s=60)
+    assert ok and avail == 900
+
+
+def test_wait_for_release_times_out(monkeypatch):
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr(mfs.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(mfs.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(mfs, "_available_memory_mb", lambda: 100)
+    ok, avail, waited = mfs._wait_for_release(900, timeout_s=20)
+    assert not ok and avail == 100 and waited >= 20
+
+
+def test_release_timeout_scales_with_ram(monkeypatch):
+    monkeypatch.setattr(mfs, "_read_meminfo_total_mb", lambda: 16 * 1024)
+    assert mfs._release_timeout_s() == 10
+    monkeypatch.setattr(mfs, "_read_meminfo_total_mb", lambda: 1024 * 1024)
+    assert mfs._release_timeout_s() == 128
+    monkeypatch.setattr(mfs, "_read_meminfo_total_mb", lambda: 8 * 1024 * 1024)
+    assert mfs._release_timeout_s() == 600

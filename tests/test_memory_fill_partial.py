@@ -48,3 +48,10 @@ def test_parallel_fill_is_visible_in_parent_and_rotates():
         assert mfs._run_parallel("verify", chunks, builder, written,
                                  workers=4, rotation=rotation + 2) == []
     mfs._free_chunks(chunks)
+
+
+def test_memory_fill_grace_scales_with_ram():
+    from hardwaretest.tests.memory_fill import _terminate_grace_for
+    assert _terminate_grace_for(16 * 1024) == 300
+    assert _terminate_grace_for(2 * 1024 * 1024) == 1024
+    assert _terminate_grace_for(4 * 1024 * 1024) == 2048

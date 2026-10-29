@@ -119,5 +119,17 @@ Entscheidung 29.10.2026: künftig **2 Images** – ein freies (öffentlich) und 
 - [ ] Releases: öffentlich `nojan01/Hardwaretest-Live-ISO`, intern mit MemTest86 Pro
       in `nojan01/HPE-Live-ISO`; README/THIRD-PARTY anpassen
 
+## E) Tab „System“ erweitern: weitere Komponenten
+Gleicher Stil wie CPU/RAM/Board, möglichst ohne root; auch im System-Abschnitt des Gesamttest-Berichts.
+- [ ] **PCIe-Links** (`/sys/bus/pci/devices/*/{current,max}_link_{speed,width}`): aktuelle vs. maximale
+      Breite/Generation, Abweichung rot markieren (schlechter Sitz, Riser defekt, BIOS) – Priorität 1
+- [ ] **Netzwerk** (`/sys/class/net`, `ethtool -i`, `lspci`): Modell, Treiber, Firmware, MAC, Link/Speed, Steckplatz
+- [ ] **Grafik** (`lspci`, `/sys/class/drm`, `nvidia-smi`): Modell, Treiber, VRAM, VBIOS
+- [ ] **RAID-/HBA-Controller** (`lspci`, `/sys/class/scsi_host`): Modell, Treiber, Firmware;
+      Array-Details per HPE `ssacli`/`storcli` (proprietär → nur internes Image)
+- [ ] **Datenträger** (`lsblk -J -O`, `/sys/block`, `smartctl -i`): Modell, S/N, Firmware, Größe,
+      SSD/HDD, NVMe/SATA/SAS, Sektorgröße
+- [ ] Tests mit Beispieldaten (sysfs in tmp_path, lspci/ethtool/lsblk-Ausgaben), Hilfe DE/EN
+
 ## D) Sonstiges
 - [ ] Update-Prüfung im ISO abgeschaltet (`HARDWARETEST_NO_UPDATE_CHECK=1`, Menüpunkt ausgeblendet) – umgesetzt, mit nächstem Release/ISO veröffentlichen

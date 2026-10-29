@@ -66,7 +66,7 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
       (`hardwaretest/tests/opendcdiag.py`)
 - [x] Tab „OpenDCDiag“ + optionaler Schritt im Testplan
 - [x] In Standard- und freies ISO aufnehmen (kommt über das `.deb`)
-- [ ] Praxistest auf ProLiant (Gen8 ohne AVX2 → generische Variante, mit root)
+- [x] Praxistest auf ProLiant (Gen8 ohne AVX2 → generische Variante, mit root) – erfolgreich
 
 ### rasdaemon – Priorität 2
 - [x] Machine-Check-/Cache-/Speicherfehler (MCE) während aller Tests mitschreiben
@@ -74,7 +74,7 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
 - [x] Anzeige neuer Ereignisse seit Teststart im Ergebnis; unkorrigierbar → FEHLGESCHLAGEN,
       korrigiert → Warnung (Protokoll, Bericht Gesamttest)
 - [x] Paket `rasdaemon` ins ISO, Dienst aktivieren (war schon enthalten und aktiv)
-- [ ] Praxistest auf dem ProLiant (`ras-mc-ctl --errors` gegen Testergebnis)
+- [x] Praxistest auf dem ProLiant (`ras-mc-ctl --errors` gegen Testergebnis) – erfolgreich
 
 ### stress-ng mit Verifikation – Priorität 3
 - [x] Zusätzliche Lastarten mit `--verify` (cpu, matrix, matrix-3d, fma, fp, vecmath, vecwide, vecfp, trig, l1cache, zlib) – 0.2.56

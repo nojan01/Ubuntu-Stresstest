@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import List, Optional
+import re
 import shutil
 
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
@@ -16,6 +17,11 @@ STRESS_NG_MODES = {
     "cpu": {
         "label": "CPU-Last (maximale Hitze)",
         "description": "Maximale CPU-Belastung durch Berechnungen, wenig RAM-Nutzung.",
+    },
+    "mix": {
+        "label": "CPU-Mischlast mit Ergebnisprüfung",
+        "description": "Ganzzahl-, Gleitkomma-, FMA-, Vektor-, Matrix-, L1-Cache- und Kompressionslast "
+                       "gleichzeitig; jede Lastart prüft ihre Ergebnisse (--verify).",
     },
     "ram": {
         "label": "RAM-Test (Fehler finden)",
@@ -34,6 +40,33 @@ STRESS_NG_MODES = {
         "description": "Cache-Line-Bouncing zwischen Kernen. Findet Inter-Core-Fehler.",
     },
 }
+
+
+# Lastarten der Mischlast: alle unterstützen --verify (stress-ng --verifiable) und
+# sind ab stress-ng 0.17 (Ubuntu 24.04) vorhanden. "hash" fehlt bewusst, weil es
+# lange Tabellen ausgibt.
+MIX_STRESSORS = (
+    "cpu", "matrix", "matrix-3d", "fma", "fp", "vecmath", "vecwide", "vecfp", "trig", "l1cache", "zlib",
+)
+
+_FAIL_LINE = re.compile(r"stress-ng:\s+fail:", re.IGNORECASE)
+_FAILED_SUMMARY = re.compile(r"\bfailed:\s*[1-9]\d*:\s*(.+)$")
+
+
+def with_nice(command: List[str], level: int) -> List[str]:
+    """Priorität per ``nice -n`` senken.
+
+    Nicht ``stress-ng --nice N``: das startet N zusätzliche Worker, die ihre Priorität zufällig ändern.
+    """
+    nice = shutil.which("nice") if level else None
+    return [nice, "-n", str(level), *command] if nice else list(command)
+
+
+def mix_worker_counts(total_workers: int) -> List[tuple]:
+    """Verteilt die Worker gleichmäßig auf die Lastarten der Mischlast (mind. 1 je Lastart)."""
+    total = max(1, total_workers)
+    n = len(MIX_STRESSORS)
+    return [(name, max(1, total // n + (1 if i < total % n else 0))) for i, name in enumerate(MIX_STRESSORS)]
 
 
 class StressNgRunner(BaseTestRunner):
@@ -58,14 +91,11 @@ class StressNgRunner(BaseTestRunner):
 
     def build_command(self) -> List[str]:
         params = self.params
-        cmd = [
-            "stress-ng",
-            "-q",
-            "-t", f"{params.duration_seconds}s",
-        ]
-
-        if params.nice_level:
-            cmd += ["--nice", str(params.nice_level)]
+        cmd = ["stress-ng"]
+        # -q unterdrückt auch die "fail:"-Meldungen; die Mischlast soll benennen, was falsch rechnete.
+        if self.mode != "mix":
+            cmd.append("-q")
+        cmd += ["-t", f"{params.duration_seconds}s"]
 
         # Modus-spezifische Stressoren
         if self.mode == "cpu":
@@ -76,10 +106,12 @@ class StressNgRunner(BaseTestRunner):
             cmd += self._build_ram_bandwidth_args(params)
         elif self.mode == "cache":
             cmd += self._build_cache_args(params)
+        elif self.mode == "mix":
+            cmd += self._build_mix_args(params)
         else:  # combined
             cmd += self._build_combined_args(params)
 
-        final_cmd = cmd
+        final_cmd = with_nice(cmd, params.nice_level)
         if params.cpu_mask:
             taskset = shutil.which("taskset")
             if taskset:
@@ -99,8 +131,28 @@ class StressNgRunner(BaseTestRunner):
         args: List[str] = []
         if params.cpu_cores:
             args += ["-c", str(params.cpu_cores)]
-        args += ["--cpu-method", "all", "--matrix", "1"]
+        args += ["--cpu-method", "all", "--matrix", "1", "--verify"]
         return args
+
+    def _build_mix_args(self, params: TestParameters) -> List[str]:
+        """Viele Rechenwerke gleichzeitig, jede Lastart mit Ergebnisprüfung."""
+        args: List[str] = []
+        for name, workers in mix_worker_counts(params.cpu_cores or 1):
+            args += [f"--{name}", str(workers)]
+            if name == "cpu":
+                args += ["--cpu-method", "all"]
+        args.append("--verify")
+        return args
+
+    def _check_line_for_errors(self, line: str) -> None:
+        if _FAIL_LINE.search(line):
+            self._remember_error(line.strip())
+            return
+        match = _FAILED_SUMMARY.search(line)
+        if match:
+            self._remember_error(f"stress-ng: Ergebnisprüfung fehlgeschlagen: {match.group(1).strip()}")
+            return
+        super()._check_line_for_errors(line)
 
     def _build_ram_args(self, params: TestParameters) -> List[str]:
         """Aggressiver RAM-Test mit Verifikation."""

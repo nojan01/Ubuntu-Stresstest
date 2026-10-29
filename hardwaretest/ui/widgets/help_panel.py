@@ -516,6 +516,31 @@ Zeitstempeln, Zusammenfassungen und Detailausgaben. Das HTML-Protokoll kann im
 Browser geöffnet und über die Druckfunktion als PDF gespeichert werden.
 Ping und iperf3 werden darin ausschließlich als Summenwerte protokolliert;
 Einzelpakete und sekündliche iperf3-Intervalle werden nicht übernommen.
+Am Anfang beider Berichte steht der Abschnitt <b>System</b> (CPU, Mainboard/BIOS,
+Speichermodule wie im Tab „System“).
+</p>
+<p><b>CPU-Lastart:</b> „Volllast (maximale Hitze)“ belastet mit allen cpu-Methoden und
+Matrixrechnung. „Mischlast mit Ergebnisprüfung“ verteilt die Worker auf viele
+Rechenwerke (Ganzzahl, Matrix, FMA, Gleitkomma, Vektor, Trigonometrie, L1-Cache,
+zlib). Beide Lastarten prüfen die Rechenergebnisse (<code>--verify</code>); jedes falsche
+Ergebnis lässt den Schritt fehlschlagen und wird mit der Lastart benannt.</p>
+
+<hr>
+
+<h2>Tab: System</h2>
+<p>
+Technische Übersicht ohne Last: Prozessor je Sockel (Modell, Family/Model/Stepping,
+Microcode, Kerne – bei Hybrid-CPUs getrennt nach P- und E-Kernen –, Threads,
+Taktbereich, wichtige Befehlssätze, vom Kernel gemeldete CPU-Fehler, alle Flags),
+Cache-Größen, aktueller Takt je logischer CPU (alle 2 s, nur bei sichtbarem Tab),
+Mainboard/BIOS und die <b>Speichermodule</b> je Steckplatz (Größe, Typ, Bauform,
+Nenn- und Ist-Takt, Rank, ECC, Spannung, Hersteller, Teile- und Seriennummer).
+</p>
+<p>
+Die Speichermodule liest <code>dmidecode</code> mit Root-Rechten. Das .deb erlaubt
+Mitgliedern der Gruppe sudo genau <code>dmidecode -t 1 -t 16 -t 17</code> ohne Passwort;
+sonst erscheint „Speichermodule mit Passwort auslesen“. „In Zwischenablage kopieren“
+liefert alles als Text, z. B. für Tickets.
 </p>
 
 <hr>
@@ -1053,6 +1078,31 @@ timestamps, summaries, and detailed output. Open the HTML report in a browser
 and use the print function to save it as PDF.
 Ping and iperf3 are recorded as aggregate values only; individual packets and
 per-second iperf3 intervals are not copied into the report.
+Both reports start with a <b>System</b> section (CPU, mainboard/BIOS, memory
+modules as in the System tab).
+</p>
+<p><b>CPU load type:</b> "Full load (maximum heat)" uses all cpu methods plus matrix
+math. "Mixed load with result verification" spreads the workers across many
+execution units (integer, matrix, FMA, floating point, vector, trigonometry, L1 cache,
+zlib). Both verify the computed results (<code>--verify</code>); any wrong result fails
+the step and names the stressor.</p>
+
+<hr>
+
+<h2>Tab: System</h2>
+<p>
+Technical overview without load: processor per socket (model, family/model/stepping,
+microcode, cores – split into P and E cores on hybrid CPUs –, threads, clock range,
+key instruction sets, CPU bugs reported by the kernel, all flags), cache sizes,
+current clock per logical CPU (every 2 s, only while the tab is visible),
+mainboard/BIOS and the <b>memory modules</b> per slot (size, type, form factor,
+rated and configured speed, rank, ECC, voltage, manufacturer, part and serial number).
+</p>
+<p>
+Memory modules are read by <code>dmidecode</code> with root privileges. The .deb lets
+members of the sudo group run exactly <code>dmidecode -t 1 -t 16 -t 17</code> without a
+password; otherwise "Read memory modules with password" appears. "Copy to clipboard"
+returns everything as text, e.g. for tickets.
 </p>
 
 <hr>

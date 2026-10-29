@@ -2,6 +2,13 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.56
+
+- Neuer Tab **System**: Prozessor je Sockel (Family/Model/Stepping, Microcode, Kerne mit P/E-Aufteilung bei Hybrid-CPUs, Threads, Taktbereich, Befehlssätze, CPU-Fehler laut Kernel, alle Flags), Caches, Takt je logischer CPU, Mainboard/BIOS und Speichermodule je Steckplatz (Größe, Typ, Nenn-/Ist-Takt, Rank, ECC, Spannung, Hersteller, Teile- und Seriennummer). Kopierbar als Text. Das `.deb` installiert `/etc/sudoers.d/hardwaretest-dmidecode`: Mitglieder der Gruppe `sudo` dürfen genau `dmidecode -t 1 -t 16 -t 17` ohne Passwort ausführen; sonst „Speichermodule mit Passwort auslesen“ (pkexec). Neue Abhängigkeit: `dmidecode`.
+- Gesamttest: Text- und HTML-Bericht beginnen mit einem Abschnitt **System** (CPU, Mainboard/BIOS, Speichermodule).
+- Gesamttest: neue **CPU-Lastart „Mischlast mit Ergebnisprüfung“** (stress-ng cpu, matrix, matrix-3d, fma, fp, vecmath, vecwide, vecfp, trig, l1cache, zlib mit `--verify`). Die Volllast prüft jetzt ebenfalls die Ergebnisse. Falsche Ergebnisse („fail:“ / „failed: N“) lassen den Schritt mit Nennung der Lastart fehlschlagen.
+- Korrigiert: Die niedrige Priorität im Tab stress-ng und im Speichercontroller-Test wurde mit `stress-ng --nice 19` gesetzt – das startet aber 19 zusätzliche „nice“-Worker. Jetzt per `nice -n 19`.
+
 ### Neu in 0.2.55
 
 - OpenDCDiag funktioniert auch mit der privilegierten Sitzung des Gesamttests: Beide mitgelieferten CPU-Varianten sind mit eng begrenzten Diagnoseparametern freigegeben. Bisher konnte der Schritt mit „Befehl nicht erlaubt“ sofort scheitern, sobald etwa NVMe oder das Monitoring eine gemeinsame Root-Sitzung benötigte. Das temporäre Protokollverzeichnis bleibt jetzt benutzerprivat statt für alle Benutzer beschreibbar. Leere oder unvollständige YAML-Protokolle gelten nicht mehr als bestanden.

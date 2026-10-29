@@ -9,6 +9,7 @@ from PySide6.QtCore import QStandardPaths, QThread, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -96,6 +97,13 @@ class TestPlanPanel(QWidget):
         self.cpu_check = QCheckBox("CPU-Stresstest (stress-ng)")
         self.cpu_check.setChecked(True)
         self.cpu_duration = self._seconds_spin(60)
+        self.cpu_mode = QComboBox()
+        self.cpu_mode.addItem("Volllast (maximale Hitze)", userData="cpu")
+        self.cpu_mode.addItem("Mischlast mit Ergebnisprüfung", userData="mix")
+        self.cpu_mode.setToolTip(
+            "Mischlast: Ganzzahl-, Gleitkomma-, FMA-, Vektor-, Matrix-, L1-Cache- und Kompressionslast "
+            "gleichzeitig, jede Lastart prüft ihre Ergebnisse."
+        )
         self.opendcdiag_check = QCheckBox("OpenDCDiag – stille Datenfehler je Kern")
         self.opendcdiag_duration = self._seconds_spin(300)
         self.opendcdiag_check.setEnabled(opendcdiag_available())
@@ -112,6 +120,7 @@ class TestPlanPanel(QWidget):
 
         stress_form = QFormLayout()
         stress_form.addRow(self.cpu_check, self.cpu_duration)
+        stress_form.addRow("CPU-Lastart", self.cpu_mode)
         stress_form.addRow(self.opendcdiag_check, self.opendcdiag_duration)
         stress_form.addRow(self.ram_check, self.ram_duration)
         stress_form.addRow("RAM-Anteil des verfügbaren Speichers", self.ram_percent)
@@ -509,6 +518,7 @@ class TestPlanPanel(QWidget):
             stop_on_error=self.stop_on_error.isChecked(),
             cpu_enabled=self.cpu_check.isChecked(),
             cpu_seconds=self.cpu_duration.value(),
+            cpu_mode=self.cpu_mode.currentData() or "cpu",
             opendcdiag_enabled=self.opendcdiag_check.isChecked(),
             opendcdiag_seconds=self.opendcdiag_duration.value(),
             ram_enabled=self.ram_check.isChecked(),
@@ -554,7 +564,7 @@ class TestPlanPanel(QWidget):
         self.stop_btn.setEnabled(running)
         self.choose_dir_btn.setEnabled(not running)
         for widget in (
-            self.cpu_check, self.cpu_duration, self.opendcdiag_check, self.opendcdiag_duration, self.ram_check, self.ram_duration,
+            self.cpu_check, self.cpu_duration, self.cpu_mode, self.opendcdiag_check, self.opendcdiag_duration, self.ram_check, self.ram_duration,
             self.ram_percent, self.nvme_check, self.ping_check, self.ping_count,
             self.nvme_read_check, self.drives, self.drive_scan_btn, self.select_all_btn, self.rounds,
             self.iperf_check, self.iperf_duration, self.network_target,

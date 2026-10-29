@@ -77,9 +77,9 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
 - [ ] Praxistest auf dem ProLiant (`ras-mc-ctl --errors` gegen Testergebnis)
 
 ### stress-ng mit Verifikation – Priorität 3
-- [ ] Zusätzliche Lastarten mit `--verify` (cpu, matrix, fft, cache, branch, vecmath …)
-- [ ] Auswahl „Mischlast“ neben Prime95; Fehlerzeilen erkennen
-- [ ] Paket `stress-ng` ins ISO (prüfen, ob schon enthalten)
+- [x] Zusätzliche Lastarten mit `--verify` (cpu, matrix, matrix-3d, fma, fp, vecmath, vecwide, vecfp, trig, l1cache, zlib) – 0.2.56
+- [x] Auswahl „Mischlast“ im Gesamttest; Fehlerzeilen erkennen – 0.2.56
+- [x] Paket `stress-ng` ins ISO (schon in `30-hwtools.list.chroot`)
 
 ### Intel In-Field Scan (IFS) – optional
 - [ ] Nur Xeon ab Sapphire Rapids: Treiber `intel_ifs`, sysfs `/sys/devices/virtual/ifs/`

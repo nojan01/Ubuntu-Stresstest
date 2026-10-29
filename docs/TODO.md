@@ -81,10 +81,21 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
 - [x] Auswahl „Mischlast“ im Gesamttest; Fehlerzeilen erkennen – 0.2.56
 - [x] Paket `stress-ng` ins ISO (schon in `30-hwtools.list.chroot`)
 
-### Intel In-Field Scan (IFS) – optional
-- [ ] Nur Xeon ab Sapphire Rapids: Treiber `intel_ifs`, sysfs `/sys/devices/virtual/ifs/`
-- [ ] Scan-Images von Intel (`/lib/firmware/intel/ifs_0/`) – Weitergabe/Lizenz klären
-- [ ] Nur anzeigen, wenn die CPU IFS unterstützt
+### Intel In-Field Scan (IFS) – Priorität 4 (ProLiant Gen11/Gen12 mit Intel-CPU)
+Betrifft Gen11 (Xeon 4./5. Gen, Sapphire/Emerald Rapids) und Gen12 (Xeon 6). AMD-Modelle
+(DL325/345/365/385) haben kein IFS. Doku: https://docs.kernel.org/arch/x86/ifs.html
+- OpenDCDiag ruft IFS schon selbst auf (Tests `ifs`, `ifs_array_bist`) → kein eigener Testcode nötig
+- [ ] Auf Gen11/Gen12 erheben: `grep -m1 -E "model|stepping" /proc/cpuinfo; lsmod | grep ifs`
+- [ ] Kernel-Treiber `intel_ifs` im Debian-ISO-Kernel vorhanden? Im ISO per `modprobe intel_ifs` laden
+- [ ] sysfs: `/sys/devices/virtual/misc/intel_ifs_<n>/` (run_test, status, details, current_batch)
+- [ ] Scan-Images von Intel-Webseite („In-Field Scan Test Images Download“), je Family-Model-Stepping,
+      Ablage `/lib/firmware/intel/ifs_0/ff-mm-ss-NN.scan`
+- [ ] Weitergabe/Lizenz der Images klären → zunächst nur im internen Image
+- [ ] ISO-Build: Option `--ifs-images <ordner>`
+- [ ] BIOS prüfen: muss IFS/„Scan at Field“ freigeschaltet werden?
+- [ ] Tab „System“ und OpenDCDiag-Tab: Anzeige IFS unterstützt / Treiber geladen / Images vorhanden
+- [ ] Hinweis: jeder Kern ist pro Batch bis ~200 ms offline (unkritisch im Testbetrieb)
+- [ ] Praxistest auf Gen11 und Gen12
 
 ### Weitere Kandidaten (später prüfen)
 - [ ] HPL/Linpack (`hpcc`, BSD): maximale FP-Last, Mehrsockel
@@ -92,6 +103,8 @@ Stand 2026-10-23: NVIDIA vollständig; AMD/Intel nur Kernel-Treiber + Mesa-OpenG
 
 ## C) Ein einheitliches Image für alle
 Ziel: alle Images identisch, einziger Unterschied ist MemTest86 Pro (PassMark, nur intern).
+Entscheidung 29.10.2026: künftig **2 Images** – ein freies (öffentlich) und ein internes
+(zusätzlich MemTest86 Pro, Intel-IFS-Images, ggf. weitere nicht frei weitergebbare Teile).
 - [ ] Alle GPUs unterstützt: NVIDIA (Consumer + Enterprise, Treiber + DCGM), AMD, Intel
 - [ ] DCGM-Weitergabe im öffentlichen ISO klären (DCGM Apache 2.0; mitgelieferte
       CUDA-Bibliotheken: NVIDIA-Lizenz, Weitergabe prüfen) → THIRD-PARTY ergänzen

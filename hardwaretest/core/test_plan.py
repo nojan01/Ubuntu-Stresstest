@@ -19,7 +19,7 @@ import uuid
 from typing import Callable, Optional
 
 from hardwaretest import __version__
-from hardwaretest.core import ipmi
+from hardwaretest.core import hardware_inventory, ipmi
 from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
@@ -52,6 +52,7 @@ class TestPlanConfig:
     stop_on_error: bool = False
     cpu_enabled: bool = True
     cpu_seconds: int = 60
+    cpu_mode: str = "cpu"
     opendcdiag_enabled: bool = False
     opendcdiag_seconds: int = 300
     ram_enabled: bool = True
@@ -103,6 +104,7 @@ class TestPlanResult:
     csv_report: Optional[Path] = None
     completed_rounds: int = 1
     requested_rounds: int = 1
+    system_info: list[str] = field(default_factory=list)
 
 
 LogCallback = Callable[[str], None]
@@ -241,6 +243,7 @@ class TestPlanExecutor:
 
         # Passwort sofort abfragen, damit lange Testpläne unbeaufsichtigt laufen.
         self._authorize_root()
+        system_info = self._collect_system_info()
 
         if self.config.monitoring_enabled:
             extra = {}
@@ -331,6 +334,7 @@ class TestPlanExecutor:
             csv_report=csv_path,
             completed_rounds=completed_rounds,
             requested_rounds=rounds,
+            system_info=system_info,
         )
         text_path, html_path = write_test_plan_reports(
             plan_result, self.config.output_dir, self.config.language
@@ -355,7 +359,7 @@ class TestPlanExecutor:
         cores = max(1, info.logical_cpu_cores - 1)
         runner = StressNgRunner(
             TestParameters(self.config.cpu_seconds, cpu_cores=cores, nice_level=0),
-            mode="cpu",
+            mode=self.config.cpu_mode if self.config.cpu_mode in ("cpu", "mix") else "cpu",
             log_fn=self._log,
         )
         return self._run_process_step("cpu", runner)
@@ -728,6 +732,15 @@ class TestPlanExecutor:
         broker.start()
         self._root = broker
 
+    def _collect_system_info(self) -> list[str]:
+        """CPU, Mainboard und Speichermodule für den Bericht; Fehler stoppen den Plan nie."""
+        try:
+            run = self._root.run if self._root is not None else None
+            memory, error = hardware_inventory.read_memory_inventory(run)
+            return hardware_inventory.inventory_lines(self.config.language, memory=memory, memory_error=error)
+        except Exception as exc:  # Bericht soll trotzdem entstehen
+            return [f"System: {exc}"]
+
     def _nvme_run(self, command, **kwargs):
         """SMART-Abfragen über die zu Beginn autorisierte Root-Sitzung."""
         if self._root is None:
@@ -807,6 +820,8 @@ def render_text_report(result: TestPlanResult, language: str = "de") -> str:
         f"CSV: {result.csv_report or '–'}",
         "",
     ]
+    if result.system_info:
+        lines.extend(["System", "-" * 6, *result.system_info, ""])
     for step in result.steps:
         lines.extend([
             f"[{_status_label(step.status, language)}] {step.name}",
@@ -824,6 +839,8 @@ def render_text_report(result: TestPlanResult, language: str = "de") -> str:
 def render_html_report(result: TestPlanResult, language: str = "de") -> str:
     title = "Hardwaretest – Gesamtprotokoll" if language == "de" else "Hardware Test – Full Report"
     cards: list[str] = []
+    if result.system_info:
+        cards.append(f'<section class="step system"><h2>System</h2><pre>{escape(chr(10).join(result.system_info))}</pre></section>')
     for step in result.steps:
         details = ""
         if step.details:
@@ -845,7 +862,7 @@ def render_html_report(result: TestPlanResult, language: str = "de") -> str:
 main{{max-width:1050px;margin:auto;padding:28px}} header{{padding:22px;background:var(--panel);border-radius:10px;margin-bottom:20px}}
 h1{{margin:0 0 10px;color:var(--accent)}} .summary{{font-size:18px;font-weight:bold}} .meta{{color:var(--dim);font-size:13px;margin-bottom:8px}}
 .step{{background:var(--panel);border-left:6px solid var(--skip);border-radius:8px;padding:14px 18px;margin:12px 0;break-inside:avoid}}
-.step.passed{{border-color:var(--ok)}} .step.failed{{border-color:var(--bad)}} .step.cancelled{{border-color:var(--bad)}}
+.step.system{{border-color:var(--accent)}} .step.passed{{border-color:var(--ok)}} .step.failed{{border-color:var(--bad)}} .step.cancelled{{border-color:var(--bad)}}
 .step h2{{font-size:18px;margin:0 0 5px}} .step p{{margin:8px 0}} details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent)}}
 pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#111318;padding:12px;border-radius:6px;color:#d9e1ea}}
 @media print{{:root{{--bg:#fff;--panel:#fff;--text:#111;--dim:#555}} main{{padding:0}} header,.step{{border:1px solid #bbb;border-left-width:6px}} details{{display:block}} details>summary{{display:none}}}}

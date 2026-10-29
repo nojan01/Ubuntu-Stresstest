@@ -57,7 +57,17 @@ chmod 0440 "$PKG_ROOT/etc/sudoers.d/hardwaretest-opendcdiag"
 if command -v visudo >/dev/null 2>&1; then
     visudo -c -q -f "$PKG_ROOT/etc/sudoers.d/hardwaretest-opendcdiag"
 fi
-echo "/etc/sudoers.d/hardwaretest-opendcdiag" > "$PKG_ROOT/DEBIAN/conffiles"
+
+# Tab „System“: Speichermodule (DMI) lesen – nur genau diese dmidecode-Argumente.
+cat > "$PKG_ROOT/etc/sudoers.d/hardwaretest-dmidecode" <<'SUDOERS'
+# Hardwaretest: Speichermodule und Seriennummer ohne Passwortabfrage lesen
+%sudo ALL=(root) NOPASSWD: /usr/sbin/dmidecode -t 1 -t 16 -t 17
+SUDOERS
+chmod 0440 "$PKG_ROOT/etc/sudoers.d/hardwaretest-dmidecode"
+if command -v visudo >/dev/null 2>&1; then
+    visudo -c -q -f "$PKG_ROOT/etc/sudoers.d/hardwaretest-dmidecode"
+fi
+printf '%s\n' /etc/sudoers.d/hardwaretest-opendcdiag /etc/sudoers.d/hardwaretest-dmidecode > "$PKG_ROOT/DEBIAN/conffiles"
 
 cat > "$PKG_ROOT/usr/bin/hardwaretest" <<'LAUNCHER'
 #!/bin/sh
@@ -88,7 +98,7 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
 Installed-Size: $INSTALLED_SIZE_KB
-Depends: stress-ng, fio, btop, libzstd1, zlib1g, e2fsprogs, util-linux, pkexec, libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libxkbcommon-x11-0, libgl1, libegl1
+Depends: stress-ng, fio, btop, dmidecode, libzstd1, zlib1g, e2fsprogs, util-linux, pkexec, libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-render-util0, libxcb-shape0, libxcb-xfixes0, libxkbcommon-x11-0, libgl1, libegl1
 Recommends: smartmontools, jq, curl, lshw, pciutils, iperf3, iputils-ping, nvme-cli, polkitd | policykit-1, vmfs6-tools, vmfs-tools
 Suggests: lm-sensors, edac-utils, zfsutils-linux, datacenter-gpu-manager-4-cuda12 | datacenter-gpu-manager-4-cuda13
 Description: Eigenständige GUI für Hardware-Stresstests

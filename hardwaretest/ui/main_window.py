@@ -35,6 +35,7 @@ from hardwaretest.ui.widgets.filesystem_panel import FilesystemPanel
 from hardwaretest.ui.widgets.monitoring_panel import MonitoringPanel
 from hardwaretest.ui.widgets.zfs_panel import ZfsPanel
 from hardwaretest.ui.widgets.proliant_panel import ProliantPanel
+from hardwaretest.ui.widgets.system_panel import SystemPanel
 from hardwaretest.ui.i18n import language_manager
 
 
@@ -119,6 +120,9 @@ class MainWindow(QMainWindow):
         self.zfs_panel.busy_changed.connect(self._filesystem_busy)
         self.monitoring_panel.safety_stop.connect(self._safety_stop)
         self.monitoring_panel.guard_released.connect(self._release_temperature_lock)
+
+        self.system_panel = SystemPanel()
+        self._tabs.addTab(self.system_panel, "System")
 
         info_panel = InfoPanel(compact_mode=compact_mode)
         self._tabs.addTab(info_panel, "Informationen")
@@ -206,7 +210,7 @@ class MainWindow(QMainWindow):
             ))
             event.ignore()
             return
-        for panel in [*self._test_panels, self.proliant_panel]:
+        for panel in [*self._test_panels, self.proliant_panel, self.system_panel]:
             closer = getattr(panel, "close_privileged_session", None)
             if closer is not None:
                 closer()

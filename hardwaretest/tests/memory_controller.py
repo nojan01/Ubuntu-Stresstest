@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
+from hardwaretest.tests.stress_ng import with_nice
 
 
 # Verfuegbare Speichercontroller-Stressoren
@@ -44,9 +45,6 @@ class MemoryControllerRunner(BaseTestRunner):
             "stress-ng",
             "-t", f"{params.duration_seconds}s",
         ]
-        if params.nice_level:
-            cmd += ["--nice", str(params.nice_level)]
-
         for stressor in self.stressors:
             if stressor in MC_STRESSORS:
                 cmd += [f"--{stressor}", str(workers)]
@@ -55,4 +53,4 @@ class MemoryControllerRunner(BaseTestRunner):
             # Ops-Limit auf den ersten Stressor anwenden
             cmd += [f"--{self.stressors[0]}-ops", str(self.operations)]
 
-        return cmd
+        return with_nice(cmd, params.nice_level)

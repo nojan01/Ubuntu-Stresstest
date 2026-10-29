@@ -261,6 +261,18 @@ _EN: dict[str, str] = {
     "Alle ausgewählten NVMe werden pro Durchlauf vollständig gelesen. Keine Schreibzugriffe; hohe Last und mehrstündige Laufzeit möglich. Vor jedem privilegierten Schritt kann eine Passwortabfrage erscheinen. Fortfahren?": "All selected NVMe drives are fully read in each round. No writes; high load and a runtime of several hours are possible. Each privileged step may request authentication. Continue?",
     "Der Gesamttestplan führt ausgewählte, nicht-destruktive Prüfungen nacheinander aus und erstellt ein Text- sowie ein HTML-Protokoll.": "The test plan runs the selected non-destructive checks sequentially and creates both a text and an HTML report.",
     "CPU-Stresstest (stress-ng)": "CPU stress test (stress-ng)",
+    "CPU-Lastart": "CPU load type",
+    "Volllast (maximale Hitze)": "Full load (maximum heat)",
+    "Mischlast mit Ergebnisprüfung": "Mixed load with result verification",
+    "Mischlast: Ganzzahl-, Gleitkomma-, FMA-, Vektor-, Matrix-, L1-Cache- und Kompressionslast "
+    "gleichzeitig, jede Lastart prüft ihre Ergebnisse.":
+        "Mixed load: integer, floating point, FMA, vector, matrix, L1 cache and compression load "
+        "at the same time; every load type verifies its results.",
+    "CPU-Mischlast mit Ergebnisprüfung": "CPU mixed load with result verification",
+    "Ganzzahl-, Gleitkomma-, FMA-, Vektor-, Matrix-, L1-Cache- und Kompressionslast "
+    "gleichzeitig; jede Lastart prüft ihre Ergebnisse (--verify).":
+        "Integer, floating point, FMA, vector, matrix, L1 cache and compression load at the "
+        "same time; every load type verifies its results (--verify).",
     "RAM-Verifikation (stress-ng)": "RAM verification (stress-ng)",
     "RAM-Anteil des verfügbaren Speichers": "Share of available memory",
     "CPU und Arbeitsspeicher": "CPU and memory",

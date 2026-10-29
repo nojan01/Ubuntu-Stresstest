@@ -131,5 +131,24 @@ Gleicher Stil wie CPU/RAM/Board, möglichst ohne root; auch im System-Abschnitt 
       SSD/HDD, NVMe/SATA/SAS, Sektorgröße
 - [ ] Tests mit Beispieldaten (sysfs in tmp_path, lspci/ethtool/lsblk-Ausgaben), Hilfe DE/EN
 
+## F) HPE RAID-Controller: Button „HPE Smart Array“ (Disk Geräte) ausbauen
+Heute: `ssacli ctrl all show status` + `show config`, nur Rohtext (`system_info.read_hpe_raid_info`).
+Im ISO bereits vorhanden (HPE MCP): `ssacli`, `ssaducli`, `storcli64`, `storcli2`.
+- [ ] Mängel beheben: nur **eine** Passwortabfrage (eine Root-Sitzung statt 2× pkexec), Timeout > 15 s
+- [ ] Controller (`ssacli ctrl all show config detail`): Firmware, S/N, PCI-Slot, Cache (Größe, Status,
+      Lese/Schreib-Verhältnis), Akku/Kondensator (Status, Temperatur), Controller-Temperatur,
+      Rebuild-Priorität, Surface Scan, Verschlüsselung
+- [ ] Physische Laufwerke (`ctrl slot=X pd all show detail`): Status, Bay/Box, Modell, S/N, Firmware,
+      Temperatur akt./max, Betriebsstunden, SSD-Restlebensdauer %, PHY-Speed, Predictive Failure
+- [ ] Logische Laufwerke (`ctrl slot=X ld all show detail`): RAID-Level, Status (OK / Interim Recovery /
+      Rebuilding x %), Stripe-Größe, Zuordnung `/dev/sdX`
+- [ ] SMART hinter dem Controller: `smartctl -d cciss,N /dev/sgX`
+- [ ] Diagnosebericht `ssaducli -f <datei>.zip` speichern (für HPE-Support)
+- [ ] **MR-Controller** (Broadcom, Gen10 Plus/Gen11/Gen12): `storcli64 /call show all` – bisher nicht unterstützt
+- [ ] Auswertung mit Ampel statt Rohtext: Akku/Cache defekt, Laufwerk ausgefallen/Predictive Failure,
+      Rebuild läuft, SSD-Verschleiß < 10 %, Temperatur hoch
+- [ ] Gesamttest: Controller-Zustand vor/nach dem Test vergleichen; Abschnitt im Bericht
+- [ ] Tests mit echten Beispielausgaben (ssacli/storcli vom ProLiant sammeln), Hilfe DE/EN
+
 ## D) Sonstiges
 - [ ] Update-Prüfung im ISO abgeschaltet (`HARDWARETEST_NO_UPDATE_CHECK=1`, Menüpunkt ausgeblendet) – umgesetzt, mit nächstem Release/ISO veröffentlichen

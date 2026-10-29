@@ -2,6 +2,13 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.55
+
+- OpenDCDiag funktioniert auch mit der privilegierten Sitzung des Gesamttests: Beide mitgelieferten CPU-Varianten sind mit eng begrenzten Diagnoseparametern freigegeben. Bisher konnte der Schritt mit „Befehl nicht erlaubt“ sofort scheitern, sobald etwa NVMe oder das Monitoring eine gemeinsame Root-Sitzung benötigte. Das temporäre Protokollverzeichnis bleibt jetzt benutzerprivat statt für alle Benutzer beschreibbar. Leere oder unvollständige YAML-Protokolle gelten nicht mehr als bestanden.
+- CPU-Anzeige unterscheidet physische Kerne, logische CPUs/Threads und Kern-Temperatursensoren ausdrücklich (z. B. 32 Kerne / 64 logische CPUs / 32 Kernsensoren bei Hyperthreading).
+- stress-ng zeigt **CPU-Worker (Threads)** statt „CPU-Kerne“. Die GUI-Reserve ist als Minimum in logischen Threads beschriftet; die tatsächliche Reserve inklusive HT-Partner steht oben. Bei 64 logischen CPUs und einer Mindestreserve von 1 sind normalerweise 62 Test-Threads verfügbar, nicht 63. Worker-Limit und Start berücksichtigen die tatsächlich erlaubte CPU-Maske.
+- Beschriftungen, Tooltips und Hilfe in Deutsch und Englisch aktualisiert. Fehlende Sensoren werden nicht als fehlende CPU-Kerne dargestellt.
+
 ### Neu in 0.2.54
 
 - Neuer Tab **OpenDCDiag** (Intel, Apache 2.0): sucht stille Datenfehler je CPU-Kern und nennt fehlerhafte Kerne mit Sockel, Kern und CPU-Nummer. Auch als optionaler Schritt im Gesamttest (läuft dort über die Root-Sitzung). Mitgeliefert in `.deb` und AppImage, für CPUs ohne AVX2 zusätzlich als generische Variante; gebaut mit `scripts/build_opendcdiag.sh`. Das `.deb` installiert `/etc/sudoers.d/hardwaretest-opendcdiag`: Mitglieder der Gruppe `sudo` starten OpenDCDiag damit ohne Passwort als root (MSR-Tests, Intel In-Field Scan); Tab und Gesamttest nutzen das automatisch per `sudo -n`.

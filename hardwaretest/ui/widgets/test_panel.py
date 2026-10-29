@@ -138,6 +138,7 @@ class TestPanel(QWidget):
         self.memory_mb.setRange(64, 1024 * 1024)
 
         self.info_label = QLabel("Systemdaten werden ermittelt...")
+        self.info_label._hardwaretest_runtime_text = True
         self.refresh_btn = QPushButton("Systemwerte aktualisieren")
         self.refresh_btn.clicked.connect(lambda: self._refresh_system_info(update_memory_value=True))
 
@@ -208,8 +209,8 @@ class TestPanel(QWidget):
         form.addRow("Testmodus", self.mode_box)
         form.addRow("Dauer", duration_widget)
         form.addRow("RAM (MB)", self.memory_mb)
-        form.addRow("CPU-Kerne", self.cores)
-        form.addRow("GUI-Kerne freilassen", self.reserve_cores)
+        form.addRow("CPU-Worker (Threads)", self.cores)
+        form.addRow("GUI-Reserve (Threads, mind.)", self.reserve_cores)
 
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.start_btn)
@@ -247,6 +248,8 @@ class TestPanel(QWidget):
         self.mce_btn.clicked.connect(self._launch_mcelog)
 
         self.log_signal.connect(self._append_log)
+        self.cores.valueChanged.connect(self._update_cpu_info)
+        language_manager.language_changed.connect(self._update_cpu_info)
         self._refresh_system_info(update_memory_value=True)
 
     def start_test(self) -> None:
@@ -259,14 +262,14 @@ class TestPanel(QWidget):
             return
         mem_bytes = int(self.memory_mb.value() * 1024 * 1024)
         usable_cores = max(1, min(self.cores.value(), self._effective_core_limit()))
-        if usable_cores != self.cores.value():
-            self._append_log(
-                f"CPU-Kerne automatisch auf {usable_cores} reduziert, damit die GUI responsiv bleibt."
-            )
+        requested_workers = self.cores.value()
         cpu_mask = self._build_cpu_mask(usable_cores)
         if cpu_mask:
             try:
                 allowed = bin(int(cpu_mask, 16)).count("1")
+                # Do not start more workers than the whole-core affinity allows.
+                usable_cores = min(usable_cores, allowed)
+                self.cores.setValue(usable_cores)
                 total = self._system_info.cpu_cores
                 self._append_log(
                     f"CPU-Affinitaet (taskset): {cpu_mask} – "
@@ -275,6 +278,12 @@ class TestPanel(QWidget):
                 )
             except ValueError:
                 self._append_log(f"CPU-Affinitaet (taskset): {cpu_mask}")
+        if usable_cores != requested_workers:
+            self._append_log(language_manager.tr(
+                "CPU-Worker von {requested} auf {allowed} begrenzt: "
+                "Die CPU-Maske hält ganze Kerne samt HT-Partnern frei.",
+                requested=requested_workers, allowed=usable_cores,
+            ))
         params = TestParameters(
             duration_seconds=duration_seconds,
             cpu_cores=usable_cores,
@@ -510,20 +519,6 @@ class TestPanel(QWidget):
     def _refresh_system_info(self, update_memory_value: bool) -> None:
         info = self.system_info_provider()
         self._system_info = info
-        swap_state = "aktiv" if info.swap_enabled else "deaktiviert"
-        reserve_note = f"Reserviert fuer GUI: {self.reserve_cores.value()} Kern(e)"
-        if info.physical_cpu_cores > 0:
-            core_text = (
-                f"Kerne: {info.cpu_cores} logisch / {info.physical_cpu_cores} physisch"
-            )
-        else:
-            core_text = f"Kerne: {info.cpu_cores} logisch"
-        self.info_label.setText(
-            f"Verfuegbar: {info.available_memory_mb} MB | {core_text} ({reserve_note}) | Swap {swap_state}"
-        )
-        self.cores.setMaximum(info.cpu_cores)
-        if self.cores.value() > info.cpu_cores:
-            self.cores.setValue(info.cpu_cores)
         max_reserve = max(info.cpu_cores - 1, 0)
         self.reserve_cores.setMaximum(max_reserve)
         if self.reserve_cores.value() > max_reserve:
@@ -546,6 +541,36 @@ class TestPanel(QWidget):
             self.swap_on_btn.setText(language_manager.tr("Swap bereits aktiv"))
         else:
             self.swap_on_btn.setText(language_manager.tr("Swap aktivieren"))
+
+    def _update_cpu_info(self) -> None:
+        info = self._system_info
+        if info.physical_cpu_cores > 0:
+            topology = language_manager.tr(
+                "CPU: {physical} physische Kerne / {logical} logische CPUs",
+                physical=info.physical_cpu_cores, logical=info.cpu_cores,
+            )
+        else:
+            topology = language_manager.tr(
+                "CPU: {logical} logische CPUs (physische Kerne unbekannt)",
+                logical=info.cpu_cores,
+            )
+        requested = max(1, min(self.cores.value(), info.cpu_cores - self.reserve_cores.value()))
+        mask = self._build_cpu_mask(requested)
+        allowed = bin(int(mask, 16)).count("1") if mask else info.cpu_cores
+        self.info_label.setText(language_manager.tr(
+            "Verfügbar: {memory} MB | {topology} | GUI-Reserve: {reserved} logische CPUs | Swap {swap}",
+            memory=info.available_memory_mb, topology=topology,
+            reserved=info.cpu_cores - allowed,
+            swap=language_manager.tr("aktiv" if info.swap_enabled else "deaktiviert"),
+        ))
+        self.info_label.setWordWrap(True)
+        self.cores.setToolTip(language_manager.tr(
+            "Anzahl der Test-Worker auf logischen CPUs (Threads), nicht physische Kerne."
+        ))
+        self.reserve_cores.setToolTip(language_manager.tr(
+            "Mindestanzahl freizuhaltender logischer CPUs. Ganze physische Kerne samt "
+            "Hyperthreading-Partnern bleiben frei; die tatsächliche Reserve steht oben."
+        ))
 
     def _launch_btop(self) -> None:
         if not launch_command_in_terminal(["btop"], geometry=(110, 44)):
@@ -654,9 +679,12 @@ class TestPanel(QWidget):
         total = max(1, self._system_info.cpu_cores)
         max_reserve = max(total - 1, 0)
         reserve = min(self.reserve_cores.value(), max_reserve)
-        return max(1, total - reserve)
+        requested = max(1, total - reserve)
+        mask = self._build_cpu_mask(requested)
+        allowed = bin(int(mask, 16)).count("1") if mask else total
+        return min(requested, allowed)
 
     def _update_core_limits(self) -> None:
         limit = self._effective_core_limit()
-        if self.cores.value() > limit:
-            self.cores.setValue(limit)
+        self.cores.setMaximum(limit)
+        self._update_cpu_info()

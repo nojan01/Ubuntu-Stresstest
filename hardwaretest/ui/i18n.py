@@ -27,6 +27,20 @@ from PySide6.QtWidgets import (
 # The source language of the UI is German.  Keeping the keys as the actual
 # source text also means that an untranslated new label stays readable.
 _EN: dict[str, str] = {
+    "Kernsensor-Details anzeigen": "Show core sensor details",
+    "Kernsensor-Details anzeigen ({count})": "Show core sensor details ({count})",
+    "Kernsensor-Details ausblenden ({count})": "Hide core sensor details ({count})",
+    "Kernsensoren: {count} – Max {temperature}°C": "Core sensors: {count} – Max {temperature}°C",
+    "{count} Kernsensoren": "{count} core sensors",
+    "Gezählt werden Kern-Temperatursensoren, nicht logische CPUs. Hyperthreading-Threads teilen sich einen physischen Kern und dessen Sensor; nicht jeder Prozessor liefert einen Sensor pro Kern.": "Counts core temperature sensors, not logical CPUs. Hyper-threads share a physical core and its sensor; not every processor provides a sensor per core.",
+    "CPU-Worker (Threads)": "CPU workers (threads)",
+    "CPU-Worker von {requested} auf {allowed} begrenzt: Die CPU-Maske hält ganze Kerne samt HT-Partnern frei.": "CPU workers limited from {requested} to {allowed}: the CPU mask keeps whole cores including HT siblings free.",
+    "GUI-Reserve (Threads, mind.)": "GUI reserve (threads, min.)",
+    "CPU: {physical} physische Kerne / {logical} logische CPUs": "CPU: {physical} physical cores / {logical} logical CPUs",
+    "CPU: {logical} logische CPUs (physische Kerne unbekannt)": "CPU: {logical} logical CPUs (physical cores unknown)",
+    "Verfügbar: {memory} MB | {topology} | GUI-Reserve: {reserved} logische CPUs | Swap {swap}": "Available: {memory} MB | {topology} | GUI reserve: {reserved} logical CPUs | Swap {swap}",
+    "Anzahl der Test-Worker auf logischen CPUs (Threads), nicht physische Kerne.": "Number of test workers on logical CPUs (threads), not physical cores.",
+    "Mindestanzahl freizuhaltender logischer CPUs. Ganze physische Kerne samt Hyperthreading-Partnern bleiben frei; die tatsächliche Reserve steht oben.": "Minimum number of logical CPUs to keep free. Whole physical cores including their hyper-thread siblings remain free; the actual reserve is shown above.",
     "Individuelle Temperaturgrenzen …": "Individual temperature limits …",
     "Partitionen": "Partitions",
     "Dateisystem": "Filesystem",

@@ -1,7 +1,8 @@
 """Langlebige Root-Sitzung über eine einzige pkexec-Autorisierung.
 
 Der Root-Prozess nimmt zeilenweise nur freigegebene Werkzeuge (fio, nvme mit
-lesenden/Selbsttest-Unterbefehlen, dcgmi, lesendes ipmitool, dmidecode, IML per ilorest) entgegen.  Jeder Auftrag schreibt
+lesenden/Selbsttest-Unterbefehlen, dcgmi, mitgeliefertes OpenDCDiag,
+lesendes ipmitool, dmidecode, IML per ilorest) entgegen.  Jeder Auftrag schreibt
 in eine root-eigene FIFO; ein unprivilegierter Relay-Prozess liest sie und
 liefert den Exit-Code des Werkzeugs.  Schliesst die App die Sitzung (oder
 stirbt sie), beendet der Root-Prozess alle laufenden Aufträge.
@@ -11,13 +12,21 @@ from __future__ import annotations
 
 import contextlib
 import subprocess
+import tempfile
 import threading
 from typing import Optional, Sequence
+
+from hardwaretest.core.paths import resource_path
 
 READY_MARKER = "@@HARDWARETEST-ROOT-READY@@"
 
 ROOT_BROKER_SCRIPT = r"""
 umask 022
+# Exact bundled paths passed as shell arguments, not command names from PATH
+# or interpolated shell source. Keep both CPU variants available.
+odcd_avx2=${1:-}
+odcd_generic=${2:-}
+odcd_tmp_root=${3:-/tmp}
 jobs=""
 cleanup() {
   for d in $jobs; do [ -f "$d/pid" ] && kill -TERM "$(cat "$d/pid")" 2>/dev/null; done
@@ -38,6 +47,21 @@ while IFS= read -r line; do
       dmidecode) [ $# -eq 3 ] && [ "$2" = "-t" ] && case "$3" in memory|system) true;; *) false;; esac || ok=0 ;;
       ilorest) [ "$*" = "ilorest --nologo serverlogs --selectlog=IML --json" ] || ok=0 ;;
       modprobe) [ $# -eq 3 ] && [ "$2" = "-q" ] && case "$3" in ipmi_si|ipmi_devintf) true;; *) false;; esac || ok=0 ;;
+      "$odcd_avx2"|"$odcd_generic")
+        # Only the runner's time-limited diagnostic command, never arbitrary
+        # executables, tool options or output paths supplied by a caller.
+        { [ $# -eq 6 ] || [ $# -eq 7 ]; } || ok=0
+        [ "${2:-}" = "-T" ] && [ "${4:-}" = "--strict-runtime" ] && [ "${5:-}" = "-o" ] || ok=0
+        seconds=${3:-}; case "$seconds" in *s) seconds=${seconds%s};; *) ok=0;; esac
+        case "$seconds" in ''|0*|*[!0-9]*) ok=0;; esac
+        report=${6:-}
+        case "$report" in "$odcd_tmp_root"/hardwaretest-opendcdiag-*/opendcdiag.yaml) ;; *) ok=0;; esac
+        report_dir=${report%/opendcdiag.yaml}
+        report_id=${report_dir#"$odcd_tmp_root"/hardwaretest-opendcdiag-}
+        case "$report_id" in ''|*[!A-Za-z0-9_-]*) ok=0;; esac
+        [ -d "$report_dir" ] && [ ! -L "$report_dir" ] && [ ! -e "$report" ] && [ ! -L "$report" ] || ok=0
+        if [ $# -eq 7 ]; then case "$7" in --cpuset=?*) ;; *) ok=0;; esac; fi
+        ;;
       *) ok=0 ;;
     esac
     for a in "$@"; do case "$a" in *[!A-Za-z0-9/_=.,:%+-]*) ok=0;; esac; done
@@ -85,7 +109,10 @@ class RootBroker:
             if self.is_active():
                 return
             self._proc = subprocess.Popen(
-                [self._pkexec_path, "sh", "-c", ROOT_BROKER_SCRIPT],
+                [self._pkexec_path, "sh", "-c", ROOT_BROKER_SCRIPT, "hardwaretest-root",
+                 str(resource_path("vendor", "opendcdiag", "opendcdiag")),
+                 str(resource_path("vendor", "opendcdiag", "opendcdiag-generic")),
+                 tempfile.gettempdir()],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,

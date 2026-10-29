@@ -144,7 +144,10 @@ def load_report(path: Path) -> Optional[OpenDcDiagReport]:
     try:
         with open(path, encoding="utf-8", errors="replace") as handle:
             loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-            return parse_report(yaml.load(handle, Loader=loader))
+            data = yaml.load(handle, Loader=loader)
+            if not isinstance(data, dict) or not isinstance(data.get("exit"), str) or not data["exit"]:
+                return None
+            return parse_report(data)
     except (OSError, yaml.YAMLError):
         return None
 
@@ -186,9 +189,9 @@ class OpenDcDiagRunner(BaseTestRunner):
     def start(self) -> None:
         self.report = None
         self._report_loaded = False
-        # Beschreibbar auch für einen per Root-Sitzung gestarteten Prozess.
+        # Root can access this user-private directory too. Other local users
+        # must not be able to replace the privileged diagnostic's report.
         self._tmp_dir = Path(tempfile.mkdtemp(prefix="hardwaretest-opendcdiag-"))
-        self._tmp_dir.chmod(0o777)
         self.yaml_path = self._tmp_dir / "opendcdiag.yaml"
         self._work_dir = str(self._tmp_dir)
         self._sudo = self.use_sudo and self.root_broker is None and sudo_allowed(self.binary_path)

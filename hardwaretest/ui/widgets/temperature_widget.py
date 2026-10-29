@@ -84,7 +84,8 @@ class _CollapsibleCoreDetail(QWidget):
         self._toggle_btn.setStyleSheet("QToolButton { border: none; }")
         self._toggle_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toggle_btn.setArrowType(Qt.ArrowType.RightArrow)
-        self._toggle_btn.setText(language_manager.tr("Core-Details anzeigen"))
+        self._toggle_btn.setText(language_manager.tr("Kernsensor-Details anzeigen"))
+        self._toggle_btn._hardwaretest_runtime_text = True
         self._toggle_btn.setCheckable(True)
         self._toggle_btn.toggled.connect(self._on_toggled)
 
@@ -149,12 +150,12 @@ class _CollapsibleCoreDetail(QWidget):
         count = len(self._temps)
         if checked:
             self._toggle_btn.setText(language_manager.tr(
-                "Core-Details ausblenden ({count})",
+                "Kernsensor-Details ausblenden ({count})",
                 count=count,
             ))
         else:
             self._toggle_btn.setText(language_manager.tr(
-                "Core-Details anzeigen ({count})",
+                "Kernsensor-Details anzeigen ({count})",
                 count=count,
             ))
         self._render_page()
@@ -175,12 +176,12 @@ class _CollapsibleCoreDetail(QWidget):
         count = len(self._temps)
         if self._toggle_btn.isChecked():
             self._toggle_btn.setText(language_manager.tr(
-                "Core-Details ausblenden ({count})",
+                "Kernsensor-Details ausblenden ({count})",
                 count=count,
             ))
         else:
             self._toggle_btn.setText(language_manager.tr(
-                "Core-Details anzeigen ({count})",
+                "Kernsensor-Details anzeigen ({count})",
                 count=count,
             ))
 
@@ -294,6 +295,7 @@ class TemperatureWidget(QWidget):
         # --- Temperatur-Anzeige ---
         temp_group = QGroupBox("CPU-Temperatur")
         self._temp_summary_label = QLabel("Wird ermittelt…")
+        self._temp_summary_label._hardwaretest_runtime_text = True
         self._temp_summary_label.setWordWrap(True)
 
         self._core_detail = _CollapsibleCoreDetail()
@@ -318,6 +320,7 @@ class TemperatureWidget(QWidget):
         layout.addWidget(edac_group)
         self.setLayout(layout)
 
+        language_manager.language_changed.connect(self._update_temperature)
         self._refresh()
 
     # ----- public API -----
@@ -428,22 +431,39 @@ class TemperatureWidget(QWidget):
         lines = []
         global_max = 0.0
         any_critical = False
-        total_cores = 0
+
+        # Count sensor readings, not logical CPUs or inferred physical cores.
+        # Package, ACPI and AMD die sensors must not masquerade as extra cores.
+        cpu_core_temps = [
+            t for t in all_temps if (t.label or "").lower().startswith("core ")
+        ]
+        hint = language_manager.tr(
+            "Gezählt werden Kern-Temperatursensoren, nicht logische CPUs. "
+            "Hyperthreading-Threads teilen sich einen physischen Kern und dessen Sensor; "
+            "nicht jeder Prozessor liefert einen Sensor pro Kern."
+        )
+        self._temp_summary_label.setToolTip(hint)
+        self._core_detail._toggle_btn.setToolTip(hint)
 
         # CPU-Socket Summaries und sonstige Sensoren trennen
         cpu_summaries = [s for s in summaries if self._is_cpu_socket_summary(s)]
         other_summaries = [s for s in summaries if not self._is_cpu_socket_summary(s)]
 
         for s in cpu_summaries:
-            total_cores += s.core_count
             global_max = max(global_max, s.temp_max)
             emoji = _temp_emoji(s.temp_max, s.high, s.critical)
             if s.critical > 0 and s.temp_max >= s.critical:
                 any_critical = True
 
+            sensor_count = sum(
+                (t.label or "").lower().startswith("core ") for t in s.per_core
+            )
+            sensor_text = language_manager.tr(
+                "{count} Kernsensoren", count=sensor_count
+            )
             line = (
                 f"{emoji} <b>{s.chip_name}</b> "
-                f"({s.core_count} Cores): "
+                f"({sensor_text}): "
                 f"Ø {s.temp_avg:.0f}°C  "
                 f"Min {s.temp_min:.0f}°C  "
                 f"<b>Max {s.temp_max:.0f}°C</b>"
@@ -466,10 +486,10 @@ class TemperatureWidget(QWidget):
             lines.append(line)
 
         # Gesamtuebersicht
-        header = (
-            f"<b>Gesamt: {total_cores} Cores  –  "
-            f"Max {global_max:.0f}°C</b>"
-        )
+        header = "<b>" + language_manager.tr(
+            "Kernsensoren: {count} – Max {temperature}°C",
+            count=len(cpu_core_temps), temperature=f"{global_max:.0f}",
+        ) + "</b>"
         lines.insert(0, header)
 
         self._temp_summary_label.setText(language_manager.tr("<br>".join(lines)))
@@ -482,12 +502,8 @@ class TemperatureWidget(QWidget):
             self._temp_summary_label.setStyleSheet(_CSS_GREEN)
 
         # Core-Detail aktualisieren (nur CPU-Cores, keine Package/Sonstige)
-        cpu_core_temps = [
-            t for t in all_temps
-            if not (t.label or "").lower().startswith("package id")
-            and t.chip_name not in ("acpitz",)
-        ]
         self._core_detail.update_cores(cpu_core_temps)
+        self._core_detail.setVisible(bool(cpu_core_temps))
 
     def _update_edac(self) -> None:
         edac = read_edac_info()

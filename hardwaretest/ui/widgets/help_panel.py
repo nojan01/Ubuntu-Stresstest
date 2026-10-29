@@ -48,8 +48,12 @@ Alle Tests laufen unter Linux und nutzen bewährte Werkzeuge wie
 <h2>Allgemeine Bedienhinweise</h2>
 <ul>
   <li><b>Dauer:</b> Stunden / Minuten / Sekunden – die Gesamtlaufzeit des Tests.</li>
-  <li><b>CPU-Kerne / Threads:</b> Anzahl der Worker. Standardmäßig wird 1 Kern für
-      die GUI freigehalten.</li>
+  <li><b>CPU-Worker (Threads):</b> Anzahl der Test-Worker auf logischen CPUs,
+      nicht die Anzahl physischer Kerne. Beispiel: 32 physische Kerne mit
+      Hyperthreading ergeben 64 logische CPUs. Die GUI-Reserve ist ein Minimum
+      in logischen CPUs; ganze physische Kerne samt HT-Partnern bleiben frei.
+      Bei 64 logischen CPUs und einer Reserve von 1 sind deshalb normalerweise
+      62 Test-Threads verfügbar. Die tatsächliche Reserve wird oben angezeigt.</li>
   <li><b>Swap deaktivieren:</b> Für RAM-Tests unbedingt empfohlen, damit der
       physische Speicher getestet wird und nicht auf die Festplatte ausgewichen wird.</li>
   <li><b>Temperatur-Monitor:</b> Zeigt pro CPU-Socket eine Zusammenfassung
@@ -594,8 +598,12 @@ using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>, <b>OpenDCD
 <h2>General Usage Notes</h2>
 <ul>
   <li><b>Duration:</b> Hours / Minutes / Seconds – total runtime of the test.</li>
-  <li><b>CPU Cores / Threads:</b> Number of workers. By default, 1 core is
-      reserved for the GUI.</li>
+  <li><b>CPU workers (threads):</b> Number of test workers on logical CPUs,
+      not physical cores. Example: 32 physical cores with hyper-threading
+      provide 64 logical CPUs. The GUI reserve is a minimum in logical CPUs;
+      whole physical cores including HT siblings remain free. With 64 logical
+      CPUs and a reserve of 1, normally 62 test threads are available.
+      The actual reserve is shown at the top.</li>
   <li><b>Disable Swap:</b> Strongly recommended for RAM tests, so that physical
       memory is tested rather than swapping to disk.</li>
   <li><b>Temperature Monitor:</b> Shows a per-socket summary (Min/Avg/Max). On

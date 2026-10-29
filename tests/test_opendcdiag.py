@@ -85,6 +85,9 @@ def test_parse_exit_fail_without_details():
 def test_unreadable_log_returns_none(tmp_path):
     assert load_report(tmp_path / "missing.yaml") is None
     assert _report("tests: [unclosed", tmp_path) is None
+    assert _report("", tmp_path) is None
+    assert _report("[]", tmp_path) is None
+    assert _report("tests: []", tmp_path) is None
 
 
 def test_binary_selection_by_cpu_flags(monkeypatch, tmp_path):

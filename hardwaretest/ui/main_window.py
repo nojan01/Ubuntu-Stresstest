@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QObject, QRect, QSettings, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QRect, QSettings, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox, QTabWidget
 
@@ -40,16 +40,18 @@ from hardwaretest.ui.widgets.system_panel import SystemPanel
 from hardwaretest.ui.i18n import language_manager
 
 
-class _UpdateWorker(QObject):
-    finished = Signal(object, str)
+class _UpdateWorker(QThread):
+    # Eigener QThread mit Eltern-Widget: Qt besitzt das Objekt, Python löscht es
+    # nicht zusätzlich (früher Doppel-Löschung → SIGSEGV kurz nach dem Start).
+    result = Signal(object, str)
 
     def run(self) -> None:
         try:
             release = fetch_latest_release()
         except Exception as exc:  # Netzfehler duerfen die App nie stoeren
-            self.finished.emit(None, str(exc))
+            self.result.emit(None, str(exc))
             return
-        self.finished.emit(release, "")
+        self.result.emit(release, "")
 
 
 class MainWindow(QMainWindow):
@@ -139,8 +141,7 @@ class MainWindow(QMainWindow):
         language_manager.language_changed.connect(self._retranslate)
         self._retranslate()
         self._apply_initial_geometry(compact_mode, available_geom)
-        self._update_thread: Optional[QThread] = None
-        self._update_worker: Optional[_UpdateWorker] = None
+        self._update_thread: Optional[_UpdateWorker] = None
         self._update_manual = False
         if not update_check_disabled():
             QTimer.singleShot(3000, lambda: self._check_for_updates(manual=False))
@@ -253,24 +254,21 @@ class MainWindow(QMainWindow):
     def _check_for_updates(self, manual: bool) -> None:
         if self._update_thread is not None:
             return
-        thread = QThread(self)
-        worker = _UpdateWorker()
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
+        thread = _UpdateWorker(self)
         self._update_manual = manual
         # Gebundene Methode -> Queued Connection, Dialog entsteht im GUI-Thread.
-        worker.finished.connect(self._on_update_finished)
-        worker.finished.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
+        thread.result.connect(self._on_update_finished)
         thread.finished.connect(self._clear_update_thread)
         self._update_thread = thread
-        self._update_worker = worker
         thread.start()
 
     def _clear_update_thread(self) -> None:
+        thread = self._update_thread
         self._update_thread = None
-        self._update_worker = None
+        if thread is not None:
+            # finished kommt noch aus dem Thread; erst nach wait() ist er beendet.
+            thread.wait()
+            thread.deleteLater()
 
     def _on_update_finished(self, release: Optional[ReleaseInfo], error: str) -> None:
         self._on_update_result(release, error, self._update_manual)

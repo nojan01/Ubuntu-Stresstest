@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.59
+
+- Korrigiert: Hardwaretest konnte wenige Sekunden nach dem Start abstürzen (SIGSEGV), meist beim ersten Start nach der Installation. Ursache war die automatische Update-Prüfung im Hintergrund: Ihr Worker-Objekt wurde von Qt und Python doppelt gelöscht. Der Update-Thread gehört jetzt allein Qt und wird erst nach seinem Ende freigegeben.
+
 ### Neu in 0.2.58
 
 - Tab **System** erweitert (ohne root): **PCIe-Verbindungen** mit aktueller und möglicher Generation/Breite (rot: Breite reduziert, orange: Generation reduziert – im Leerlauf oft normal), **Netzwerk** (Modell, Treiber, Firmware, MAC, Zustand, Geschwindigkeit), **Grafik** (Treiber, VRAM, VBIOS), **Speicher-Controller** (mit Firmware) und **Datenträger** (Modell, Größe, HDD/SSD, Seriennummer, Firmware, Sektorgröße). Auch in Zwischenablage und Gesamttest-Bericht.

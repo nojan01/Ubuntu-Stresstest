@@ -111,6 +111,8 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self.monitoring_panel, "Langzeitmonitoring")
         self.proliant_panel = ProliantPanel()
         self._tabs.addTab(self.proliant_panel, "ProLiant Info")
+        for panel in (device_disk_panel, destructive_disk_panel):
+            panel.raid_tab_requested.connect(self._show_raid_tab)
         self._test_panels = [ram_panel, prime_panel, opendcdiag_panel, mem_ctrl_panel, mem_fill_panel,
                              file_disk_panel, device_disk_panel, destructive_disk_panel,
                              nvme_panel, nvidia_panel, gpu_panel, network_panel, test_plan_panel]
@@ -145,6 +147,11 @@ class MainWindow(QMainWindow):
         self._update_manual = False
         if not update_check_disabled():
             QTimer.singleShot(3000, lambda: self._check_for_updates(manual=False))
+
+    def _show_raid_tab(self) -> None:
+        """Wechselt zu „ProLiant Info“ → „RAID“ (Aufruf aus den Disk-Panels)."""
+        self._tabs.setCurrentWidget(self.proliant_panel)
+        self.proliant_panel.show_raid_tab()
 
     def _can_check_filesystem(self) -> bool:
         if self.filesystem_panel.is_busy() or self.zfs_panel.is_busy() or self._temperature_lock:

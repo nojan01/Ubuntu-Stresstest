@@ -19,7 +19,7 @@ import uuid
 from typing import Callable, Optional
 
 from hardwaretest import __version__
-from hardwaretest.core import device_inventory, hardware_inventory, ipmi
+from hardwaretest.core import device_inventory, hardware_inventory, ipmi, proliant_check
 from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
@@ -251,6 +251,8 @@ class TestPlanExecutor:
         # Passwort sofort abfragen, damit lange Testpläne unbeaufsichtigt laufen.
         self._authorize_root()
         system_info = self._collect_system_info()
+        # ProLiant/RAID: Momentaufnahme vor den Tests (IML, Sensoren, RAID-Controller).
+        proliant_before = self._proliant_snapshot()
 
         if self.config.monitoring_enabled:
             extra = {}
@@ -324,6 +326,9 @@ class TestPlanExecutor:
                     [session.summary(), *map(str, paths), monitor.error]))
             except Exception as exc:
                 results.append(self._instant_result("monitoring", STATUS_FAILED, str(exc)))
+
+        if proliant_before is not None:
+            results.append(self._proliant_step(proliant_before))
 
         cancelled = self._cancel.is_set()
         if cancelled and (not results or results[-1].status != STATUS_CANCELLED):
@@ -778,7 +783,8 @@ class TestPlanExecutor:
         return (bool(keys & {"nvme", "nvme_read"}) or ("dcgm" in keys and dcgmi_available())
                 or ("opendcdiag" in keys and opendcdiag_available()
                     and not runs_as_root(default_opendcdiag_path()))
-                or (self.config.monitoring_enabled and ipmi.ipmi_available()))
+                or (self.config.monitoring_enabled and ipmi.ipmi_available())
+                or proliant_check.relevant())
 
     def _authorize_root(self) -> None:
         """Fragt das Passwort einmal zu Beginn ab – danach läuft der Plan unbeaufsichtigt."""
@@ -799,9 +805,43 @@ class TestPlanExecutor:
         except Exception as exc:  # Bericht soll trotzdem entstehen
             return [f"System: {exc}"]
         try:
-            return lines + device_inventory.device_lines(self.config.language, device_inventory.read_device_inventory())
+            lines = lines + device_inventory.device_lines(self.config.language, device_inventory.read_device_inventory())
         except Exception as exc:
-            return [*lines, f"System: {exc}"]
+            lines = [*lines, f"System: {exc}"]
+        if self._privileged_run() is None and proliant_check.relevant():
+            lines.append(_text("ProLiant/RAID: keine Root-Sitzung – IML, Sensoren und RAID-Controller wurden nicht geprüft.",
+                               self.config.language))
+        return lines
+
+    def _privileged_run(self):
+        """Root-Runner des Plans: Root-Sitzung, direkter Aufruf als root oder None."""
+        if self._root is not None:
+            return self._root.run
+        if os.geteuid() == 0:
+            return subprocess.run
+        return None
+
+    def _proliant_snapshot(self) -> Optional[proliant_check.ProliantSnapshot]:
+        run = self._privileged_run()
+        if run is None or not proliant_check.relevant():
+            return None
+        try:
+            return proliant_check.snapshot(run)
+        except Exception as exc:  # Bericht soll trotzdem entstehen
+            self._log(f"ProLiant/RAID: {exc}")
+            return None
+
+    def _proliant_step(self, before: proliant_check.ProliantSnapshot) -> TestPlanStepResult:
+        """Schritt „ProLiant / RAID-Controller“: zweite Momentaufnahme und Vergleich."""
+        started = time.monotonic()
+        started_at = _now()
+        try:
+            after = proliant_check.snapshot(self._privileged_run(), proliant=before.proliant)
+            failed, summary, details = proliant_check.evaluate(before, after, self.config.language)
+        except Exception as exc:
+            return self._timed_result("proliant", STATUS_FAILED, started, started_at, str(exc), [repr(exc)])
+        return self._timed_result("proliant", STATUS_FAILED if failed else STATUS_PASSED, started, started_at,
+                                  summary, details)
 
     def _nvme_run(self, command, **kwargs):
         """SMART-Abfragen über die zu Beginn autorisierte Root-Sitzung."""
@@ -950,6 +990,7 @@ def _overall_status(results: list[TestPlanStepResult], cancelled: bool) -> str:
 def _step_name(key: str, language: str) -> str:
     names = {
         "monitoring": ("Langzeitmonitoring", "Long-term monitoring"),
+        "proliant": ("ProLiant / RAID-Controller", "ProLiant / RAID controller"),
         "cpu": ("CPU-Stresstest", "CPU stress test"),
         "opendcdiag": ("OpenDCDiag – stille Datenfehler je Kern", "OpenDCDiag – silent data errors per core"),
         "ram": ("RAM-Verifikation", "RAM verification"),
@@ -1072,6 +1113,8 @@ def _text(source: str, language: str) -> str:
         "rasdaemon: Ereignisse konnten nicht gelesen werden.": "rasdaemon: events could not be read.",
         "Netzwerk-Messwerte fehlen oder sind ungültig.": "Network measurements are missing or invalid.",
         "Beginn": "Start",
+        "ProLiant/RAID: keine Root-Sitzung – IML, Sensoren und RAID-Controller wurden nicht geprüft.":
+            "ProLiant/RAID: no root session – IML, sensors and RAID controllers were not checked.",
         "Ende": "End",
         "Gesamtergebnis": "Overall result",
         "Zeitraum": "Time",

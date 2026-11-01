@@ -2,7 +2,7 @@
 
 ## A) GPU-Lasttest und Überwachung für AMD-, Intel- und NVIDIA-Grafik (Vulkan)
 
-Umgesetzt (0.2.57, noch nicht veröffentlicht): Tab „GPU (Vulkan)“, Worker
+Umgesetzt (0.2.57): Tab „GPU (Vulkan)“, Worker
 `hardwaretest/tests/vulkan_stress_script.py` (ctypes, SPIR-V aus
 `tests/vulkan_shaders`, erzeugt mit `scripts/compile_vulkan_shaders.sh`),
 sysfs-Überwachung `core/gpu_sysfs.py`, Hilfe DE/EN, Unit-Tests.
@@ -12,7 +12,7 @@ Einheitliches Image: NVIDIA-Enterprise-Treiber 595 + DCGM immer enthalten, nouve
 
 Offen:
 - [ ] Praxistest auf AMD-Karte und Intel Arc (Hardware nötig), Gegenprobe NVIDIA über NVK
-- [ ] ISO bauen, Größe prüfen, Boot mit AMD/Intel-Grafik (`amdgpu`/`i915`/`xe` geladen)
+- [x] ISO gebaut (2026-11-01, 1,8 GB); Boot mit AMD/Intel-Grafik auf echter Hardware noch offen
 - [x] Optional: Schritt „GPU (Vulkan)“ im Gesamttestplan
 - [x] Intel-iGPU: Leistung über RAPL (uncore) und Auslastung (fdinfo) ergänzen; ISO: udev-Regel macht `energy_uj` lesbar
 - [x] THIRD-PARTY-LICENSES der ISO ergänzen (Mesa: MIT)
@@ -97,6 +97,8 @@ Gleicher Stil wie CPU/RAM/Board, möglichst ohne root; auch im System-Abschnitt 
 
 ## F) HPE RAID-Controller: Button „HPE Smart Array“ (Disk Geräte) ausbauen
 Heute: `ssacli ctrl all show status` + `show config`, nur Rohtext (`system_info.read_hpe_raid_info`).
+In Arbeit (0.2.61): Modul `core/hpe_raid.py` (ssacli + storcli, Ampel), Sub-Tab RAID im Tab ProLiant Info,
+Gesamttest-Abschnitt ProLiant/RAID; `scripts/collect_hpe_samples.sh` sammelt am ProLiant echte Ausgaben als Fixtures.
 Im ISO bereits vorhanden (HPE MCP): `ssacli`, `ssaducli`, `storcli64`, `storcli2`.
 - [ ] Mängel beheben: nur **eine** Passwortabfrage (eine Root-Sitzung statt 2× pkexec), Timeout > 15 s
 - [ ] Controller (`ssacli ctrl all show config detail`): Firmware, S/N, PCI-Slot, Cache (Größe, Status,
@@ -114,5 +116,32 @@ Im ISO bereits vorhanden (HPE MCP): `ssacli`, `ssaducli`, `storcli64`, `storcli2
 - [ ] Gesamttest: Controller-Zustand vor/nach dem Test vergleichen; Abschnitt im Bericht
 - [ ] Tests mit echten Beispielausgaben (ssacli/storcli vom ProLiant sammeln), Hilfe DE/EN
 
+## G) Verbesserungsvorschläge (Review 01.11.2026)
+Reihenfolge nach Nutzen für den Server-Einsatz; F (RAID) und die Gesamttest-Integration der
+ProLiant-Daten (IML/Sensoren/RAID vor/nach dem Test) sind in Arbeit (0.2.61).
+
+### Funktional
+- [ ] **Burn-in-Profil**: zeitgesteuerter Mischlauf (z. B. 8 h: RAM → fio → GPU → stress-ng im Wechsel)
+      mit periodischen SMART-/MCE-/Temperatur-Snapshots und Trendkurve im Bericht
+- [ ] **Berichtsvergleich** (vor/nach Reparatur): Diff der Messwerte (Durchsatz, Fehlerzähler, Temperaturen)
+- [ ] **PCIe-Fehlerzähler** (AER, `lspci -vv` CESta/UESta) im Tab System und Gesamttest – korreliert oft
+      mit Link-Downgrades, die bereits angezeigt werden
+- [ ] **Netzwerk**: optional iperf3-Durchsatz zu einer angegebenen Gegenstelle; Link-Flaps aus dem Journal zählen
+
+### Bedienung / Bericht
+- [ ] **Bericht als JSON** zusätzlich zu HTML (maschinenlesbar für Archiv/Ticketsystem); optional
+      automatisch per scp auf einen Zielhost
+- [ ] **Testprofile speichern/laden** (Gesamttest-Auswahl + Dauern), z. B. „Schnellcheck 15 min“, „Abnahme 4 h“
+- [ ] **Hardware-Kennung im Bericht**: Seriennummer/Asset-Tag aus DMI prominent im Kopf, Dateiname mit Seriennummer
+
+### Technik / Qualität
+- [ ] **End-to-End-Smoke-Test im ISO-Build**: QEMU bootet das Image, startet Hardwaretest headless mit kurzem
+      Profil und prüft, dass ein Bericht entsteht (fängt Paket-/Wrapper-Probleme vor dem ProLiant-Test ab)
+- [ ] **Gesamttest robuster**: Gesamtlaufzeit-Limit; Bericht inkrementell schreiben, damit Teilergebnisse
+      auch bei Absturz der App auf Platte liegen
+- [ ] **Englische Oberfläche** einmal komplett durchklicken (18 fehlende Übersetzungen in 0.2.60 deuten auf
+      seltene EN-Tests hin)
+- [ ] **CUDA-PTX** (64-Bit-Muster/-Zähler seit 0.2.60) einmal real auf NVIDIA-GPU ausführen
+
 ## D) Sonstiges
-- [ ] Update-Prüfung im ISO abgeschaltet (`HARDWARETEST_NO_UPDATE_CHECK=1`, Menüpunkt ausgeblendet) – umgesetzt, mit nächstem Release/ISO veröffentlichen
+- [x] Update-Prüfung im ISO abgeschaltet (`HARDWARETEST_NO_UPDATE_CHECK=1`, Menüpunkt ausgeblendet) – veröffentlicht mit 0.2.59/ISO 2026-11-01

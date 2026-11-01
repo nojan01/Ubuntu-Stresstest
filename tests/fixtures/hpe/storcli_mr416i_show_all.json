@@ -1,0 +1,274 @@
+{
+"Controllers":[
+{
+	"Command Status" : {
+		"CLI Version" : "007.2807.0000.0000 Dec 22, 2023",
+		"Operating system" : "Linux 6.8.0-45-generic",
+		"Controller" : 0,
+		"Status" : "Success",
+		"Description" : "None"
+	},
+	"Response Data" : {
+		"Basics" : {
+			"Controller" : 0,
+			"Model" : "HPE MR416i-a Gen10+",
+			"Serial Number" : "SKC1234567",
+			"Current Controller Date/Time" : "11/01/2026, 14:02:11",
+			"Current System Date/time" : "11/01/2026, 15:02:11",
+			"SAS Address" : "500062b2049a1b40",
+			"PCI Address" : "00:c3:00:00",
+			"Mfg Date" : "00/00/00",
+			"Rework Date" : "00/00/00",
+			"Revision No" : "A"
+		},
+		"Version" : {
+			"Firmware Package Build" : "52.24.3-4948",
+			"Firmware Version" : "5.240.02-3728",
+			"Bios Version" : "7.24.00.0_0x07180200",
+			"NVDATA Version" : "5.2400.00-0120",
+			"Boot Block Version" : "7.02.00.00-0001",
+			"Driver Name" : "megaraid_sas",
+			"Driver Version" : "07.727.03.00-rc1"
+		},
+		"Bus" : {
+			"Vendor Id" : 4096,
+			"Device Id" : 16,
+			"SubVendor Id" : 5423,
+			"SubDevice Id" : 2048,
+			"Host Interface" : "PCI-E",
+			"Device Interface" : "SAS-12G",
+			"Bus Number" : 195,
+			"Device Number" : 0,
+			"Function Number" : 0,
+			"Domain ID" : 0
+		},
+		"Pending Images in Flash" : {
+			"Image name" : "No pending images"
+		},
+		"Status" : {
+			"Controller Status" : "Needs Attention",
+			"Memory Correctable Errors" : 0,
+			"Memory Uncorrectable Errors" : 0,
+			"ECC Bucket Count" : 0,
+			"Any Offline VD Cache Preserved" : "No",
+			"BBU Status" : 0,
+			"PD Firmware Download in progress" : "No",
+			"Support PD Firmware Download" : "Yes",
+			"Lock Key Assigned" : "No",
+			"Failed to get lock key on bootup" : "No",
+			"Lock key has not been backed up" : "No",
+			"Bios was not detected during boot" : "No",
+			"Controller must be rebooted to complete pending operations" : "No",
+			"Controller booted to safe mode" : "No",
+			"Controller shutdown required" : "No",
+			"Controller has reached timeout for  fw commands" : "No",
+			"Current Personality" : "RAID-Mode "
+		},
+		"Supported Adapter Operations" : {
+			"Rebuild Rate" : "Yes",
+			"CC Rate" : "Yes"
+		},
+		"HwCfg" : {
+			"ChipRevision" : " C0",
+			"BatteryFRU" : "N/A",
+			"Front End Port Count" : 0,
+			"Backend Port Count" : 16,
+			"BBU" : "Absent",
+			"Alarm" : "Disable",
+			"Serial Debugger" : "Present",
+			"NVRAM Size" : "32KB",
+			"Flash Size" : "16MB",
+			"On Board Memory Size" : "4096MB",
+			"CacheVault Flash Size" : "8.0 GB",
+			"TPM" : "Absent",
+			"Upgrade Key" : "Absent",
+			"On Board Expander" : "Absent",
+			"Temperature Sensor for ROC" : "Present",
+			"Temperature Sensor for Controller" : "Absent",
+			"Upgradable CPLD" : "Absent",
+			"Upgradable PSOC" : "Absent",
+			"Current Size of CacheCade (GB)" : 0,
+			"Current Size of FW Cache (MB)" : 3340,
+			"ROC temperature(Degree Celsius)" : 62
+		},
+		"Policies" : {
+			"Policies Table" : [
+				{
+					"Policy" : "Predictive Fail Poll Interval",
+					"Current" : "300 sec",
+					"Default" : ""
+				},
+				{
+					"Policy" : "Rebuild Rate",
+					"Current" : "30 %",
+					"Default" : "30%"
+				},
+				{
+					"Policy" : "Patrol Read Rate",
+					"Current" : "30 %",
+					"Default" : "30%"
+				}
+			],
+			"Flush Time(Default)" : "4s",
+			"Drive Coercion Mode" : "1GB",
+			"Auto Rebuild" : "On",
+			"Battery Warning" : "On",
+			"ECC Bucket Size" : 15,
+			"ECC Bucket Leak Rate (hrs)" : 24,
+			"Restore HotSpare on Insertion" : "Off",
+			"Expose Enclosure Devices" : "On",
+			"Maintain PD Fail History" : "Off",
+			"Reorder Host Requests" : "On",
+			"Auto detect BackPlane" : "SGPIO/i2c SEP",
+			"Load Balance Mode" : "Auto",
+			"Security Key Assigned" : "Off",
+			"Disable Online Controller Reset" : "Off",
+			"Use drive activity for locate" : "Off"
+		},
+		"Drive Groups" : 1,
+		"TOPOLOGY" : [
+			{
+				"DG" : 0,
+				"Arr" : "-",
+				"Row" : "-",
+				"EID:Slot" : "-",
+				"DID" : "-",
+				"Type" : "RAID1",
+				"State" : "Dgrd",
+				"BT" : "N",
+				"Size" : "1.745 TB",
+				"PDC" : "dsbl",
+				"PI" : "No",
+				"SED" : "N",
+				"DS3" : "none",
+				"FSpace" : "N",
+				"TR" : "N"
+			},
+			{
+				"DG" : 0,
+				"Arr" : 0,
+				"Row" : 0,
+				"EID:Slot" : "252:0",
+				"DID" : 8,
+				"Type" : "DRIVE",
+				"State" : "Onln",
+				"BT" : "N",
+				"Size" : "1.745 TB",
+				"PDC" : "dsbl",
+				"PI" : "No",
+				"SED" : "N",
+				"DS3" : "none",
+				"FSpace" : "-",
+				"TR" : "N"
+			},
+			{
+				"DG" : 0,
+				"Arr" : 0,
+				"Row" : 1,
+				"EID:Slot" : "252:1",
+				"DID" : 9,
+				"Type" : "DRIVE",
+				"State" : "Offln",
+				"BT" : "N",
+				"Size" : "1.745 TB",
+				"PDC" : "dsbl",
+				"PI" : "No",
+				"SED" : "N",
+				"DS3" : "none",
+				"FSpace" : "-",
+				"TR" : "N"
+			}
+		],
+		"Virtual Drives" : 1,
+		"VD LIST" : [
+			{
+				"DG/VD" : "0/239",
+				"TYPE" : "RAID1",
+				"State" : "Dgrd",
+				"Access" : "RW",
+				"Consist" : "Yes",
+				"Cache" : "RWBD",
+				"Cac" : "-",
+				"sCC" : "ON",
+				"Size" : "1.745 TB",
+				"Name" : "OS"
+			}
+		],
+		"Physical Drives" : 3,
+		"PD LIST" : [
+			{
+				"EID:Slt" : "252:0",
+				"DID" : 8,
+				"State" : "Onln",
+				"DG" : 0,
+				"Size" : "1.745 TB",
+				"Intf" : "SAS",
+				"Med" : "SSD",
+				"SED" : "N",
+				"PI" : "N",
+				"SeSz" : "512B",
+				"Model" : "MO001920PXDCJ",
+				"Sp" : "U",
+				"Type" : "-"
+			},
+			{
+				"EID:Slt" : "252:1",
+				"DID" : 9,
+				"State" : "Offln",
+				"DG" : 0,
+				"Size" : "1.745 TB",
+				"Intf" : "SAS",
+				"Med" : "SSD",
+				"SED" : "N",
+				"PI" : "N",
+				"SeSz" : "512B",
+				"Model" : "MO001920PXDCJ",
+				"Sp" : "U",
+				"Type" : "-"
+			},
+			{
+				"EID:Slt" : "252:2",
+				"DID" : 10,
+				"State" : "UGood",
+				"DG" : "-",
+				"Size" : "1.745 TB",
+				"Intf" : "SAS",
+				"Med" : "SSD",
+				"SED" : "N",
+				"PI" : "N",
+				"SeSz" : "512B",
+				"Model" : "MO001920PXDCJ",
+				"Sp" : "U",
+				"Type" : "-"
+			}
+		],
+		"Enclosures" : 1,
+		"Enclosure LIST" : [
+			{
+				"EID" : 252,
+				"State" : "OK",
+				"Slots" : 8,
+				"PD" : 3,
+				"PS" : 0,
+				"Fans" : 0,
+				"TSs" : 0,
+				"Alms" : 0,
+				"SIM" : 0,
+				"Port#" : "-",
+				"ProdID" : "VirtualSES",
+				"VendorSpecific" : "x16 (XDUP/XDUAL)"
+			}
+		],
+		"Cachevault_Info" : [
+			{
+				"Model" : "CVPM05",
+				"State" : "Optimal",
+				"Temp" : "25C",
+				"Mode" : "-",
+				"MfgDate" : "2021/11/12"
+			}
+		]
+	}
+}
+]
+}

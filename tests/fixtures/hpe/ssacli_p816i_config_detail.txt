@@ -1,0 +1,214 @@
+
+HPE Smart Array P816i-a SR Gen10 in Slot 0 (Embedded)
+   Bus Interface: PCI
+   Slot: 0
+   Serial Number: PEYHC0ARCCS1234
+   RAID 6 Status: Enabled
+   Controller Status: OK
+   Hardware Revision: B
+   Firmware Version: 6.22
+   Firmware Supports Online Firmware Activation: True
+   Driver Supports Online Firmware Activation: True
+   Rebuild Priority: Medium
+   Expand Priority: Medium
+   Surface Scan Delay: 3 secs
+   Surface Scan Mode: Idle
+   Parallel Surface Scan Supported: Yes
+   Current Parallel Surface Scan Count: 1
+   Max Parallel Surface Scan Count: 16
+   Queue Depth: Automatic
+   Monitor and Performance Delay: 60  min
+   Elevator Sort: Enabled
+   Degraded Performance Optimization: Disabled
+   Inconsistency Repair Policy: Disabled
+   Write Cache Bypass Threshold Size: 1040 KiB
+   Wait for Cache Room: Disabled
+   Surface Analysis Inconsistency Notification: Disabled
+   Post Prompt Timeout: 15 secs
+   Cache Board Present: True
+   Cache Status: Temporarily Disabled
+   Cache Status Details: Cache disabled; backup power source failed to charge to an acceptable level
+   Cache Ratio: 10% Read / 90% Write
+   Configured Drive Write Cache Policy: Default
+   Unconfigured Drive Write Cache Policy: Default
+   Total Cache Size: 4.0
+   Total Cache Memory Available: 3.8
+   Battery Backed Cache Size: 4.0
+   No-Battery Write Cache: Disabled
+   SSD Caching RAID5 WriteBack Enabled: True
+   SSD Caching Version: 2
+   Cache Backup Power Source: Batteries
+   Battery/Capacitor Count: 1
+   Battery/Capacitor Status: Failed (Replace Batteries/Capacitors)
+   SATA NCQ Supported: True
+   Spare Activation Mode: Activate on physical drive failure (default)
+   Controller Temperature (C): 58
+   Cache Module Temperature (C): 41
+   Number of Ports: 4 Internal only
+   Encryption: Not Set
+   Express Local Encryption: False
+   Driver Name: smartpqi
+   Driver Version: Linux 2.1.22-040
+   PCI Address (Domain:Bus:Device.Function): 0000:5c:00.0
+   Negotiated PCIe Data Rate: PCIe 3.0 x8 (7880 MB/s)
+   Controller Mode: Mixed
+   Port Max Phy Rate Limiting Supported: False
+   Latency Scheduler Setting: Disabled
+   Current Power Mode: MaxPerformance
+   Survival Mode: Enabled
+   Host Serial Number: CZ2024ABCD
+   Sanitize Erase Supported: True
+   Sanitize Lock: None
+   Sensor ID: 0
+      Location: Capacitor
+      Current Value (C): 29
+      Max Value Since Power On: 32
+   Sensor ID: 1
+      Location: ASIC
+      Current Value (C): 58
+      Max Value Since Power On: 61
+   Primary Boot Volume: logicaldrive 1 (600508B1001CA1B2C3D4E5F60718293A)
+   Secondary Boot Volume: None
+
+
+   Internal Drive Cage at Port 1I, Box 3, OK
+
+      Drive Bays: 8
+      Port: 1I
+      Box: 3
+      Location: Internal
+
+   Physical Drives
+      physicaldrive 1I:3:1 (port 1I:box 3:bay 1, SAS HDD, 1.2 TB, OK)
+      physicaldrive 1I:3:2 (port 1I:box 3:bay 2, SAS HDD, 1.2 TB, OK)
+      physicaldrive 1I:3:3 (port 1I:box 3:bay 3, SAS HDD, 1.2 TB, Rebuilding)
+
+
+   Array: A
+      Interface Type: SAS
+      Unused Space: 0 MB (0.0%)
+      Used Space: 3.27 TB (100.0%)
+      Status: OK
+      MultiDomain Status: OK
+      Array Type: Data
+      Smart Path: disable
+
+      Logical Drive: 1
+         Size: 2.18 TB
+         Fault Tolerance: 5
+         Heads: 255
+         Sectors Per Track: 32
+         Cylinders: 65535
+         Strip Size: 256 KB
+         Full Stripe Size: 512 KB
+         Status: Recovering, 37% complete
+         Unrecoverable Media Errors: None
+         MultiDomain Status: OK
+         Caching:  Disabled
+         Parity Initialization Status: Initialization Completed
+         Unique Identifier: 600508B1001CA1B2C3D4E5F60718293A
+         Disk Name: /dev/sda
+         Mount Points: / 2.18 TB Partition Number 2
+         OS Status: LOCKED
+         Logical Drive Label: 01B2C3D4PEYHC0ARCCS1234 9A7F
+         Drive Type: Data
+         LD Acceleration Method: Controller Cache
+
+      physicaldrive 1I:3:1
+         Port: 1I
+         Box: 3
+         Bay: 1
+         Status: OK
+         Drive Type: Data Drive
+         Interface Type: SAS
+         Size: 1.2 TB
+         Drive exposed to OS: False
+         Logical/Physical Block Size: 512/512
+         Rotational Speed: 10000
+         Firmware Revision: HPD6
+         Serial Number: WFK1AB2C
+         WWID: 5000C500A1B2C3D5
+         Model: HP      EG001200JWJNQ
+         Current Temperature (C): 36
+         Maximum Temperature (C): 48
+         PHY Count: 2
+         PHY Transfer Rate: 12.0Gbps, Unknown
+         PHY Physical Link Rate: 12.0Gbps, Unknown
+         PHY Maximum Link Rate: 12.0Gbps, 12.0Gbps
+         Drive Authentication Status: OK
+         Carrier Application Version: 11
+         Carrier Bootloader Version: 6
+         Sanitize Erase Supported: True
+         Sanitize Estimated Max Erase Time: 2 hours, 20 minutes
+         Unrestricted Sanitize Supported: True
+         Shingled Magnetic Recording Support: None
+         Drive Unique ID: 5000C500A1B2C3D4
+
+      physicaldrive 1I:3:2
+         Port: 1I
+         Box: 3
+         Bay: 2
+         Status: OK
+         Drive Type: Data Drive
+         Interface Type: SAS
+         Size: 1.2 TB
+         Drive exposed to OS: False
+         Logical/Physical Block Size: 512/512
+         Rotational Speed: 10000
+         Firmware Revision: HPD6
+         Serial Number: WFK1AB2D
+         WWID: 5000C500A1B2C3E5
+         Model: HP      EG001200JWJNQ
+         Current Temperature (C): 37
+         Maximum Temperature (C): 49
+         PHY Count: 2
+         PHY Transfer Rate: 12.0Gbps, Unknown
+         PHY Physical Link Rate: 12.0Gbps, Unknown
+         PHY Maximum Link Rate: 12.0Gbps, 12.0Gbps
+         Drive Authentication Status: OK
+         Carrier Application Version: 11
+         Carrier Bootloader Version: 6
+         Sanitize Erase Supported: True
+         Sanitize Estimated Max Erase Time: 2 hours, 20 minutes
+         Unrestricted Sanitize Supported: True
+         Shingled Magnetic Recording Support: None
+         Drive Unique ID: 5000C500A1B2C3E4
+
+      physicaldrive 1I:3:3
+         Port: 1I
+         Box: 3
+         Bay: 3
+         Status: Rebuilding
+         Drive Type: Data Drive
+         Interface Type: SAS
+         Size: 1.2 TB
+         Drive exposed to OS: False
+         Logical/Physical Block Size: 512/512
+         Rotational Speed: 10000
+         Firmware Revision: HPD6
+         Serial Number: WFK9ZZ1X
+         WWID: 5000C500A1B2C3F5
+         Model: HP      EG001200JWJNQ
+         Current Temperature (C): 39
+         Maximum Temperature (C): 39
+         PHY Count: 2
+         PHY Transfer Rate: 12.0Gbps, Unknown
+         PHY Physical Link Rate: 12.0Gbps, Unknown
+         PHY Maximum Link Rate: 12.0Gbps, 12.0Gbps
+         Drive Authentication Status: OK
+         Carrier Application Version: 11
+         Carrier Bootloader Version: 6
+         Sanitize Erase Supported: True
+         Sanitize Estimated Max Erase Time: 2 hours, 20 minutes
+         Unrestricted Sanitize Supported: True
+         Shingled Magnetic Recording Support: None
+         Drive Unique ID: 5000C500A1B2C3F4
+
+
+   SEP (Vendor ID HPE, Model Smart Adapter) 379
+      Device Number: 379
+      Firmware Version: 6.22
+      WWID: 51402EC012345678
+      Vendor ID: HPE
+      Model: Smart Adapter
+

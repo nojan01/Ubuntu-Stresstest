@@ -409,8 +409,8 @@ NVMe auf HPE Gen10+). Andernfalls wird <b>libaio</b> verwendet.
 <ul>
   <li><b>SMART-Info</b>: Zeigt Gesundheitsstatus, Temperatur, Betriebsstunden,
       reallocated/pending Sectors via <code>smartctl</code> an.</li>
-  <li><b>HPE RAID-Info</b>: Zeigt SmartArray-Controller-Status und Konfiguration
-      via <code>ssacli</code> / <code>hpssacli</code>.</li>
+  <li><b>RAID-Controller-Status</b>: Springt zur strukturierten Auswertung der
+      HPE-Smart-Array-/MegaRAID-Controller im Tab „ProLiant Info“ → „RAID“.</li>
   <li>Buttons verfügbar in den Tabs „Geräte" und „Destruktiv".</li>
 </ul>
 
@@ -1023,8 +1023,8 @@ NVMe on HPE Gen10+). Otherwise <b>libaio</b> is used.
 <ul>
   <li><b>SMART Info</b>: Shows health status, temperature, power-on hours,
       reallocated/pending sectors via <code>smartctl</code>.</li>
-  <li><b>HPE RAID Info</b>: Shows SmartArray controller status and configuration
-      via <code>ssacli</code> / <code>hpssacli</code>.</li>
+  <li><b>RAID controller status</b>: Jumps to the structured evaluation of
+      HPE Smart Array / MegaRAID controllers in the “ProLiant Info” → “RAID” tab.</li>
   <li>Buttons available in the "Device" and "Destructive" tabs.</li>
 </ul>
 
@@ -1321,6 +1321,7 @@ Do not power off or interrupt a repair. Recheck afterward.
 Unsupported filesystems are listed but not changed. No repairs in automated plans.</p>
 <h2>ProLiant Info</h2>
 <p>Reads directly from the HPE iLO via ipmitool: system data (model, serial number, BIOS, iLO firmware), all sensors (temperatures, fans, power supplies, voltages) and the complete event log (IPMI SEL), plus the Integrated Management Log (IML) via iLOrest with HPE plain-text messages; all with rating (red = error, orange = warning), filter, search and HTML export. The <i>Memory / ECC</i> page shows the ECC type, modules, kernel EDAC counters and memory events. On a ProLiant or Synergy compute module (e.g. Synergy 480 Gen10) the tab reads automatically at startup and every 5 minutes (administrator password asked once). If no ProLiant/Synergy is detected, a notice is shown and the iLO information is inactive; it can still be read manually (e.g. other servers with IPMI). Requires <code>ipmitool</code>, <code>dmidecode</code> and for the IML <code>ilorest</code> (iLO option “Require Host Authentication” must be off). Long-term monitoring additionally records fan speeds and ECC events via IPMI.</p>
+<p><b>RAID page:</b> HPE Smart Array controllers (<code>ssacli</code>/<code>hpssacli</code>) and Broadcom MegaRAID “MR” controllers (<code>storcli64</code>/<code>storcli2</code>) are evaluated in a structured way within the same root session: controller status, cache and battery/capacitor, temperatures, logical drives (RAID level, status, rebuild progress, OS device) and physical drives (position, type, size, status, model, serial, firmware, temperature, power-on hours, SSD life, link speed). Rating: red = controller/drive failed, predictive failure, SSD life below 10&nbsp;% or missing/failed battery with cache present; orange = rebuild/recovery, cache disabled, medium errors, temperature ≥ 60&nbsp;°C (drive) or ≥ 85&nbsp;°C (controller), SSD life below 25&nbsp;%. The raw tool output is shown below the tables; <i>Save diagnostic report (ssaducli)</i> writes the full HPE Smart Storage diagnostic ZIP for HPE support. The RAID rating is part of the overview, summary and HTML export. The RAID button in the disk tabs jumps to this page. The test plan takes a snapshot of RAID, IML and sensors before and after the tests and reports the step <i>ProLiant / RAID controller</i>: it fails only on a new RAID error; new IML entries and sensor warnings are listed as warnings.</p>
 <h2>Long-term monitoring</h2>
 <p><b>Individual temperature limits:</b> Only checked sensors override the default.
 Limits are saved per user and shared with test-plan monitoring. Follow hardware
@@ -1342,8 +1343,8 @@ new uncorrectable ECC errors or monitoring failure. It never interrupts filesyst
 repairs or firmware self-tests. New individual tests stay locked until monitoring
 ends. Test plans offer accompanying monitoring and include the result in their report.</p>
 <h2>HPE-specific features</h2>
-<p>HPE Smart Array RAID information requires a compatible HPE controller and its
-optional HPE tools. It is not required for ordinary PCs. Remote iLO/Redfish diagnostics
+<p>The RAID evaluation (ProLiant Info → RAID) requires a compatible HPE Smart Array or
+MegaRAID controller and its optional tools (<code>ssacli</code>, <code>storcli64</code>, optionally <code>ssaducli</code>). It is not required for ordinary PCs. Remote iLO/Redfish diagnostics
 and power supply redundancy checks are not included yet.</p>
 """)
         else:
@@ -1379,6 +1380,7 @@ Nicht ausschalten oder eine Reparatur unterbrechen. Anschließend erneut prüfen
 Andere Dateisysteme werden angezeigt, aber nicht verändert. Keine Reparatur im Gesamttestplan.</p>
 <h2>ProLiant Info</h2>
 <p>Liest per ipmitool direkt vom HPE iLO: Systemdaten (Modell, Seriennummer, BIOS, iLO-Firmware), alle Sensoren (Temperaturen, Lüfter, Netzteile, Spannungen) und das komplette Ereignisprotokoll (IPMI SEL), außerdem über iLOrest das Integrated Management Log (IML) mit HPE-Klartextmeldungen; alles mit Bewertung (rot = Fehler, orange = Warnung), Filter, Suche und HTML-Export. Die Seite <i>Speicher / ECC</i> zeigt ECC-Typ, Module, Kernel-EDAC-Zähler und Speicherereignisse. Auf einem ProLiant oder Synergy-Compute-Modul (z. B. Synergy 480 Gen10) liest der Tab beim Start automatisch und danach alle 5 Minuten aus (einmalige Passwortabfrage). Wird kein ProLiant/Synergy erkannt, erscheint ein Hinweis und die iLO-Informationen sind nicht aktiv; manuelles Auslesen bleibt möglich (z. B. andere Server mit IPMI). Benötigt <code>ipmitool</code>, <code>dmidecode</code> und für das IML <code>ilorest</code> (iLO-Option „Host-Authentifizierung erforderlich“ muss aus sein). Das Langzeitmonitoring zeichnet zusätzlich Lüfterdrehzahlen und ECC-Ereignisse über IPMI auf.</p>
+<p><b>Seite RAID:</b> HPE-Smart-Array-Controller (<code>ssacli</code>/<code>hpssacli</code>) und Broadcom-MegaRAID-„MR“-Controller (<code>storcli64</code>/<code>storcli2</code>) werden in derselben Root-Sitzung strukturiert ausgewertet: Controller-Status, Cache und Akku/Kondensator, Temperaturen, logische Laufwerke (RAID-Level, Status, Rebuild-Fortschritt, OS-Gerät) und physische Laufwerke (Position, Typ, Größe, Status, Modell, Seriennummer, Firmware, Temperatur, Betriebsstunden, SSD-Restlebensdauer, Link-Geschwindigkeit). Bewertung: rot = Controller/Laufwerk ausgefallen, Predictive Failure, SSD-Rest unter 10&nbsp;% oder fehlender/defekter Akku bei vorhandenem Cache; orange = Rebuild/Recovery, Cache deaktiviert, Medium-Fehler, Temperatur ≥ 60&nbsp;°C (Laufwerk) bzw. ≥ 85&nbsp;°C (Controller), SSD-Rest unter 25&nbsp;%. Die Rohausgabe der Werkzeuge steht unter den Tabellen; <i>Diagnosebericht (ssaducli) speichern</i> erzeugt das vollständige HPE-Smart-Storage-Diagnose-ZIP für den HPE-Support. Die RAID-Ampel fließt in Übersicht, Zusammenfassung und HTML-Export ein. Der RAID-Button in den Disk-Tabs springt auf diese Seite. Der Gesamttest nimmt vor und nach den Tests eine Momentaufnahme von RAID, IML und Sensoren und berichtet den Schritt <i>ProLiant / RAID-Controller</i>: Er schlägt nur bei einem neuen RAID-Fehler fehl; neue IML-Einträge und Sensorwarnungen werden als Warnung aufgeführt.</p>
 <h2>Langzeitmonitoring</h2>
 <p><b>Individuelle Temperaturgrenzen:</b> Nur aktivierte Sensorzeilen überschreiben
 den Standardwert. Grenzen werden pro Benutzer gespeichert und auch im Gesamttest
@@ -1402,7 +1404,7 @@ ECC-Fehlern oder Monitoring-Ausfall. Dateisystemreparaturen und Firmware-Selbstt
 nicht unterbrochen. Neue Einzeltests bleiben bis zum Beenden des Monitorings gesperrt.
 Der Gesamttestplan bietet Begleitmonitoring mit Ergebnis im gemeinsamen Bericht.</p>
 <h2>HPE-spezifische Funktionen</h2>
-<p>HPE Smart Array RAID-Informationen benötigen einen passenden HPE-Controller und die
-optionalen HPE-Werkzeuge. Für normale PCs sind sie nicht erforderlich. Remote-iLO/Redfish
+<p>Die RAID-Auswertung (ProLiant Info → RAID) benötigt einen passenden HPE-Smart-Array- oder
+MegaRAID-Controller und die optionalen Werkzeuge (<code>ssacli</code>, <code>storcli64</code>, optional <code>ssaducli</code>). Für normale PCs sind sie nicht erforderlich. Remote-iLO/Redfish
 und Netzteilredundanz-Prüfungen sind noch nicht enthalten.</p>
 """)

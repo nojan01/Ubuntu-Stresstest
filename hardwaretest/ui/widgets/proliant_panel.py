@@ -1,4 +1,4 @@
-"""ProLiant Info: iLO/BMC-Daten per ipmitool – Übersicht, Sensoren, Ereignisprotokoll, Speicher/ECC."""
+"""ProLiant Info: iLO/BMC-Daten per ipmitool – Übersicht, Sensoren, Ereignisprotokoll, IML, Speicher/ECC, RAID."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from hardwaretest.core import ipmi
+from hardwaretest.core import hpe_raid, ipmi
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.system_info import read_edac_info
 from hardwaretest.ui.i18n import language_manager
@@ -118,6 +118,8 @@ def collect_proliant(run) -> dict:
             "sensors_error": "", "events": None, "events_error": "", "iml": None, "iml_error": ""}
     ecc_state, ecc_summary, ecc_lines = build_ecc_report(run)
     data["ecc"] = (ecc_state, ecc_summary, "\n".join(ecc_lines))
+    # RAID-Controller (ssacli/storcli) auch auf Nicht-ProLiant, sobald ein Werkzeug vorhanden ist.
+    data["raid"] = hpe_raid.collect_raid(run)
     if run is None:
         data["bmc_error"] = _t("Keine Root-Rechte.", "No root privileges.")
         data["iml_error"] = data["bmc_error"]
@@ -162,6 +164,24 @@ class ProliantWorker(QThread):
             self.done.emit({"exception": str(exc)})
 
 
+class SsaducliWorker(QThread):
+    """Erstellt den ssaducli-Diagnosebericht über die Root-Sitzung des Panels."""
+    done = Signal(bool, str)
+
+    def __init__(self, panel, target: str):
+        super().__init__(panel)
+        self.panel = panel
+        self.target = target
+
+    def run(self):
+        run = self.panel.root_runner()
+        if run is None:
+            self.done.emit(False, _t("Keine Root-Rechte.", "No root privileges."))
+            return
+        ok, message = hpe_raid.save_ssaducli_report(run, self.target)
+        self.done.emit(ok, message)
+
+
 def _table(headers: int) -> QTableWidget:
     table = QTableWidget(0, headers)
     table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -191,6 +211,7 @@ class ProliantPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
+        self._ssaducli_worker = None
         self._broker = None
         self._broker_failed = False
         self._data = None
@@ -264,11 +285,13 @@ class ProliantPanel(QWidget):
         iml_layout.addWidget(self.iml, 1)
         self.ecc = QPlainTextEdit()
         self.ecc.setReadOnly(True)
+        raid_page = self._build_raid_page()
         self.pages.addTab(self.overview, "")
         self.pages.addTab(self.sensors, "")
         self.pages.addTab(events_page, "")
         self.pages.addTab(iml_page, "")
         self.pages.addTab(self.ecc, "")
+        self.pages.addTab(raid_page, "")
         layout.addWidget(self.pages, 1)
 
         language_manager.language_changed.connect(self.retranslate)
@@ -277,6 +300,42 @@ class ProliantPanel(QWidget):
             # Server mit BMC: automatisch auslesen und regelmäßig aktualisieren.
             QTimer.singleShot(1500, self.start)
             self._timer.start()
+
+    def _build_raid_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        header = QHBoxLayout()
+        self.raid_summary = QLabel()
+        self.raid_summary.setWordWrap(True)
+        header.addWidget(self.raid_summary, 1)
+        self.ssaducli_btn = QPushButton()
+        self.ssaducli_btn.setEnabled(False)
+        self.ssaducli_btn.clicked.connect(self.save_ssaducli)
+        header.addWidget(self.ssaducli_btn)
+        layout.addLayout(header)
+        self.raid_findings = QPlainTextEdit()
+        self.raid_findings.setReadOnly(True)
+        self.raid_findings.setMaximumHeight(110)
+        layout.addWidget(self.raid_findings)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.raid_controllers = _table(9)
+        self.raid_lds = _table(8)
+        self.raid_pds = _table(13)
+        self.raid_raw = QPlainTextEdit()
+        self.raid_raw.setReadOnly(True)
+        self.raid_raw.setPlaceholderText("ssacli / storcli …")
+        for widget in (self.raid_controllers, self.raid_lds, self.raid_pds, self.raid_raw):
+            splitter.addWidget(widget)
+        splitter.setSizes([120, 120, 260, 160])
+        layout.addWidget(splitter, 1)
+        return page
+
+    def show_raid_tab(self) -> None:
+        """Zeigt den Reiter „RAID“ und liest aus, falls noch keine Daten vorliegen."""
+        self.pages.setCurrentIndex(self.pages.count() - 1)
+        if self._data is None and self._worker is None:
+            self.start()
 
     # ----- Root-Sitzung -----
 
@@ -301,6 +360,8 @@ class ProliantPanel(QWidget):
         self._timer.stop()
         if self._worker is not None:
             self._worker.wait(5000)
+        if self._ssaducli_worker is not None:
+            self._ssaducli_worker.wait(5000)
         if self._broker is not None:
             self._broker.close()
             self._broker = None
@@ -323,11 +384,27 @@ class ProliantPanel(QWidget):
             "at startup and every 5 minutes (password asked once)."))
         self.read_btn.setText(_t("Jetzt auslesen", "Read now"))
         self.export_btn.setText(_t("Als HTML exportieren …", "Export as HTML …"))
+        self.ssaducli_btn.setText(_t("Diagnosebericht (ssaducli) speichern …", "Save diagnostic report (ssaducli) …"))
+        self.ssaducli_btn.setToolTip(_t(
+            "Vollständiger HPE-Smart-Storage-Diagnosebericht als ZIP (für den HPE-Support); nur mit ssaducli.",
+            "Complete HPE Smart Storage diagnostic report as ZIP (for HPE support); requires ssaducli."))
         for index, (de, en) in enumerate((("Übersicht", "Overview"), ("Sensoren", "Sensors"),
                                           ("iLO-Ereignisprotokoll", "iLO event log"),
                                           ("Integrated Management Log (IML)", "Integrated Management Log (IML)"),
-                                          ("Speicher / ECC", "Memory / ECC"))):
+                                          ("Speicher / ECC", "Memory / ECC"), ("RAID", "RAID"))):
             self.pages.setTabText(index, _t(de, en))
+        self.raid_controllers.setHorizontalHeaderLabels([
+            _t("Controller", "Controller"), _t("Slot", "Slot"), _t("Firmware", "Firmware"), _t("Seriennummer", "Serial"),
+            _t("Status", "Status"), _t("Cache", "Cache"), _t("Akku/Kondensator", "Battery/capacitor"),
+            _t("Temp. °C", "Temp. °C"), _t("Bewertung", "Rating")])
+        self.raid_lds.setHorizontalHeaderLabels([
+            _t("Controller", "Controller"), _t("LD", "LD"), _t("RAID", "RAID"), _t("Größe", "Size"), _t("Status", "Status"),
+            _t("Stripe", "Stripe"), _t("OS-Gerät", "OS device"), _t("Bewertung", "Rating")])
+        self.raid_pds.setHorizontalHeaderLabels([
+            _t("Controller", "Controller"), _t("Position", "Position"), _t("Typ", "Type"), _t("Größe", "Size"),
+            _t("Status", "Status"), _t("Modell", "Model"), _t("Seriennummer", "Serial"), _t("Firmware", "Firmware"),
+            _t("Temp. °C", "Temp. °C"), _t("Stunden", "Hours"), _t("SSD-Rest %", "SSD life %"), _t("Link", "Link"),
+            _t("Bewertung", "Rating")])
         self.sensors.setHorizontalHeaderLabels([_t("Sensor", "Sensor"), _t("Wert", "Reading"), _t("Status", "Status"),
                                                 _t("Einheit/Entity", "Entity"), _t("Bewertung", "Rating")])
         self.events.setHorizontalHeaderLabels(["#", _t("Datum", "Date"), _t("Zeit", "Time"), _t("Sensor", "Sensor"),
@@ -388,17 +465,115 @@ class ProliantPanel(QWidget):
         self.show_iml()
         _ecc_state, ecc_summary, ecc_text = data["ecc"]
         self.ecc.setPlainText(ecc_summary + "\n\n" + ecc_text)
+        self.show_raid(data.get("raid"))
         state, text = self._summary(data)
         self.summary.setStyleSheet(_CSS.get(state, ""))
         self.summary.setText(text)
 
+    @staticmethod
+    def _raid_rows(report) -> tuple[list, list, list]:
+        """Zeilen (Zellen, Schweregrad) für Controller-, LD- und PD-Tabelle."""
+        def num(value):
+            return "" if value is None else f"{value:g}" if isinstance(value, float) else str(value)
+        ctrl_rows, ld_rows, pd_rows = [], [], []
+        for c in report.controllers if report else []:
+            cache = " / ".join(x for x in (c.cache_size, c.cache_status, c.cache_ratio) if x)
+            battery = c.battery_status + (f" ({c.battery_temperature} °C)" if c.battery_temperature is not None else "")
+            ctrl_rows.append(([c.model, c.slot or c.pci_address, c.firmware, c.serial, c.status, cache, battery,
+                               num(c.temperature), _sev(c.severity)], c.severity))
+            for ld in c.logical_drives:
+                status = ld.status + (f" ({ld.progress_percent:g} %)" if ld.progress_percent is not None
+                                      and "%" not in ld.status else "")
+                ld_rows.append(([c.label, ld.number, ld.raid_level, ld.size, status, ld.stripe_size, ld.os_device,
+                                 _sev(ld.severity)], ld.severity))
+            for pd in c.physical_drives:
+                temp = num(pd.temperature) + (f"/{pd.temperature_max}" if pd.temperature_max is not None else "")
+                status = pd.status + (" / Predictive Failure" if pd.predictive_failure
+                                      and "predictive" not in pd.status.lower() else "")
+                pd_rows.append(([c.label, pd.location, pd.drive_type, pd.size, status, pd.model, pd.serial, pd.firmware,
+                                 temp, num(pd.power_on_hours), num(pd.ssd_life_percent), pd.phy_rate, _sev(pd.severity)],
+                                pd.severity))
+        return ctrl_rows, ld_rows, pd_rows
+
+    def show_raid(self, report) -> None:
+        lang = language_manager.language
+        if report is None:
+            self.raid_summary.setText(_t("RAID noch nicht ausgelesen.", "RAID not read yet."))
+            self.raid_summary.setStyleSheet(_CSS["info"])
+            return
+        self.ssaducli_btn.setEnabled("ssaducli" in report.tools and self._ssaducli_worker is None)
+        severity = report.severity
+        self.raid_summary.setStyleSheet(_CSS.get(severity, ""))
+        lines = [hpe_raid.summary_line(report, lang)]
+        if report.tools:
+            lines.append(_t("Werkzeuge: ", "Tools: ") + ", ".join(f"{k}: {v}" for k, v in sorted(report.tools.items())))
+        for controller in report.controllers:
+            lines.append(f"{_sev(controller.severity)} – {controller.label}")
+        self.raid_summary.setText("\n".join(lines))
+        findings = [f"[{_sev(f.severity)}] {f.target}: {f.text(lang)}" if f.target else f"[{_sev(f.severity)}] {f.text(lang)}"
+                    for f in report.findings()]
+        findings.extend(_t("Fehler: ", "Error: ") + e for e in report.errors)
+        self.raid_findings.setPlainText("\n".join(findings) or _t("Keine Befunde.", "No findings."))
+        ctrl_rows, ld_rows, pd_rows = self._raid_rows(report)
+        _fill(self.raid_controllers, ctrl_rows)
+        _fill(self.raid_lds, ld_rows)
+        _fill(self.raid_pds, pd_rows)
+        self.raid_raw.setPlainText(report.raw_text() or report.hint)
+
+    def save_ssaducli(self):
+        if self._ssaducli_worker is not None:
+            return
+        default = Path.home() / "Downloads" / f"ssaducli-{datetime.now():%Y%m%d-%H%M%S}.zip"
+        path, _ = QFileDialog.getSaveFileName(self, _t("Diagnosebericht speichern", "Save diagnostic report"),
+                                              str(default), "ZIP (*.zip)")
+        if not path:
+            return
+        if not path.endswith(".zip"):
+            path += ".zip"
+        if any(ch.isspace() for ch in path):
+            self.raid_summary.setText(_t("Zielpfad darf keine Leerzeichen enthalten.", "Target path must not contain spaces."))
+            return
+        if Path(path).exists():
+            # Root-Skript schreibt nur neue Dateien; der Benutzer hat das Überschreiben bestätigt.
+            try:
+                Path(path).unlink()
+            except OSError as exc:
+                self.raid_summary.setText(str(exc))
+                return
+        self.ssaducli_btn.setEnabled(False)
+        self.raid_summary.setText(_t("Diagnosebericht wird erstellt … (kann einige Minuten dauern)",
+                                     "Creating diagnostic report … (may take a few minutes)"))
+        worker = SsaducliWorker(self, path)
+        self._ssaducli_worker = worker
+        worker.done.connect(self._ssaducli_done)
+        connect_finished(worker, self._ssaducli_finished)
+        worker.start()
+
+    def _ssaducli_done(self, ok: bool, message: str):
+        prefix = _t("Diagnosebericht gespeichert: ", "Diagnostic report saved: ") if ok else _t("ssaducli: ", "ssaducli: ")
+        self.raid_summary.setStyleSheet(_CSS["ok" if ok else "error"])
+        self.raid_summary.setText(prefix + message)
+
+    def _ssaducli_finished(self, worker=None):
+        if release_worker(self, "_ssaducli_worker", worker):
+            report = (self._data or {}).get("raid")
+            self.ssaducli_btn.setEnabled(bool(report and "ssaducli" in report.tools))
+
     def _summary(self, data) -> tuple[str, str]:
         stamp = data["time"].strftime("%H:%M")
+        raid = data.get("raid")
+        raid_text = ""
+        raid_state = "ok"
+        if raid is not None and raid.available:
+            raid_text = " | " + hpe_raid.summary_line(raid, language_manager.language)
+            raid_state = raid.severity
         if data["bmc_error"] and data["events"] is None:
             ecc_state, ecc_summary, _ = data["ecc"]
-            return ("info" if ecc_state == "ok" else ecc_state,
-                    _t(f"[{stamp}] Kein iLO/BMC erreichbar: {data['bmc_error']} | {ecc_summary}",
-                       f"[{stamp}] No iLO/BMC reachable: {data['bmc_error']} | {ecc_summary}"))
+            state = "info" if ecc_state == "ok" else ecc_state
+            if raid_state in ("warn", "error"):
+                state = hpe_raid.worst(state if state != "info" else "ok", raid_state)
+            return (state, _t(f"[{stamp}] Kein iLO/BMC erreichbar: {data['bmc_error']} | {ecc_summary}{raid_text}",
+                              f"[{stamp}] No iLO/BMC reachable: {data['bmc_error']} | {ecc_summary}{raid_text}"))
         events = data["events"] or []
         sensors = data["sensors"] or []
         err = sum(e.severity == "error" for e in events)
@@ -416,9 +591,10 @@ class ProliantPanel(QWidget):
                   f"Ereignisprotokoll: {len(events)} Einträge ({err} Fehler, {warn} Warnungen){iml_text} | {data['ecc'][1]}",
                   f"[{stamp}] Sensors: {len(sensors)} ({s_err} critical, {s_warn} warning) | "
                   f"Event log: {len(events)} entries ({err} errors, {warn} warnings){iml_text} | {data['ecc'][1]}")
-        if s_err or err or i_err or data["ecc"][0] == "error":
+        text += raid_text
+        if s_err or err or i_err or data["ecc"][0] == "error" or raid_state == "error":
             return "error", text
-        if s_warn or warn or i_warn or data["ecc"][0] == "warn":
+        if s_warn or warn or i_warn or data["ecc"][0] == "warn" or raid_state == "warn":
             return "warn", text
         return "ok", text
 
@@ -456,6 +632,15 @@ class ProliantPanel(QWidget):
             lines.append(_t("Ereignisprotokoll: ", "Event log: ") + data["events_error"])
         if data.get("iml_error"):
             lines.append("IML: " + data["iml_error"])
+        raid = data.get("raid")
+        if raid is not None and raid.available:
+            lines.append("")
+            lines.append(_t("== RAID-Controller ==", "== RAID controllers =="))
+            lines.append(hpe_raid.summary_line(raid, language_manager.language))
+            for controller in raid.controllers:
+                lines.append(f"  {_sev(controller.severity)} – {controller.label}: {controller.status or '?'}"
+                             + (f", {_t('Akku', 'battery')} {controller.battery_status}" if controller.battery_status else ""))
+            lines.extend(f"  {_t('Fehler', 'Error')}: {error}" for error in raid.errors)
         lines.append("")
         lines.append(_t("Stand: ", "As of: ") + data["time"].strftime("%d.%m.%Y %H:%M:%S"))
         return lines
@@ -543,6 +728,25 @@ class ProliantPanel(QWidget):
                   for e in reversed(data["events"] or [])]
         iml = [([e.number, e.created, e.updated, e.count, e.category, e.message, self._iml_rating(e)], e.severity)
                for e in reversed(data.get("iml") or [])]
+        raid = data.get("raid")
+        raid_html = ""
+        if raid is not None and raid.available:
+            ctrl_rows, ld_rows, pd_rows = self._raid_rows(raid)
+            lang = language_manager.language
+
+            def head(labels):
+                return "<tr>" + "".join(f"<th>{escape(label)}</th>" for label in labels) + "</tr>"
+            findings = "".join(f'<li style="color:{color.get(f.severity, "")}">{escape(f.target)}: {escape(f.text(lang))}</li>'
+                               for f in raid.findings())
+            findings += "".join(f"<li>{escape(error)}</li>" for error in raid.errors)
+            raid_html = (f"<h2>{_t('RAID-Controller', 'RAID controllers')}</h2>"
+                         f"<p><b>{escape(hpe_raid.summary_line(raid, lang))}</b></p><ul>{findings}</ul>"
+                         f"<table>{head([_t('Controller', 'Controller'), 'Slot', 'Firmware', _t('Seriennummer', 'Serial'), 'Status', 'Cache', _t('Akku/Kondensator', 'Battery/capacitor'), '°C', _t('Bewertung', 'Rating')])}{rows(ctrl_rows)}</table>"
+                         f"<h3>{_t('Logische Laufwerke', 'Logical drives')}</h3>"
+                         f"<table>{head([_t('Controller', 'Controller'), 'LD', 'RAID', _t('Größe', 'Size'), 'Status', 'Stripe', _t('OS-Gerät', 'OS device'), _t('Bewertung', 'Rating')])}{rows(ld_rows)}</table>"
+                         f"<h3>{_t('Physische Laufwerke', 'Physical drives')}</h3>"
+                         f"<table>{head([_t('Controller', 'Controller'), _t('Position', 'Position'), _t('Typ', 'Type'), _t('Größe', 'Size'), 'Status', _t('Modell', 'Model'), _t('Seriennummer', 'Serial'), 'Firmware', '°C', _t('Stunden', 'Hours'), 'SSD %', 'Link', _t('Bewertung', 'Rating')])}{rows(pd_rows)}</table>"
+                         f"<details><summary>{_t('Rohausgabe', 'Raw output')}</summary><pre>{escape(raid.raw_text())}</pre></details>")
         style = "<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:2px 6px}</style>"
         return ('<!doctype html><meta charset="utf-8"><title>ProLiant Info</title>' + style +
                 f"<h1>ProLiant Info</h1><p><b>{escape(self._summary(data)[1])}</b></p>"
@@ -555,4 +759,5 @@ class ProliantPanel(QWidget):
                 f"<h2>Integrated Management Log (IML)</h2><table><tr><th>#</th><th>{_t('Erstellt', 'Created')}</th>"
                 f"<th>{_t('Aktualisiert', 'Updated')}</th><th>{_t('Anzahl', 'Count')}</th><th>{_t('Kategorie', 'Category')}</th>"
                 f"<th>{_t('Meldung', 'Message')}</th><th>{_t('Bewertung', 'Rating')}</th></tr>{rows(iml)}</table>"
-                f"<h2>{_t('Speicher / ECC', 'Memory / ECC')}</h2><pre>{escape(data['ecc'][1] + chr(10) + chr(10) + data['ecc'][2])}</pre>")
+                f"<h2>{_t('Speicher / ECC', 'Memory / ECC')}</h2><pre>{escape(data['ecc'][1] + chr(10) + chr(10) + data['ecc'][2])}</pre>"
+                + raid_html)

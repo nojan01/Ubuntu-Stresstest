@@ -1,0 +1,196 @@
+{
+"Controllers":[
+{
+	"Command Status" : {
+		"CLI Version" : "007.2807.0000.0000 Dec 22, 2023",
+		"Operating system" : "Linux 6.8.0-45-generic",
+		"Controller" : 0,
+		"Status" : "Success",
+		"Description" : "Show Drive Information Succeeded."
+	},
+	"Response Data" : {
+		"Drive /c0/e252/s0" : [
+			{
+				"EID:Slt" : "252:0",
+				"DID" : 8,
+				"State" : "Onln",
+				"DG" : 0,
+				"Size" : "1.745 TB",
+				"Intf" : "SAS",
+				"Med" : "SSD",
+				"SED" : "N",
+				"PI" : "N",
+				"SeSz" : "512B",
+				"Model" : "MO001920PXDCJ",
+				"Sp" : "U",
+				"Type" : "-"
+			}
+		],
+		"Drive /c0/e252/s0 - Detailed Information" : {
+			"Drive /c0/e252/s0 State" : {
+				"Shield Counter" : 0,
+				"Media Error Count" : 0,
+				"Other Error Count" : 0,
+				"Drive Temperature" : " 35C (95.00 F)",
+				"Predictive Failure Count" : 0,
+				"S.M.A.R.T alert flagged by drive" : "No"
+			},
+			"Drive /c0/e252/s0 Device attributes" : {
+				"SN" : "S4YNNA0R123456",
+				"Manufacturer Id" : "HPE     ",
+				"Model Number" : "MO001920PXDCJ",
+				"NAND Vendor" : "NA",
+				"WWN" : "5002538B41234567",
+				"Firmware Revision" : "HPD3",
+				"Raw size" : "1.746 TB [0xdf8fe2b0 Sectors]",
+				"Coerced size" : "1.745 TB [0xdf800000 Sectors]",
+				"Non Coerced size" : "1.745 TB [0xdf8ee2b0 Sectors]",
+				"Device Speed" : "12.0Gb/s",
+				"Link Speed" : "12.0Gb/s",
+				"NCQ setting" : "N/A",
+				"Write Cache" : "N/A",
+				"Logical Sector Size" : "512B",
+				"Physical Sector Size" : "4 KB",
+				"Connector Name" : "Port 0 - 3 x1",
+				"SSD Life Left (%)" : 94
+			},
+			"Drive /c0/e252/s0 Policies/Settings" : {
+				"Drive position" : "DriveGroup:0, Span:0, Row:0",
+				"Enclosure position" : 1,
+				"Connected Port Number" : "0(path0)",
+				"Sequence Number" : 2,
+				"Commissioned Spare" : "No",
+				"Emergency Spare" : "No",
+				"Last Predictive Failure Event Sequence Number" : 0,
+				"Successful diagnostics completion on" : "N/A",
+				"FDE Type" : "None",
+				"SED Capable" : "No",
+				"SED Enabled" : "No",
+				"Secured" : "No",
+				"Cryptographic Erase Capable" : "Yes",
+				"Sanitize Support" : "Yes",
+				"Locked" : "No",
+				"Needs EKM Attention" : "No",
+				"PI Eligible" : "No",
+				"Certified" : "Yes",
+				"Wide Port Capable" : "No",
+				"Multipath" : "No",
+				"Port Information" : [
+					{
+						"Port" : 0,
+						"Status" : "Active",
+						"Linkspeed" : "12.0Gb/s",
+						"SAS address" : "0x5002538b41234565"
+					}
+				]
+			},
+			"Inquiry Data" : "00 00 06 12 8b 01 10 02 48 50 45 20 20 20 20 20"
+		},
+		"Drive /c0/e252/s1" : [
+			{
+				"EID:Slt" : "252:1",
+				"DID" : 9,
+				"State" : "Offln",
+				"DG" : 0,
+				"Size" : "1.745 TB",
+				"Intf" : "SAS",
+				"Med" : "SSD",
+				"SED" : "N",
+				"PI" : "N",
+				"SeSz" : "512B",
+				"Model" : "MO001920PXDCJ",
+				"Sp" : "U",
+				"Type" : "-"
+			}
+		],
+		"Drive /c0/e252/s1 - Detailed Information" : {
+			"Drive /c0/e252/s1 State" : {
+				"Shield Counter" : 0,
+				"Media Error Count" : 17,
+				"Other Error Count" : 3,
+				"Drive Temperature" : " 38C (100.40 F)",
+				"Predictive Failure Count" : 0,
+				"S.M.A.R.T alert flagged by drive" : "No"
+			},
+			"Drive /c0/e252/s1 Device attributes" : {
+				"SN" : "S4YNNA0R123457",
+				"Manufacturer Id" : "HPE     ",
+				"Model Number" : "MO001920PXDCJ",
+				"NAND Vendor" : "NA",
+				"WWN" : "5002538B41234568",
+				"Firmware Revision" : "HPD3",
+				"Raw size" : "1.746 TB [0xdf8fe2b0 Sectors]",
+				"Coerced size" : "1.745 TB [0xdf800000 Sectors]",
+				"Non Coerced size" : "1.745 TB [0xdf8ee2b0 Sectors]",
+				"Device Speed" : "12.0Gb/s",
+				"Link Speed" : "12.0Gb/s",
+				"NCQ setting" : "N/A",
+				"Write Cache" : "N/A",
+				"Logical Sector Size" : "512B",
+				"Physical Sector Size" : "4 KB",
+				"Connector Name" : "Port 0 - 3 x1",
+				"SSD Life Left (%)" : 91
+			},
+			"Drive /c0/e252/s1 Policies/Settings" : {
+				"Drive position" : "DriveGroup:0, Span:0, Row:1",
+				"Enclosure position" : 1,
+				"Connected Port Number" : "1(path0)",
+				"Sequence Number" : 4,
+				"Commissioned Spare" : "No",
+				"Emergency Spare" : "No",
+				"Last Predictive Failure Event Sequence Number" : 0,
+				"Successful diagnostics completion on" : "N/A",
+				"SED Capable" : "No",
+				"SED Enabled" : "No",
+				"Secured" : "No",
+				"Locked" : "No",
+				"Certified" : "Yes",
+				"Multipath" : "No"
+			},
+			"Inquiry Data" : "00 00 06 12 8b 01 10 02 48 50 45 20 20 20 20 20"
+		},
+		"Drive /c0/e252/s2" : [
+			{
+				"EID:Slt" : "252:2",
+				"DID" : 10,
+				"State" : "UGood",
+				"DG" : "-",
+				"Size" : "1.745 TB",
+				"Intf" : "SAS",
+				"Med" : "SSD",
+				"SED" : "N",
+				"PI" : "N",
+				"SeSz" : "512B",
+				"Model" : "MO001920PXDCJ",
+				"Sp" : "U",
+				"Type" : "-"
+			}
+		],
+		"Drive /c0/e252/s2 - Detailed Information" : {
+			"Drive /c0/e252/s2 State" : {
+				"Shield Counter" : 0,
+				"Media Error Count" : 0,
+				"Other Error Count" : 0,
+				"Drive Temperature" : " 34C (93.20 F)",
+				"Predictive Failure Count" : 0,
+				"S.M.A.R.T alert flagged by drive" : "No"
+			},
+			"Drive /c0/e252/s2 Device attributes" : {
+				"SN" : "S4YNNA0R123458",
+				"Manufacturer Id" : "HPE     ",
+				"Model Number" : "MO001920PXDCJ",
+				"WWN" : "5002538B41234569",
+				"Firmware Revision" : "HPD3",
+				"Raw size" : "1.746 TB [0xdf8fe2b0 Sectors]",
+				"Device Speed" : "12.0Gb/s",
+				"Link Speed" : "12.0Gb/s",
+				"Logical Sector Size" : "512B",
+				"Physical Sector Size" : "4 KB",
+				"Connector Name" : "Port 0 - 3 x1",
+				"SSD Life Left (%)" : 100
+			}
+		}
+	}
+}
+]
+}

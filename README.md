@@ -2,6 +2,12 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.61 (in Arbeit)
+
+- **RAID-Controller mit Ampel-Bewertung:** Neue Unterseite **ProLiant Info → RAID**. HPE Smart Array (`ssacli`/`hpssacli`) und Broadcom MegaRAID „MR“ (`storcli64`/`storcli2`) werden in **einer** Root-Sitzung strukturiert ausgewertet statt als Rohtext: Controller (Modell, Slot, Firmware, S/N, Status, Cache, Akku/Kondensator, Temperatur), logische Laufwerke (RAID-Level, Status, Rebuild-%, OS-Gerät) und physische Laufwerke (Position, Typ, Größe, Status, Modell, S/N, Firmware, Temperatur, Betriebsstunden, SSD-Rest, Link). Rot bei Ausfall, Predictive Failure, SSD-Rest < 10 % oder defektem/fehlendem Akku bei Cache; orange bei Rebuild, Cache deaktiviert, Medium-Fehlern, hoher Temperatur oder SSD-Rest < 25 %. Rohausgabe bleibt einsehbar; Button **Diagnosebericht (ssaducli) speichern**. RAID-Ampel in Übersicht, Zusammenfassung und HTML-Export.
+- **Gesamttest:** Neuer Schritt **„ProLiant / RAID-Controller“** – Momentaufnahme von RAID, IML und Sensoren vor und nach den Tests; neue RAID-Fehler → Schritt FEHLGESCHLAGEN, neue IML-Einträge und Sensorwarnungen werden als Warnung aufgeführt. Ohne Root-Sitzung nur Hinweiszeile.
+- Der Button „HPE RAID-Info“ in den Disk-Tabs heißt jetzt **„RAID-Controller-Status“** und springt zur neuen Unterseite (keine doppelte Passwortabfrage mehr). `scripts/collect_hpe_samples.sh` sammelt auf einem ProLiant echte Tool-Ausgaben als Test-Fixtures.
+
 ### Neu in 0.2.60
 
 Ergebnis eines vollständigen Code-Reviews – Sicherheit, Zuverlässigkeit und „falsch-positive“ Ergebnisse:
@@ -356,7 +362,7 @@ sudo bash scripts/install_hardwaretest.sh --yes
 - **GPU-Lasttest (Vulkan)** – AMD-, Intel- und NVIDIA-Grafik ohne Herstellertools: VRAM-Mustertest, Rechenlast mit Ergebnisvergleich, Liveüberwachung aus sysfs.
 - **Netzwerkdiagnose** – Zeigt Adapter, Treiber, PCI-Adresse, Linkstatus/-geschwindigkeit, Duplex, MTU und IP-Adressen. Ping ermittelt Paketverlust, Latenz und Jitter; iperf3 misst Durchsatz und Retransmits. Alle Messwerte können gegen Pass/Fail-Grenzen geprüft werden.
 - **Gesamttestplan** – Führt frei auswählbare CPU-, RAM-, NVMe-, Netzwerk- und NVIDIA/DCGM-Prüfungen automatisch nacheinander aus. Jeder Lauf erzeugt ein Klartext- und ein druckoptimiertes HTML-Protokoll; der Browser kann dieses zusätzlich als PDF speichern. Netzwerk-Dauerläufe werden kompakt mit Summenwerten statt einzelner Ping-Pakete oder iperf3-Intervalle protokolliert.
-- **HPE RAID-Info** – SmartArray-Controller-Status via `ssacli` / `hpssacli`.
+- **ProLiant Info** – iLO-Systemdaten, Sensoren, Ereignisprotokoll, IML, ECC sowie **RAID-Controller** (HPE Smart Array via `ssacli`, MegaRAID via `storcli64`) mit Ampel-Bewertung und ssaducli-Diagnosebericht.
 
 Für NVIDIA-Inventardaten muss ein geeigneter NVIDIA-Treiber installiert sein und
 `nvidia-smi` funktionieren. Aktive GPU-Diagnosen benötigen zusätzlich NVIDIA DCGM

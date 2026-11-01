@@ -32,10 +32,10 @@ from PySide6.QtWidgets import (
 	QWidget,
 )
 
+from hardwaretest.core import hpe_raid
 from hardwaretest.core.system_info import (
 	SystemInfo,
 	format_smart_summary,
-	read_hpe_raid_info,
 	read_smart_info,
 	read_system_info,
 )
@@ -720,6 +720,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 	"""Runs heuristic fio read sweeps across entire block devices."""
 
 	log_signal = Signal(str)
+	raid_tab_requested = Signal()
 
 	def __init__(
 		self,
@@ -780,7 +781,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.klog_btn = QPushButton("Kernel-Logs")
 		self.mce_btn = QPushButton("MCE-Logs")
 		self.smart_btn = QPushButton("SMART-Info")
-		self.raid_btn = QPushButton("HPE Smart Array – RAID-Info (nur HPE-Controller)")
+		self.raid_btn = QPushButton("RAID-Controller-Status (Tab „ProLiant Info“)")
 
 		device_hint = QLabel(
 			"Hinweis: Der Test liest alle Blöcke mit pkexec/fio, schreibt aber nichts. Passwortabfrage möglich."
@@ -1010,20 +1011,25 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		_show_info_dialog(self, "SMART-Informationen", "\n".join(lines))
 
 	def _show_raid_info(self) -> None:
-		"""Zeigt HPE SmartArray RAID-Controller-Informationen."""
-		info = read_hpe_raid_info()
-		if info.error and not info.available:
-			_show_info_dialog(self, "HPE RAID-Info", info.error)
+		"""Verweist auf die strukturierte RAID-Auswertung im Tab „ProLiant Info“ → „RAID“.
+
+		Die Auswertung braucht eine Root-Sitzung, die nur das ProLiant-Panel hält;
+		ohne gefundenes RAID-Tool erscheint stattdessen ein Hinweis.
+		"""
+		tools = hpe_raid.find_tools()
+		if not tools:
+			_show_info_dialog(
+				self, language_manager.tr("HPE RAID-Info"),
+				language_manager.tr("Kein RAID-Tool gefunden (ssacli/hpssacli/storcli64 nicht installiert)."))
 			return
-		title = f"HPE RAID-Info ({info.tool_name})" if info.tool_name else "HPE RAID-Info"
-		content = info.raw_output if info.raw_output else (info.error or "Keine Ausgabe.")
-		_show_info_dialog(self, title, content)
+		self.raid_tab_requested.emit()
 
 
 class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 	"""Runs destructive write/read/verify passes across block devices."""
 
 	log_signal = Signal(str)
+	raid_tab_requested = Signal()
 
 	def __init__(
 		self,
@@ -1098,7 +1104,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.klog_btn = QPushButton("Kernel-Logs")
 		self.mce_btn = QPushButton("MCE-Logs")
 		self.smart_btn = QPushButton("SMART-Info")
-		self.raid_btn = QPushButton("HPE Smart Array – RAID-Info (nur HPE-Controller)")
+		self.raid_btn = QPushButton("RAID-Controller-Status (Tab „ProLiant Info“)")
 
 		button_row = QHBoxLayout()
 		button_row.addWidget(self.scan_btn)
@@ -1400,11 +1406,15 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		_show_info_dialog(self, "SMART-Informationen", "\n".join(lines))
 
 	def _show_raid_info(self) -> None:
-		"""Zeigt HPE SmartArray RAID-Controller-Informationen."""
-		info = read_hpe_raid_info()
-		if info.error and not info.available:
-			_show_info_dialog(self, "HPE RAID-Info", info.error)
+		"""Verweist auf die strukturierte RAID-Auswertung im Tab „ProLiant Info“ → „RAID“.
+
+		Die Auswertung braucht eine Root-Sitzung, die nur das ProLiant-Panel hält;
+		ohne gefundenes RAID-Tool erscheint stattdessen ein Hinweis.
+		"""
+		tools = hpe_raid.find_tools()
+		if not tools:
+			_show_info_dialog(
+				self, language_manager.tr("HPE RAID-Info"),
+				language_manager.tr("Kein RAID-Tool gefunden (ssacli/hpssacli/storcli64 nicht installiert)."))
 			return
-		title = f"HPE RAID-Info ({info.tool_name})" if info.tool_name else "HPE RAID-Info"
-		content = info.raw_output if info.raw_output else (info.error or "Keine Ausgabe.")
-		_show_info_dialog(self, title, content)
+		self.raid_tab_requested.emit()

@@ -2,7 +2,9 @@
 
 Der Root-Prozess nimmt zeilenweise nur freigegebene Aufträge entgegen: nvme mit
 lesenden/Selbsttest-Unterbefehlen, dcgmi, mitgeliefertes OpenDCDiag, lesendes
-ipmitool, dmidecode, IML per ilorest, ein eng geprüfter fio-Auftrag
+ipmitool, dmidecode, IML per ilorest, lesende RAID-Abfragen (ssacli/hpssacli,
+storcli64/storcli2) sowie ein ssaducli-Diagnosebericht in eine neue .zip-Datei,
+ein eng geprüfter fio-Auftrag
 (``FIOJOB``; die Jobdatei schreibt der Root-Prozess selbst aus einzeln
 geprüften Schlüssel/Wert-Paaren) sowie eine feste rasdaemon-Abfrage
 (``RASQUERY``).  Jeder Auftrag läuft in einer eigenen Prozessgruppe und
@@ -112,7 +114,7 @@ while IFS= read -r line; do
   op=${1:-}; [ $# -gt 0 ] && shift
   case "$op" in
   RUN)
-    ok=1
+    ok=1; postchown=0
     case "${1:-}" in
       dcgmi) ;;
       nvme) case "${2:-}" in smart-log|self-test-log|device-self-test) ;; *) ok=0;; esac ;;
@@ -120,6 +122,30 @@ while IFS= read -r line; do
       dmidecode) [ $# -eq 3 ] && [ "$2" = "-t" ] && case "$3" in memory|system) true;; *) false;; esac || ok=0 ;;
       ilorest) [ "$*" = "ilorest --nologo serverlogs --selectlog=IML --json" ] || ok=0 ;;
       modprobe) [ $# -eq 3 ] && [ "$2" = "-q" ] && case "$3" in ipmi_si|ipmi_devintf) true;; *) false;; esac || ok=0 ;;
+      ssacli|hpssacli|hpacucli|/opt/smartstorageadmin/ssacli/bin/ssacli|/opt/smartstorageadmin/ssacli/bld/ssacli|/opt/hp/hpssacli/bld/hpssacli|/opt/compaq/hpacucli/bld/hpacucli)
+        # Nur lesende Smart-Array-Abfragen (Status/Konfiguration/Laufwerksdetails).
+        rest=""; i=0; for a in "$@"; do i=$((i+1)); [ "$i" -gt 1 ] && rest="$rest $a"; done; rest=${rest# }
+        case "$rest" in
+          version|"ctrl all show"|"ctrl all show status"|"ctrl all show config"|"ctrl all show config detail"|"ctrl all show detail") ;;
+          "ctrl slot="*" pd all show detail"|"ctrl slot="*" ld all show detail"|"ctrl slot="*" show detail"|"ctrl slot="*" show config detail")
+            slotarg=${3#slot=}; case "$slotarg" in ''|*[!0-9]*) ok=0;; esac ;;
+          *) ok=0 ;;
+        esac ;;
+      storcli|storcli64|storcli2|/opt/MegaRAID/storcli/storcli64|/opt/MegaRAID/storcli2/storcli2|/opt/MegaRAID/storcli/storcli|/usr/local/sbin/storcli64|/usr/local/sbin/storcli2)
+        # Nur lesende MegaRAID-Abfragen im JSON-Format.
+        rest=""; i=0; for a in "$@"; do i=$((i+1)); [ "$i" -gt 1 ] && rest="$rest $a"; done; rest=${rest# }
+        case "$rest" in
+          "/call show all J"|"/call show J"|"/call/eall/sall show all J"|"/call/vall show all J"|"/call/cv show all J"|"/call/bbu show all J") ;;
+          *) ok=0 ;;
+        esac ;;
+      ssaducli|/opt/smartstorageadmin/ssaducli/bin/ssaducli|/opt/smartstorageadmin/ssaducli/bld/ssaducli)
+        # Diagnosebericht nur als neue .zip-Datei unter einem absoluten Pfad; danach
+        # geht die Datei an den aufrufenden Benutzer über (postchown).
+        [ $# -eq 3 ] && [ "$2" = "-f" ] || ok=0
+        case "${3:-}" in /*.zip) ;; *) ok=0;; esac
+        case "${3:-}" in *..*|*//*) ok=0;; esac
+        [ ! -e "${3:-}" ] && [ ! -L "${3:-}" ] || ok=0
+        postchown=1 ;;
       "$odcd_avx2"|"$odcd_generic")
         # Only the runner's time-limited diagnostic command, never arbitrary
         # executables, tool options or output paths supplied by a caller.
@@ -144,6 +170,10 @@ while IFS= read -r line; do
       *) bin=$(command -v "$1" 2>/dev/null) || { echo "@@ERR Programm nicht gefunden: $1"; continue; }
          shift; set -- "$bin" "$@" ;;
     esac
+    if [ "$postchown" = 1 ]; then
+      # ssaducli: Bericht nach Abschluss dem Aufrufer übereignen.
+      set -- sh -c '"$1" -f "$2"; rc=$?; [ -e "$2" ] && chown "$3" "$2"; exit $rc' hardwaretest-ssaducli "$1" "$3" "$caller"
+    fi
     launch "$@"
     ;;
   FIOJOB)

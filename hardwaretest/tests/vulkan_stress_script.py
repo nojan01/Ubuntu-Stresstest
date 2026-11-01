@@ -24,7 +24,9 @@ import ctypes
 import json
 import os
 import signal
+import struct
 import sys
+import threading
 import time
 from typing import Dict, List, Optional
 
@@ -33,6 +35,89 @@ try:
 except ImportError:  # direkt mit System-Python gestartet (siehe vulkan_runner.worker_command)
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from vulkan_spirv import SPIRV
+
+# --- CPU-Referenz der Rechenlast ----------------------------------------------
+FMA_A = 0.999999
+FMA_B = 1e-6
+FMA_START = (0.0, 0.5, 1.0, 2.0)
+FMA_TOLERANCE = 1e-5  # ~20 ulp bei Ergebnissen um 4.0
+
+
+def _round_f32(values):
+    return struct.unpack("<%df" % len(values), struct.pack("<%df" % len(values), *values))
+
+
+class FmaReference:
+    """Unabhängig auf der CPU berechnete Referenz der FMA-Ketten des GPU-Kernels.
+
+    Die Kette ``x = fma(x, a, b)`` wird exakt in fp32 nachgebildet: Produkt und
+    Summe passen in ein fp64, das Ergebnis wird je Schritt auf fp32 gerundet.
+    Zusätzlich wird die nicht verschmolzene Variante ``round(round(x*a)+b)``
+    geführt, weil manche Treiber ohne FMA rechnen. Beide Ketten erreichen nach
+    wenigen Millionen Schritten einen Fixpunkt, danach ist das Ergebnis für
+    jede größere Iterationszahl konstant. Die Berechnung läuft im Hintergrund;
+    solange die Referenz für eine Iterationszahl fehlt, wird der Vergleich
+    übersprungen (``None``).
+    """
+
+    def __init__(self, start: bool = True) -> None:
+        self.a, self.b = _round_f32((FMA_A, FMA_B))
+        self._lock = threading.Lock()
+        self._sums: Dict[int, tuple] = {}
+        self._final: Optional[tuple] = None
+        self._thread = threading.Thread(target=self.compute_all, daemon=True) if start else None
+        if self._thread is not None:
+            self._thread.start()
+
+    @staticmethod
+    def _sum(values) -> float:
+        left, right = _round_f32((values[0] + values[1], values[2] + values[3]))
+        return _round_f32((left + right,))[0]
+
+    def compute_all(self, limit: int = 1 << 25) -> None:
+        a, b = self.a, self.b
+        fused = list(_round_f32(FMA_START))
+        plain = list(fused)
+        n, checkpoint = 0, 1
+        fused_done = plain_done = False
+        while n < limit and not (fused_done and plain_done):
+            if not fused_done:
+                new = list(_round_f32([x * a + b for x in fused]))
+                fused_done = new == fused
+                fused = new
+            if not plain_done:
+                new = list(_round_f32([x + b for x in _round_f32([x * a for x in plain])]))
+                plain_done = new == plain
+                plain = new
+            n += 1
+            if n == checkpoint:
+                with self._lock:
+                    self._sums[n] = (self._sum(fused), self._sum(plain))
+                checkpoint *= 2
+        if fused_done and plain_done:
+            # Fixpunkt erreicht: ab hier ist das Ergebnis fuer jede Iterationszahl gleich.
+            with self._lock:
+                self._final = (self._sum(fused), self._sum(plain))
+
+    def lookup(self, iterations: int) -> Optional[tuple]:
+        """(verschmolzen, unverschmolzen) für ``iterations`` Schritte oder None, falls noch nicht berechnet."""
+        with self._lock:
+            if iterations in self._sums:
+                return self._sums[iterations]
+            if self._final is not None and iterations >= max(self._sums, default=0):
+                return self._final
+        return None
+
+    def check(self, value: float, iterations: int) -> Optional[str]:
+        """None = passt (oder keine Referenz), sonst Fehlertext."""
+        expected = self.lookup(iterations)
+        if expected is None:
+            return None
+        if any(abs(value - ref) <= FMA_TOLERANCE for ref in expected):
+            return None
+        return (f"Rechenergebnis {value!r} weicht von CPU-Referenz {expected[0]!r} ab "
+                f"({iterations} Iterationen)")
+
 
 # --- Vulkan-Konstanten (vulkan_core.h) ---------------------------------------
 ST_APPLICATION_INFO = 0
@@ -92,8 +177,14 @@ BLOCK = 256
 COMPUTE_GROUPS = 1024
 MAX_GROUPS = 65535
 CHUNK_BYTES = 256 * 1024 * 1024
+MIN_TEST_BYTES = 64 * 1024 * 1024  # darunter ist der Speichertest nicht aussagekräftig
 FENCE_TIMEOUT_NS = 60 * 1_000_000_000
 INTEGRATED_SHARE = 25  # höchstens 25 % des gemeinsam genutzten Arbeitsspeichers
+
+# Exit-Codes der GPU-Prozesse und des Hauptprozesses.
+EXIT_OK = 0
+EXIT_FAILED = 1  # Rechen-/Speicherfehler oder GPU-Absturz
+EXIT_INCONCLUSIVE = 2  # Umgebungsproblem: nichts Prüfbares, Treiber/Loader fehlt
 
 c_u32 = ctypes.c_uint32
 c_u64 = ctypes.c_uint64
@@ -251,6 +342,10 @@ class VulkanError(RuntimeError):
                 VK_TIMEOUT: "Zeitüberschreitung, GPU antwortet nicht"}.get(result, "")
         super().__init__(f"{name} fehlgeschlagen ({result}) {text}".strip())
         self.result = result
+
+
+class EnvironmentProblem(RuntimeError):
+    """Der Test kann nicht aussagekräftig laufen (kein Fehler der GPU)."""
 
 
 class Vulkan:
@@ -577,22 +672,33 @@ class GpuTest:
         """Rechenlast; Rückgabe: Anzahl Threads mit abweichendem Ergebnis."""
         self.dispatch("compute", self.compute_set, COMPUTE_GROUPS, PushConstants(0, 0, 0, iterations))
         raw = ctypes.string_at(self.out_ptr, self.threads * 4)
+        self.last_value = struct.unpack_from("<f", raw)[0]
         if raw == raw[:4] * self.threads:
             return 0
         values = memoryview(raw).cast("I")
         return sum(1 for value in values if value != values[0])
 
     def memory_test(self, pattern: int) -> int:
-        """Füllt alle Blöcke und prüft sie danach; Rückgabe: Anzahl falscher Wörter."""
-        ctypes.memset(self.errors_ptr, 0, 4)
+        """Füllt alle Blöcke und prüft sie danach; Rückgabe: Anzahl falscher Wörter.
+
+        Der Shader kennt nur einen 32-Bit-Wortindex (``base``), deshalb bekommt
+        jeder Block ein eigenes Muster (:func:`chunk_pattern`); so fallen auch
+        Blöcke auf, deren Adressen sich oberhalb von 16 GiB wiederholen. Der
+        32-Bit-Fehlerzähler wird nach jedem Block ausgelesen und genullt, damit
+        er (Block ≤ 256 MiB = 2^26 Wörter) nicht überlaufen kann.
+        """
+        bad = 0
         for step in ("fill", "verify"):
             base = 0
-            for _buffer, words, descriptor_set in self.chunks:
+            for index, (_buffer, words, descriptor_set) in enumerate(self.chunks):
                 groups = min(MAX_GROUPS, max(1, (words + BLOCK - 1) // BLOCK))
+                ctypes.memset(self.errors_ptr, 0, 4)
                 self.dispatch(step, descriptor_set, groups,
-                              PushConstants(pattern & 0xFFFFFFFF, base & 0xFFFFFFFF, words, 0))
+                              PushConstants(chunk_pattern(pattern, index, base), base & 0xFFFFFFFF, words, 0))
+                if step == "verify":
+                    bad += c_u32.from_address(self.errors_ptr).value
                 base += words
-        return c_u32.from_address(self.errors_ptr).value
+        return bad
 
     def close(self) -> None:
         vk = self.vk
@@ -607,12 +713,27 @@ class GpuTest:
         vk.void("vkDestroyInstance", self.instance, None)
 
 
+def chunk_pattern(pattern: int, chunk_index: int, base_words: int) -> int:
+    """Pro Block eindeutiger 32-Bit-Musterseed (Zyklusmuster, Blockindex, hohe Indexbits)."""
+    mixed = (pattern
+             ^ ((chunk_index + 1) * 0x85EBCA6B)
+             ^ (((base_words >> 32) + 1) * 0xC2B2AE35))
+    return mixed & 0xFFFFFFFF
+
+
+def expected_word(pattern: int, chunk_index: int, base_words: int, offset: int) -> int:
+    """CPU-Nachbildung des Füllmusters des Shaders (``((base+i)*0x9E3779B1) ^ pat``)."""
+    index = (base_words + offset) & 0xFFFFFFFF
+    return ((index * 0x9E3779B1) ^ chunk_pattern(pattern, chunk_index, base_words)) & 0xFFFFFFFF
+
+
 def run_gpu(gpu: int, duration: float, memory_percent: int, vk: Optional[Vulkan] = None) -> int:
     """Belastet eine GPU für ``duration`` Sekunden. Rückgabe: Anzahl Fehler."""
     test = GpuTest(vk or Vulkan(), gpu)
     errors = 0
     cycle = 0
     checked = 0
+    cpu_checks = 0
     try:
         free, heap = test.free_memory()
         integrated = test.info["type"] == DEVICE_TYPES[TYPE_INTEGRATED]
@@ -621,16 +742,23 @@ def run_gpu(gpu: int, duration: float, memory_percent: int, vk: Optional[Vulkan]
         kind = "integriert, gemeinsamer Arbeitsspeicher" if integrated else "Grafikspeicher"
         _say(gpu, f"{test.info['name']} ({test.info['vendor']}, Vulkan {test.info['api']}), "
                   f"teste {size / 2**30:.1f} GiB von {heap / 2**30:.1f} GiB {kind}")
+        if size < MIN_TEST_BYTES or not test.chunks:
+            raise EnvironmentProblem(
+                f"kein Grafikspeicher testbar: {size / 2**20:.0f} MiB belegbar "
+                f"(gewünscht {wanted / 2**20:.0f} MiB, frei gemeldet {free / 2**20:.0f} MiB), "
+                f"mindestens {MIN_TEST_BYTES >> 20} MiB nötig")
         if size < wanted:
             _say(gpu, f"Hinweis: nur {size / 2**30:.1f} von {wanted / 2**30:.1f} GiB belegbar")
 
         iterations = 1 << 14
+        cpu_reference = FmaReference()
         deadline = time.monotonic() + duration
         next_report = time.monotonic() + 10
         while time.monotonic() < deadline:
             cycle += 1
             # Rechenlast: Laufzeit je Dispatch auf ca. 0,1-0,4 s einregeln.
             start = time.monotonic()
+            used_iterations = iterations
             wrong = test.compute(iterations)
             elapsed = time.monotonic() - start
             if elapsed < 0.1 and iterations < (1 << 28):
@@ -640,6 +768,13 @@ def run_gpu(gpu: int, duration: float, memory_percent: int, vk: Optional[Vulkan]
             if wrong:
                 errors += wrong
                 _say(gpu, f"FEHLER: Rechenfehler in {wrong} von {test.threads} Threads (Zyklus {cycle})")
+            value = getattr(test, "last_value", None)
+            mismatch = cpu_reference.check(value, used_iterations) if value is not None else None
+            if mismatch:
+                errors += 1
+                _say(gpu, f"FEHLER: {mismatch} (Zyklus {cycle})")
+            elif cpu_reference.lookup(used_iterations) is not None:
+                cpu_checks += 1
 
             if test.chunks:
                 bad = test.memory_test(cycle * 0x5BD1E995)
@@ -654,7 +789,45 @@ def run_gpu(gpu: int, duration: float, memory_percent: int, vk: Optional[Vulkan]
     finally:
         test.close()
     _say(gpu, f"Ende nach {cycle} Zyklen, {checked / 2**30:.0f} GiB geprüft, Fehler {errors}")
+    _say(gpu, f"Rechenergebnis gegen CPU-Referenz geprüft: {cpu_checks} von {cycle} Zyklen")
+    if checked == 0 and not errors:
+        raise EnvironmentProblem("kein Grafikspeicher geprüft (kein Zyklus abgeschlossen)")
     return errors
+
+
+def worker_exit_code(gpu: int, duration: float, memory_percent: int) -> int:
+    """Führt ``run_gpu`` aus und bildet das Ergebnis auf den Exit-Code ab.
+
+    Umgebungsprobleme (nichts Prüfbares, Loader/Treiber fehlt) ergeben
+    ``EXIT_INCONCLUSIVE``; GPU-Fehler, ein verlorenes Gerät oder eine hängende
+    GPU ergeben ``EXIT_FAILED``.
+    """
+    try:
+        errors = run_gpu(gpu, duration, memory_percent)
+    except EnvironmentProblem as exc:
+        _say(gpu, f"FEHLER: nicht aussagekräftig – {exc}")
+        return EXIT_INCONCLUSIVE
+    except VulkanError as exc:
+        _say(gpu, f"FEHLER: {exc}")
+        return EXIT_FAILED if exc.result in (VK_ERROR_DEVICE_LOST, VK_TIMEOUT) else EXIT_INCONCLUSIVE
+    except Exception as exc:
+        _say(gpu, f"FEHLER: {exc}")
+        return EXIT_INCONCLUSIVE
+    return EXIT_FAILED if errors else EXIT_OK
+
+
+def summarize(results: Dict[int, int]) -> int:
+    """Gibt die ERGEBNIS-Zeile für die GPU-Exit-Codes aus und liefert den Gesamt-Exit-Code."""
+    failed = sorted(gpu for gpu, code in results.items() if code == EXIT_FAILED)
+    inconclusive = sorted(gpu for gpu, code in results.items() if code not in (EXIT_OK, EXIT_FAILED))
+    if failed:
+        print(f"ERGEBNIS: FEHLGESCHLAGEN (GPU {', '.join(map(str, failed))})", flush=True)
+        return EXIT_FAILED
+    if inconclusive or not results:
+        print(f"ERGEBNIS: NICHT AUSSAGEKRÄFTIG (GPU {', '.join(map(str, inconclusive))})", flush=True)
+        return EXIT_INCONCLUSIVE
+    print("ERGEBNIS: BESTANDEN", flush=True)
+    return EXIT_OK
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -689,16 +862,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     for gpu in gpus:
         pid = os.fork()
         if pid == 0:
-            code = 2
+            code = EXIT_INCONCLUSIVE
             try:
                 # Endet der Elternprozess (z. B. per SIGKILL), soll die GPU-Last mitenden.
                 with contextlib.suppress(OSError, AttributeError):
                     ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
                 if os.getppid() != parent:
-                    os._exit(2)
-                code = 1 if run_gpu(gpu, args.duration, percent) else 0
+                    os._exit(EXIT_INCONCLUSIVE)
+                code = worker_exit_code(gpu, args.duration, percent)
             except Exception as exc:
-                _say(gpu, f"FEHLER: {exc}")
+                _say(gpu, f"FEHLER: {exc!r}")
             finally:
                 sys.stdout.flush()
                 os._exit(code)
@@ -706,16 +879,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     signal.signal(signal.SIGTERM, forward)
     signal.signal(signal.SIGINT, forward)
 
-    failed = []
+    results: Dict[int, int] = {}
     for pid, gpu in children.items():
         _, status = os.waitpid(pid, 0)
-        if os.waitstatus_to_exitcode(status) != 0:
-            failed.append(gpu)
-    if failed:
-        print(f"ERGEBNIS: FEHLGESCHLAGEN (GPU {', '.join(map(str, failed))})", flush=True)
-        return 1
-    print("ERGEBNIS: BESTANDEN", flush=True)
-    return 0
+        results[gpu] = os.waitstatus_to_exitcode(status)
+    return summarize(results)
 
 
 if __name__ == "__main__":

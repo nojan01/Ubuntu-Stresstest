@@ -2,6 +2,18 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.60
+
+Ergebnis eines vollständigen Code-Reviews – Sicherheit, Zuverlässigkeit und „falsch-positive“ Ergebnisse:
+
+- **Root-Sitzung (Gesamttest) gehärtet:** `fio` läuft nicht mehr mit beliebigen Argumenten als root, sondern über eine geprüfte Job-Beschreibung mit fester Schlüsselmenge (Schreibzugriffe nur auf `/dev/*`). Alle Root-Jobs starten in eigener Prozessgruppe; **Stopp und Watchdog beenden jetzt den Root-Prozess selbst**, nicht nur das Relay. Autorisierungs- und Antwort-Timeouts statt blockierendem Warten; Arbeitsverzeichnis und FIFOs nur noch für den Aufrufer lesbar. RAS-Abfragen über die Root-Sitzung funktionieren jetzt (vorher stillschweigend ohne Ergebnis); unlesbare RAS-Daten werden als Warnung gemeldet.
+- **Testläufe:** Ergebnisse werden genau einmal finalisiert, spät gepufferte Fehlerzeilen gehen beim Stoppen nicht mehr verloren. fio-Watchdog mit Reserve für die Verify-Phase; bei `numjobs > 1` disjunkte Bereiche je Job. pkexec-Fallback beendet fio zuverlässig.
+- **Keine falschen „BESTANDEN“ mehr:** SMART ohne Gesamtstatus oder mit smartctl-Fehlerbits → UNBEKANNT/FEHLER statt gesund; NVMe ohne `critical_warning` → nicht bestimmbar; DCGM ohne auswertbares JSON und NVIDIA-Inventar ohne GPU trotz erkannter Hardware → FEHLGESCHLAGEN; Vulkan-Test ohne tatsächlich geprüften Speicher → NICHT AUSSAGEKRÄFTIG; Netzwerktest meldet fehlende Pflichtmesswerte. Kernel-Journal wird vollständig paginiert (vorher konnten bei Fehler-Bursts Einträge verloren gehen).
+- **RAM-Test:** Abgestürzte oder vom OOM-Killer beendete Fill-Prozesse werden gemeldet (Umgebungsproblem → NICHT AUSSAGEKRÄFTIG, sonst FEHLER); cgroup-Speicherlimits werden berücksichtigt; unter Speicherdruck verworfene Bereiche zählen zur Abdeckung (unter 90 % → nicht aussagekräftig).
+- **GPU-Tests:** Muster und Fehlerzähler sind nicht mehr auf 32 Bit begrenzt (Aliasing ab 16 GiB); Rechenlast wird gegen eine CPU-Referenz geprüft statt nur Threads untereinander.
+- **Oberfläche:** Fenster schließen wartet auf laufende Test-Threads; swapoff, fastfetch, lsblk und Aushängen blockieren die Oberfläche nicht mehr; NVIDIA-Telemetrie erzeugt keine Thread-Lecks mehr; Passwortabfrage im Tab System erholt sich von Startfehlern; HTML-Bericht escaped Anker-IDs; polkit-Agent-Erkennung repariert (lange Prozessnamen wurden nie erkannt). 18 fehlende englische Übersetzungen ergänzt; ein Test erzwingt künftig vollständige Übersetzungen.
+- Manuell abgebrochene Tests werden **bis zum Abbruch bewertet** („keine Fehler erkannt“ bzw. gefundene Probleme) statt nur „abgebrochen“ zu melden – wie bisher schon beim Festplattentest: NVMe-Lese-Test, GPU-Lasttest (Vulkan und CUDA) sowie DCGM-Diagnose (Teilergebnis der bereits abgeschlossenen Prüfungen).
+
 ### Neu in 0.2.59
 
 - Korrigiert: Hardwaretest konnte wenige Sekunden nach dem Start abstürzen (SIGSEGV), meist beim ersten Start nach der Installation. Ursache war die automatische Update-Prüfung im Hintergrund: Ihr Worker-Objekt wurde von Qt und Python doppelt gelöscht. Der Update-Thread gehört jetzt allein Qt und wird erst nach seinem Ende freigegeben.

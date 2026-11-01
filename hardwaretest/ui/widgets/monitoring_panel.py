@@ -21,6 +21,7 @@ from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.monitor_history import is_temperature, render_chart
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 from hardwaretest.ui.sensor_limits import edit_sensor_limits, load_sensor_limits
 
 
@@ -252,7 +253,7 @@ class MonitoringPanel(QWidget):
         worker.snapshot.connect(self.show_snapshot)
         worker.reports.connect(self.show_reports)
         worker.error.connect(self.show_error)
-        worker.finished.connect(self.finished)
+        connect_finished(worker, self.finished)
         for widget in (self.start_btn, self.interval, self.duration, self.limit, self.directory, self.choose, self.auto_stop, self.sensor_limits_btn):
             widget.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -313,9 +314,9 @@ class MonitoringPanel(QWidget):
         self.metrics.setPlainText(summary)
         self.open_btn.setEnabled(True)
 
-    def finished(self):
-        self._worker.deleteLater()
-        self._worker = None
+    def finished(self, worker=None):
+        if not release_worker(self, "_worker", worker):
+            return
         self.guard_released.emit()
         self.stop_btn.setEnabled(False)
         for widget in (self.start_btn, self.interval, self.duration, self.limit, self.directory, self.choose, self.auto_stop, self.sensor_limits_btn):

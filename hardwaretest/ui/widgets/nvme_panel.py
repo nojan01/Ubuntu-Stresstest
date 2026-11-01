@@ -40,6 +40,7 @@ from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.fio_runner import FioNvmeFullReadRunner, FioNvmeReadBenchmarkRunner
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
 class _NvmeWorker(QThread):
@@ -71,6 +72,7 @@ class NvmePanel(QWidget):
         self._last_health_device = NvmeDevice("", "", "", "", "", 0)
 
         self.device_box = QComboBox()
+        self.device_box.setProperty("hardwaretest_dynamic", True)
         self._io_drive_checks: dict[str, QCheckBox] = {}
         self.select_all_nvme = QCheckBox("Alle NVMe-Laufwerke auswählen")
         self.io_drive_container = QWidget()
@@ -327,13 +329,17 @@ class NvmePanel(QWidget):
         action: Callable[[], object],
         on_success: Callable[[object], None],
         show_failure: bool = True,
-    ) -> None:
+    ) -> bool:
+        # Nur ein Worker gleichzeitig: alle teilen sich die RootBroker-Sitzung.
+        if self._worker is not None:
+            return False
         worker = _NvmeWorker(action, self)
         self._worker = worker
         worker.completed.connect(on_success)
-        worker.completed.connect(lambda _: self._worker_finished())
         worker.failed.connect(lambda message: self._worker_failed(message, show_failure))
+        connect_finished(worker, self._worker_finished)
         worker.start()
+        return True
 
     def _show_health(self, value: object) -> None:
         health = value
@@ -345,13 +351,24 @@ class NvmePanel(QWidget):
         self._set_runtime_text(self.status, "NVMe-Gesundheitsdaten aktualisiert.")
 
     def _render_health_details(self, health: NvmeHealth, device: NvmeDevice) -> None:
-        warning = language_manager.tr("Keine") if health.critical_warning == 0 else str(health.critical_warning)
+        if health.critical_warning is None:
+            warning = language_manager.tr("UNBEKANNT")
+        elif health.critical_warning == 0:
+            warning = language_manager.tr("Keine")
+        else:
+            warning = str(health.critical_warning)
+        if health.healthy is None:
+            status_text = language_manager.tr("UNBEKANNT")
+        elif health.healthy:
+            status_text = language_manager.tr("OK")
+        else:
+            status_text = language_manager.tr("WARNUNG")
         lines = [
             language_manager.tr("NVMe-Gerät: {device}", device=health.device),
             language_manager.tr("Modell: {value}", value=device.model or "–"),
             language_manager.tr("Seriennummer: {value}", value=device.serial or "–"),
             language_manager.tr("Firmware: {value}", value=device.firmware or "–"),
-            language_manager.tr("Status: {status}", status=language_manager.tr("OK") if health.healthy else language_manager.tr("WARNUNG")),
+            language_manager.tr("Status: {status}", status=status_text),
             language_manager.tr("Kritische Warnungen: {value}", value=warning),
             language_manager.tr("Temperatur: {value}", value=_unit(health.temperature_c, "°C")),
             language_manager.tr("Verfügbarer Reserveplatz: {value}", value=_unit(health.available_spare, "%")),
@@ -589,6 +606,34 @@ class NvmePanel(QWidget):
         if not runner.is_running() and runner.get_result() is not None:
             self._finish_io_test()
 
+    def _show_aborted_io_result(self, result) -> None:
+        """Bewertet einen manuell beendeten Lese-Test anhand der bis dahin gesammelten Ausgabe."""
+        if result is None:
+            self._set_runtime_text(self.io_result, "? NVMe-Lese-Test abgebrochen")
+            self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(self.io_status, "Lese-Test wurde manuell beendet.")
+            return
+        seconds = float(getattr(result, "duration_actual", 0.0) or 0.0)
+        if result.passed:
+            self._set_runtime_text(
+                self.io_result,
+                "✓ NVMe-Lese-Test ABGEBROCHEN – bis zum Abbruch keine Fehler erkannt ({seconds:.0f}s)",
+                seconds=seconds,
+            )
+            self.io_result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(self.io_status, "Lese-Test wurde manuell beendet.")
+            return
+        self._set_runtime_text(
+            self.io_result,
+            "✗ NVMe-Lese-Test ABGEBROCHEN – {count} Problem(e) bis zum Abbruch erkannt",
+            count=len(result.errors),
+        )
+        self.io_result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+        if result.errors:
+            self._set_raw_text(self.io_status, "\n".join(result.errors))
+        else:
+            self._set_runtime_text(self.io_status, "Unbekannter Lese-Fehler.")
+
     def _finish_io_test(self, aborted: bool = False) -> None:
         runner = self._io_runner
         if runner is None:
@@ -602,9 +647,7 @@ class NvmePanel(QWidget):
         self.scan_btn.setEnabled(True)
         self.device_box.setEnabled(True)
         if aborted:
-            self._set_runtime_text(self.io_result, "? NVMe-Lese-Test abgebrochen")
-            self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
-            self._set_runtime_text(self.io_status, "Lese-Test wurde manuell beendet.")
+            self._show_aborted_io_result(result)
             return
         if not getattr(runner, "authorized", True):
             self._set_runtime_text(self.io_result, "? NVMe-Lese-Test nicht gestartet")
@@ -653,13 +696,12 @@ class NvmePanel(QWidget):
             )
         self.io_result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
 
-    def _worker_finished(self) -> None:
-        self._worker = None
-        self._set_device_actions_enabled(self.device_box.count() > 0)
+    def _worker_finished(self, worker=None) -> None:
+        # Einziger Ort für Referenzfreigabe und Re-Enable (Thread ist hier beendet).
+        if release_worker(self, "_worker", worker):
+            self._set_device_actions_enabled(self.device_box.count() > 0)
 
     def _worker_failed(self, message: str, show_failure: bool = True) -> None:
-        self._worker = None
-        self._set_device_actions_enabled(self.device_box.count() > 0)
         if not self._self_test_active:
             self.self_test_progress.setVisible(False)
         if is_self_test_in_progress_error(message):

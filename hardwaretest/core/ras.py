@@ -22,7 +22,8 @@ from typing import Callable, Optional
 Runner = Callable[..., subprocess.CompletedProcess]
 
 DB_PATH = "/var/lib/rasdaemon/ras-mc_event.db"
-_MAX_EVENTS = 50
+MAX_EVENTS = 50
+_MAX_EVENTS = MAX_EVENTS
 
 # Läuft im eigenen Prozess oder – falls die Datenbank nur für root lesbar ist –
 # per ``python3 -c`` über die Root-Sitzung. Ausgabe: JSON mit Zählerstand und
@@ -139,6 +140,14 @@ def _run_query(baseline: Optional[dict], run: Optional[Runner], db_path: str) ->
         pass
     if run is None:
         return None
+    # Root-Sitzung (RootBroker): feste, eng begrenzte Abfrage statt ``python -c``.
+    broker_query = getattr(run, "ras_query", None) or getattr(getattr(run, "__self__", None), "ras_query", None)
+    if callable(broker_query):
+        try:
+            data = broker_query(baseline, db_path, _MAX_EVENTS)
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
     python = shutil.which("python3") or sys.executable
     try:
         result = run([python, "-c", QUERY_SCRIPT, db_path, json.dumps(baseline), str(_MAX_EVENTS)],

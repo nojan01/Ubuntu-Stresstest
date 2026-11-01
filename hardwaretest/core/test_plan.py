@@ -27,7 +27,7 @@ from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices, read_nvme_smar
 from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.system_info import read_system_info
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
-from hardwaretest.tests.network import NetworkRunner, threshold_failures
+from hardwaretest.tests.network import NetworkRunner, invalid_measurements, threshold_failures
 from hardwaretest.tests.fio_runner import FioNvmeFullReadRunner
 from hardwaretest.tests.opendcdiag import (
     OpenDcDiagRunner,
@@ -430,14 +430,27 @@ class TestPlanExecutor:
             )
             try:
                 health = read_nvme_smart(device.controller_path, (), self._nvme_run)
+                if health.healthy is True:
+                    status_text = "OK"
+                elif health.healthy is False:
+                    status_text = _text("WARNUNG", self.config.language)
+                else:
+                    status_text = _text("UNBEKANNT", self.config.language)
                 details.append(
-                    f"  Status: {'OK' if health.healthy else _text('WARNUNG', self.config.language)} | "
+                    f"  Status: {status_text} | "
                     f"temperature: {_value(health.temperature_c)} °C | "
                     f"percentage_used: {_value(health.percentage_used)} % | "
                     f"media_errors: {_value(health.media_errors)} | "
-                    f"critical_warning: {health.critical_warning}"
+                    f"critical_warning: {_value(health.critical_warning)}"
                 )
-                if not health.healthy:
+                if health.healthy is None:
+                    failed += 1
+                    details.append(
+                        "  " + _text("Gesundheitsstatus nicht bestimmbar, fehlende SMART-Felder:",
+                                     self.config.language)
+                        + " " + ", ".join(health.missing_fields)
+                    )
+                elif not health.healthy:
                     failed += 1
             except Exception as exc:
                 failed += 1
@@ -476,7 +489,7 @@ class TestPlanExecutor:
                                             else STATUS_FAILED, "NVMe-Prüfung abgebrochen.", details)
             if device.controller_path not in before:
                 before[device.controller_path] = read_nvme_smart(device.controller_path, (), self._nvme_run)
-                if before[device.controller_path].media_errors is None:
+                if not before[device.controller_path].health_known:
                     raise RuntimeError(_text("SMART-Medienfehlerzähler nicht verfügbar.", self.config.language))
         # Refresh the identity again after authentication, before starting fio.
         self._validated_nvme_devices(list_nvme_devices())
@@ -496,8 +509,9 @@ class TestPlanExecutor:
                                        "critical_warning", "percentage_used", "data_units_read"):
                         old, new = getattr(initial, field_name), getattr(final, field_name)
                         details.append(f"{controller}: {field_name}: {_value(old)} -> {_value(new)}")
-                    if final.media_errors is None or not final.healthy or (initial.media_errors is not None and final.media_errors is not None
-                                             and final.media_errors > initial.media_errors):
+                    if (not final.health_known or not final.healthy
+                            or (initial.media_errors is not None and final.media_errors is not None
+                                and final.media_errors > initial.media_errors)):
                         result.status = STATUS_FAILED
                         details.append(_text("SMART-Warnung nach Lesetest.", self.config.language))
                 except Exception as exc:
@@ -559,7 +573,14 @@ class TestPlanExecutor:
                 "nvidia", STATUS_FAILED, started, started_at,
                 "NVIDIA-Treiberinstallation ist nicht betriebsbereit.", details,
             )
-        gpus = list_nvidia_gpus()
+        try:
+            gpus = list_nvidia_gpus()
+        except Exception as exc:
+            details.append(f"nvidia-smi: {exc}")
+            return self._timed_result(
+                "nvidia", STATUS_FAILED, started, started_at,
+                _text("GPU-Inventar konnte nicht gelesen werden.", self.config.language), details,
+            )
         for gpu in gpus:
             details.append(
                 f"GPU {gpu.index}: {gpu.model} | {gpu.uuid} | "
@@ -568,6 +589,15 @@ class TestPlanExecutor:
                 f"PCIe Gen {_value(gpu.pcie_generation_current)} "
                 f"x{_value(gpu.pcie_width_current)} | ECC unkorrigiert "
                 f"{_value(gpu.ecc_uncorrected)}"
+            )
+        if not gpus:
+            # NVIDIA-PCI-Hardware ist vorhanden, nvidia-smi liefert aber keine parsebare GPU.
+            details.append(_text("nvidia-smi lieferte keine auswertbare GPU-Liste (leer oder inkompatibles Format).",
+                                 self.config.language))
+            return self._timed_result(
+                "nvidia", STATUS_FAILED, started, started_at,
+                _text("NVIDIA-Hardware erkannt, aber keine GPU über nvidia-smi auswertbar.",
+                      self.config.language), details,
             )
         return self._timed_result(
             "nvidia", STATUS_PASSED, started, started_at,
@@ -599,6 +629,12 @@ class TestPlanExecutor:
         )
         if counts["fail"]:
             result.status = STATUS_FAILED
+        evaluation_error = runner.evaluation_error()
+        if evaluation_error and result.status == STATUS_PASSED:
+            result.status = STATUS_FAILED
+            message = _text("DCGM-Ergebnis nicht auswertbar:", self.config.language) + " " + evaluation_error
+            result.summary += " | " + message
+            result.details = [*result.details, message]
         return result
 
     def _run_vulkan(self) -> TestPlanStepResult:
@@ -667,20 +703,19 @@ class TestPlanExecutor:
         network_assessment = ""
         if structured_summary and isinstance(runner, NetworkRunner) and result.passed:
             values = runner.summary() or {}
-            required = ({"packet_loss_percent", "latency_avg_ms", "jitter_ms"} if runner.mode == "ping"
-                        else {"throughput_mbit_s"})
-            if not required.issubset(values) or any(not isinstance(values[key], (float, int))
-                                                   or not math.isfinite(values[key]) or values[key] < 0
-                                                   for key in required & values.keys()):
+            invalid = invalid_measurements(values, runner.mode)
+            if invalid:
                 status = STATUS_FAILED
-                network_assessment = _text("Netzwerk-Messwerte fehlen oder sind ungültig.", self.config.language)
+                network_assessment = (_text("Netzwerk-Messwerte fehlen oder sind ungültig.", self.config.language)
+                                      + " (" + ", ".join(invalid) + ")")
                 details.append(network_assessment)
             else:
                 failures = threshold_failures(values,
                     max_packet_loss_percent=self.config.max_packet_loss_percent,
                     max_latency_avg_ms=self.config.max_latency_avg_ms,
                     max_jitter_ms=self.config.max_jitter_ms,
-                    min_throughput_mbit_s=self.config.min_throughput_mbit_s)
+                    min_throughput_mbit_s=self.config.min_throughput_mbit_s,
+                    mode=runner.mode)
                 for code, actual, limit in failures:
                     label = "Grenzwert überschritten" if self.config.language == "de" else "Threshold exceeded"
                     details.append(f"{label}: {code}: {actual:g} / {limit:g}")
@@ -1024,6 +1059,15 @@ def _text(source: str, language: str) -> str:
         "NVMe-Prüfung abgebrochen.": "NVMe check cancelled.",
         "Kein auswertbares Testergebnis.": "No usable test result.",
         "WARNUNG": "WARNING",
+        "UNBEKANNT": "UNKNOWN",
+        "DCGM-Ergebnis nicht auswertbar:": "DCGM result not evaluable:",
+        "GPU-Inventar konnte nicht gelesen werden.": "GPU inventory could not be read.",
+        "nvidia-smi lieferte keine auswertbare GPU-Liste (leer oder inkompatibles Format).":
+            "nvidia-smi returned no usable GPU list (empty or incompatible format).",
+        "NVIDIA-Hardware erkannt, aber keine GPU über nvidia-smi auswertbar.":
+            "NVIDIA hardware detected, but no GPU could be read via nvidia-smi.",
+        "Gesundheitsstatus nicht bestimmbar, fehlende SMART-Felder:":
+            "Health status cannot be determined, missing SMART fields:",
         "rasdaemon: korrigierte Hardwarefehler": "rasdaemon: corrected hardware errors",
         "rasdaemon: Ereignisse konnten nicht gelesen werden.": "rasdaemon: events could not be read.",
         "Netzwerk-Messwerte fehlen oder sind ungültig.": "Network measurements are missing or invalid.",

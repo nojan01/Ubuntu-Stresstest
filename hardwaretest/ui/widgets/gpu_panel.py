@@ -26,6 +26,7 @@ from hardwaretest.core.gpu_sysfs import DrmGpu, IntelGpuSampler, list_drm_gpus, 
 from hardwaretest.core.test_runner import TestParameters
 from hardwaretest.tests.vulkan_runner import VulkanStressRunner, list_vulkan_gpus
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 _TYPES = {"integrated": "integriert", "discrete": "dediziert", "virtual": "virtuell", "other": "sonstige"}
 
@@ -199,7 +200,7 @@ class GpuPanel(QWidget):
         self._scan_worker = worker
         worker.completed.connect(self._show_gpus)
         worker.failed.connect(self._scan_failed)
-        worker.finished.connect(self._scan_finished)
+        connect_finished(worker, self._scan_finished)
         worker.start()
 
     def _show_gpus(self, value: object) -> None:
@@ -229,9 +230,9 @@ class GpuPanel(QWidget):
         self._set_text(self.inventory_status, "GPU-Suche fehlgeschlagen: {message}", message=message)
         self._set_running(False)
 
-    def _scan_finished(self) -> None:
-        self._scan_worker = None
-        self.scan_btn.setEnabled(self._runner is None)
+    def _scan_finished(self, worker=None) -> None:
+        if release_worker(self, "_scan_worker", worker):
+            self.scan_btn.setEnabled(self._runner is None)
 
     # --- Liveüberwachung -------------------------------------------------------
     def _start_monitoring(self) -> None:
@@ -341,10 +342,22 @@ class GpuPanel(QWidget):
         self._auto_monitoring = False
         self.progress.setVisible(False)
         self._set_running(False)
-        if aborted:
+        if aborted and result is None:
             self._set_text(self.result, "? GPU-Lasttest abgebrochen")
             self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_text(self.status, "GPU-Lasttest wurde manuell beendet.")
+        elif aborted and result.passed:
+            self._set_text(self.result,
+                           "✓ GPU-Lasttest ABGEBROCHEN – bis zum Abbruch keine Fehler erkannt ({seconds:.0f}s)",
+                           seconds=float(result.duration_actual or 0.0))
+            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_text(self.status, "GPU-Lasttest wurde manuell beendet.")
+        elif aborted:
+            self._set_text(self.result, "✗ GPU-Lasttest ABGEBROCHEN – {count} Fehlermeldung(en) bis zum Abbruch",
+                           count=len(result.errors))
+            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_text(self.status, "{count} Fehlermeldung(en). Details stehen im Protokoll.",
+                           count=len(result.errors))
         elif result is not None and result.passed:
             self._set_text(self.result, "✓ GPU-Lasttest BESTANDEN")
             self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")

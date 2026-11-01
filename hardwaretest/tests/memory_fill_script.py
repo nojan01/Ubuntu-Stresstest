@@ -89,33 +89,53 @@ def _read_meminfo_mb() -> int:
         return 1024
 
 
-def _read_cgroup_available_mb() -> int:
-    """Verfuegbaren RAM in einer cgroup v2 lesen.
-
-    Gibt ``0`` zurueck, wenn keine cgroup-Begrenzung existiert oder die
-    Dateien nicht lesbar sind. Andernfalls ``memory.max - memory.current``
-    in MiB.
-    """
-    base = "/sys/fs/cgroup"
+def _cgroup_v2_path(cgroup_file: str = "/proc/self/cgroup") -> Optional[str]:
+    """Eigener cgroup-v2-Pfad (z. B. ``/user.slice/...``) oder None."""
     try:
-        with open(f"{base}/memory.max") as f:
-            raw = f.read().strip()
-        if raw == "max":
-            return 0
-        max_bytes = int(raw)
-        with open(f"{base}/memory.current") as f:
-            cur_bytes = int(f.read().strip())
-    except (OSError, ValueError):
-        return 0
-    free = max(0, max_bytes - cur_bytes)
-    return free // (1024 * 1024)
+        with open(cgroup_file, encoding="utf-8") as f:
+            for line in f:
+                parts = line.rstrip("\n").split(":", 2)
+                if len(parts) == 3 and parts[0] == "0" and parts[1] == "":
+                    return parts[2] or "/"
+    except OSError:
+        pass
+    return None
+
+
+def _read_cgroup_available_mb(base: str = "/sys/fs/cgroup",
+                              cgroup_file: str = "/proc/self/cgroup") -> Optional[int]:
+    """Verbleibender RAM laut cgroup v2 in MiB.
+
+    Aufgeloest wird die eigene cgroup aus ``/proc/self/cgroup``; da das
+    wirksame Limit das kleinste aller uebergeordneten Ebenen ist, werden alle
+    Ebenen bis zur Wurzel geprueft. ``None`` bedeutet: kein Limit gesetzt
+    (oder nicht lesbar). ``0`` bedeutet: das Limit ist ausgeschoepft.
+    """
+    path = _cgroup_v2_path(cgroup_file) or "/"
+    parts = [p for p in path.split("/") if p]
+    levels = [os.path.join(base, *parts[:n]) for n in range(len(parts), -1, -1)]
+    best: Optional[int] = None
+    for directory in levels:
+        try:
+            with open(os.path.join(directory, "memory.max"), encoding="ascii") as f:
+                raw = f.read().strip()
+            if raw == "max":
+                continue
+            max_bytes = int(raw)
+            with open(os.path.join(directory, "memory.current"), encoding="ascii") as f:
+                cur_bytes = int(f.read().strip())
+        except (OSError, ValueError):
+            continue
+        free = max(0, max_bytes - cur_bytes) // (1024 * 1024)
+        best = free if best is None else min(best, free)
+    return best
 
 
 def _available_memory_mb() -> int:
-    """Verfuegbarer RAM, begrenzt durch cgroup v2 falls aktiv."""
+    """Verfuegbarer RAM, begrenzt durch cgroup v2 falls ein Limit gesetzt ist."""
     sys_mb = _read_meminfo_mb()
     cg_mb = _read_cgroup_available_mb()
-    if cg_mb > 0:
+    if cg_mb is not None:
         return min(sys_mb, cg_mb)
     return sys_mb
 
@@ -332,6 +352,17 @@ def _phys_suffix(m: mmap.mmap, offset: int) -> str:
     return f", phys. Adresse 0x{phys:X}" if phys is not None else ""
 
 
+_MIN_COVERAGE = 0.9  # Mindestanteil der geplanten Menge, der geprueft sein muss
+
+
+def _madv_remove(m: mmap.mmap, size: int) -> bool:
+    """Gibt die Seiten eines Blocks frei; True nur bei erfolgreichem MADV_REMOVE."""
+    if not hasattr(mmap, "MADV_REMOVE"):
+        return False
+    m.madvise(mmap.MADV_REMOVE, 0, size)
+    return True
+
+
 class _Pressure:
     """Ueberwacht den freien RAM und verwirft bei Knappheit Bloecke vom Ende her.
 
@@ -347,23 +378,42 @@ class _Pressure:
         self.interval = interval
         self.flags = mmap.mmap(-1, max(1, len(chunks)),
                                flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
-        self.dropped_bytes = 0
+        self.dropped_bytes = 0  # erfolgreich freigegeben (MADV_REMOVE)
+        self.unreleased_bytes = 0  # ausgeschlossen, aber Freigabe fehlgeschlagen
         self.events = 0
         self._tail = len(chunks)
         self._next = 0.0
 
+    @property
+    def excluded_bytes(self) -> int:
+        """Vom Test ausgeschlossene Bytes (verworfen oder nicht freigebbar)."""
+        return self.dropped_bytes + self.unreleased_bytes
+
     def is_dropped(self, idx: int) -> bool:
         return self.flags[idx] != 0
 
-    def drop(self, idx: int) -> None:
+    def drop(self, idx: int) -> bool:
+        """Schliesst Block *idx* vom Test aus und gibt seine Seiten frei.
+
+        Liefert True, wenn ``MADV_REMOVE`` die Seiten tatsaechlich freigegeben
+        hat. Schlaegt das fehl, bleibt der Block ausgeschlossen (die Worker
+        haben ihn evtl. schon uebersprungen), zaehlt aber nicht als verworfen.
+        """
         m, size = self.chunks[idx]
         self.flags[idx] = 1
         with contextlib.suppress(Exception):
             _munlock(m, size)
-        if hasattr(mmap, "MADV_REMOVE"):
-            with contextlib.suppress(OSError, ValueError):
-                m.madvise(mmap.MADV_REMOVE, 0, size)
-        self.dropped_bytes += size
+        try:
+            released = _madv_remove(m, size)
+        except (OSError, ValueError) as exc:
+            released = False
+            print(f"    WARNUNG: Block {idx} konnte nicht freigegeben werden "
+                  f"(madvise: {exc}).", flush=True)
+        if released:
+            self.dropped_bytes += size
+        else:
+            self.unreleased_bytes += size
+        return released
 
     def poll(self) -> None:
         now = time.monotonic()
@@ -747,6 +797,54 @@ def _set_parent_death_signal() -> None:
         libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
 
 
+# Exit-Code eines Workers, der wegen Speichermangel (kein RAM-Defekt) aufgab.
+_WORKER_EXIT_ENV = 3
+_ENV_ERRNOS = (errno.ENOMEM, errno.ENOSPC, errno.EAGAIN)
+# Praefix der Fehlermeldung eines abgebrochenen Workers (ueber die Pipe).
+_WORKER_MSG = "FEHLER: Prozess "
+
+
+class WorkerFailure(RuntimeError):
+    """Mindestens ein geforkter Worker ist abgebrochen.
+
+    *inconclusive* bedeutet: Ursache war Speichermangel o. ae. (Umgebung),
+    nicht ein moeglicher RAM-Defekt.
+    """
+
+    def __init__(self, messages: List[str], inconclusive: bool) -> None:
+        super().__init__("; ".join(messages) or "Worker abgebrochen")
+        self.messages = messages
+        self.inconclusive = inconclusive
+
+
+def _classify_worker_exception(exc: BaseException) -> Tuple[int, str]:
+    """(Exit-Code, Beschreibung) fuer eine im Worker aufgetretene Ausnahme."""
+    if isinstance(exc, MemoryError):
+        return _WORKER_EXIT_ENV, "Speichermangel (MemoryError)"
+    if isinstance(exc, OSError) and exc.errno in _ENV_ERRNOS:
+        return _WORKER_EXIT_ENV, f"Speichermangel ({os.strerror(exc.errno)})"
+    text = "".join(traceback.format_exception_only(type(exc), exc)).strip().splitlines()
+    return 1, text[-1] if text else repr(exc)
+
+
+def _worker_exit_reason(exit_code: int) -> Tuple[Optional[str], str]:
+    """Art ('env', 'fail' oder None) und Text fuer einen Worker-Exit-Code."""
+    if exit_code == 0:
+        return None, ""
+    if exit_code == _WORKER_EXIT_ENV:
+        return "env", "Speichermangel"
+    if exit_code == -signal.SIGKILL:
+        return "env", "mit SIGKILL beendet (vermutlich OOM-Killer, Speichermangel)"
+    if exit_code < 0:
+        try:
+            name = signal.Signals(-exit_code).name
+        except ValueError:
+            name = str(-exit_code)
+        hint = " (SIGBUS: Speicherfehler oder Shmem erschoepft)" if exit_code == -signal.SIGBUS else ""
+        return "fail", f"durch Signal {name} beendet{hint}"
+    return "fail", f"Exit-Code {exit_code}"
+
+
 def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
                   segs: List[Segment], workers: Optional[int] = None,
                   rotation: int = 0, deadline: float = float("inf"),
@@ -804,6 +902,7 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
         pid = os.fork()
         if pid == 0:
             code = 0
+            lines: List[str] = []
             try:
                 os.close(r)
                 _set_parent_death_signal()
@@ -818,11 +917,15 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
                     struct.pack_into("<Q", counters, 8 * _w, done)
                 res = _work(parts[w], _report)
                 lines = ([f"{i} {o} {n}" for i, o, n in res]
-                         if kind == "fill" else res)
+                         if kind == "fill" else list(res))
+            except BaseException as exc:
+                code, reason = _classify_worker_exception(exc)
+                lines = [f"{_WORKER_MSG}{w + 1} ({verb}) abgebrochen: {reason}"]
+            try:
                 with os.fdopen(wfd, "w", encoding="utf-8") as f:
                     f.write("\n".join(lines))
             except BaseException:
-                code = 1
+                code = code or 1
             finally:
                 os._exit(code)
         os.close(wfd)
@@ -830,15 +933,14 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
 
     reporter = _ProgressReporter(verb, grand_total)
     pending = {pid for pid, _ in procs}
-    failed = 0
+    exit_codes: dict = {}
     try:
         while pending:
             for pid in list(pending):
                 done_pid, status = os.waitpid(pid, os.WNOHANG)
                 if done_pid:
                     pending.discard(pid)
-                    if os.waitstatus_to_exitcode(status) != 0:
-                        failed += 1
+                    exit_codes[pid] = os.waitstatus_to_exitcode(status)
             if _stop:
                 for pid in pending:
                     with contextlib.suppress(ProcessLookupError):
@@ -860,11 +962,29 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
             pressure.reapply()
 
     lines = [ln for out in outputs for ln in out.splitlines() if ln]
+    messages = [ln for ln in lines if ln.startswith(_WORKER_MSG)]
+    kinds = set()
+    for w, (pid, _r) in enumerate(procs):
+        reason_kind, text = _worker_exit_reason(exit_codes.get(pid, 0))
+        if reason_kind is None:
+            continue
+        kinds.add(reason_kind)
+        if not any(msg.startswith(f"{_WORKER_MSG}{w + 1} ") for msg in messages):
+            messages.append(f"{_WORKER_MSG}{w + 1} ({verb}) abgebrochen: {text}")
+    if _stop:
+        kinds.clear()
+    if "env" in kinds:
+        raise WorkerFailure(messages, inconclusive=True)
     if kind == "fill":
-        written = [tuple(int(x) for x in ln.split()) for ln in lines]
+        if kinds:
+            raise WorkerFailure(messages, inconclusive=False)
+        written = [tuple(int(x) for x in ln.split()) for ln in lines
+                   if not ln.startswith(_WORKER_MSG)]
         return sorted(written, key=lambda s: s[1])
-    if failed and not _stop:
-        lines.append(f"FEHLER: {failed} Pruef-Prozess(e) unerwartet beendet")
+    if kinds:
+        lines = [ln for ln in lines if not ln.startswith(_WORKER_MSG)]
+        lines.append(f"FEHLER: {len(messages)} Pruef-Prozess(e) unerwartet beendet")
+        lines.extend(messages)
     return lines
 
 
@@ -996,9 +1116,12 @@ def run_cycles(
     lock_warned = False
     lock_max_mb = 0
     dropped_total_mb = 0
+    unreleased_total_mb = 0
     pressure_events = 0
     inversion_done = 0
     inversion_skipped = 0
+    inconclusive_cycles = 0
+    aborted_reason: Optional[str] = None
     data_line_runs = 0
     data_line_errors = 0
 
@@ -1054,7 +1177,15 @@ def run_cycles(
                 )
         else:
             avail = _available_memory_mb()
-            target_mb = max(64, avail - reserve_mb)
+            if avail <= reserve_mb:
+                print(f"FEHLER: Verfuegbarer Speicher ({avail} MB) liegt nicht ueber "
+                      f"der Reserve ({reserve_mb} MB) – kein Testspeicher frei "
+                      f"(cgroup-Limit oder anderer Verbraucher?). Test wird beendet.",
+                      flush=True)
+                aborted_reason = f"kein Testspeicher frei ({avail} MB verfuegbar, Reserve {reserve_mb} MB)"
+                cycle -= 1
+                break
+            target_mb = avail - reserve_mb
 
         print(f"--- Zyklus {cycle}: Muster {name} "
               f"(verbleibend: {remaining_time:.0f}s) ---")
@@ -1074,6 +1205,7 @@ def run_cycles(
             continue
 
         cycle_errors: List[str] = []
+        cycle_inconclusive = False
         written_mb = 0
         written_segs: List[Segment] = []
         rotation = 0
@@ -1083,84 +1215,111 @@ def run_cycles(
         cpu_offset = (cycle - 1) * max(1, len(all_cpus) - _usable_cpus())
         pressure = _Pressure(chunks, reserve_mb)
         try:
-            if not _stop:
-                print(f"  Schreibe {name} ({actual_mb} MB) ...", flush=True)
-                spare = _spare_cpus(all_cpus, min(_usable_cpus(), len(chunks)),
-                                    cpu_offset)
-                if spare and len(chunks) >= _usable_cpus():
-                    print(f"    Frei fuer OS/GUI: CPU {', '.join(map(str, spare))}",
-                          flush=True)
-                t0 = time.monotonic()
-                rotation = cycle * (half + 1)
-                written_segs = pressure.keep(_run_parallel(
-                    "fill", chunks, builder, _segments(chunks, None),
-                    rotation=rotation,
-                    deadline=t0 + max(0.0, end - t0) * _WRITE_SHARE,
-                    pressure=pressure, cpu_offset=cpu_offset))
-                written_mb = sum(s[2] for s in written_segs) // (1024 * 1024)
-                write_time = time.monotonic() - t0
-                speed = written_mb / write_time if write_time > 0 else 0
-                print(f"  Schreiben fertig: {write_time:.1f}s ({speed:.0f} MB/s)", flush=True)
-                if not _stop and written_mb < actual_mb and not pressure.dropped_bytes:
-                    print(f"  Testzeit reicht nicht fuer den ganzen Zyklus – "
-                          f"pruefe die geschriebenen {written_mb} MB.", flush=True)
+            try:
+                if not _stop:
+                    print(f"  Schreibe {name} ({actual_mb} MB) ...", flush=True)
+                    spare = _spare_cpus(all_cpus, min(_usable_cpus(), len(chunks)),
+                                        cpu_offset)
+                    if spare and len(chunks) >= _usable_cpus():
+                        print(f"    Frei fuer OS/GUI: CPU {', '.join(map(str, spare))}",
+                              flush=True)
+                    t0 = time.monotonic()
+                    rotation = cycle * (half + 1)
+                    written_segs = pressure.keep(_run_parallel(
+                        "fill", chunks, builder, _segments(chunks, None),
+                        rotation=rotation,
+                        deadline=t0 + max(0.0, end - t0) * _WRITE_SHARE,
+                        pressure=pressure, cpu_offset=cpu_offset))
+                    written_mb = sum(s[2] for s in written_segs) // (1024 * 1024)
+                    write_time = time.monotonic() - t0
+                    speed = written_mb / write_time if write_time > 0 else 0
+                    print(f"  Schreiben fertig: {write_time:.1f}s ({speed:.0f} MB/s)", flush=True)
+                    if not _stop and written_mb < actual_mb and not pressure.dropped_bytes:
+                        print(f"  Testzeit reicht nicht fuer den ganzen Zyklus – "
+                              f"pruefe die geschriebenen {written_mb} MB.", flush=True)
 
-            if not _stop and written_mb > 0:
-                t0 = time.monotonic()
-                locked, err = _lock_segments(chunks, written_segs)
-                lock_max_mb = max(lock_max_mb, locked >> 20)
-                if err and not lock_warned:
-                    lock_warned = True
-                    print(f"  WARNUNG: Speicher nur teilweise gegen Auslagern "
-                          f"gesperrt ({locked >> 20} von {written_mb} MB, mlock: "
-                          f"{os.strerror(err)}). Als root ausfuehren fuer volle "
-                          f"Sperre.", flush=True)
-                    if _swap_active():
-                        print("  WARNUNG: Swap ist aktiv – ungesperrter Testspeicher "
-                              "kann ausgelagert werden; der Test prueft dann "
-                              "teilweise die Auslagerung statt des RAM.", flush=True)
-                elif not err:
-                    print(f"  Gesperrt (mlock): {locked >> 20} MB "
-                          f"({time.monotonic() - t0:.1f}s)", flush=True)
+                if not _stop and written_mb > 0:
+                    t0 = time.monotonic()
+                    locked, err = _lock_segments(chunks, written_segs)
+                    lock_max_mb = max(lock_max_mb, locked >> 20)
+                    if err and not lock_warned:
+                        lock_warned = True
+                        print(f"  WARNUNG: Speicher nur teilweise gegen Auslagern "
+                              f"gesperrt ({locked >> 20} von {written_mb} MB, mlock: "
+                              f"{os.strerror(err)}). Als root ausfuehren fuer volle "
+                              f"Sperre.", flush=True)
+                        if _swap_active():
+                            print("  WARNUNG: Swap ist aktiv – ungesperrter Testspeicher "
+                                  "kann ausgelagert werden; der Test prueft dann "
+                                  "teilweise die Auslagerung statt des RAM.", flush=True)
+                    elif not err:
+                        print(f"  Gesperrt (mlock): {locked >> 20} MB "
+                              f"({time.monotonic() - t0:.1f}s)", flush=True)
 
-            if not _stop and written_mb > 0:
-                print(f"  Verifiziere {name} ({written_mb} MB) ...", flush=True)
-                t0 = time.monotonic()
-                # Pruefen durch andere CPUs als beim Schreiben (halbe Runde versetzt).
-                errs = _run_parallel("verify", chunks, builder, written_segs,
-                                     rotation=rotation + half, pressure=pressure,
-                                     cpu_offset=cpu_offset)
-                verify_time = time.monotonic() - t0
-                written_segs = pressure.keep(written_segs)
-                written_mb = sum(s[2] for s in written_segs) // (1024 * 1024)
-                speed = written_mb / verify_time if verify_time > 0 else 0
+                if not _stop and written_mb > 0:
+                    print(f"  Verifiziere {name} ({written_mb} MB) ...", flush=True)
+                    t0 = time.monotonic()
+                    # Pruefen durch andere CPUs als beim Schreiben (halbe Runde versetzt).
+                    errs = _run_parallel("verify", chunks, builder, written_segs,
+                                         rotation=rotation + half, pressure=pressure,
+                                         cpu_offset=cpu_offset)
+                    verify_time = time.monotonic() - t0
+                    written_segs = pressure.keep(written_segs)
+                    written_mb = sum(s[2] for s in written_segs) // (1024 * 1024)
+                    speed = written_mb / verify_time if verify_time > 0 else 0
 
-                if errs:
-                    print(f"  Verifizieren: FEHLER ({len(errs)} Treffer, "
-                          f"{verify_time:.1f}s)", flush=True)
-                    for e in errs:
-                        print(f"    *** {e}", flush=True)
-                    cycle_errors.extend(errs)
-                elif written_mb > 0:
-                    print(f"  Verifizieren: OK ({verify_time:.1f}s, {speed:.0f} MB/s)",
-                          flush=True)
-                    verified_cycles += 1
-                    verified_mb += written_mb
-                    if not quick and not _stop:
-                        need = (write_time + 2 * verify_time) * 1.1
-                        if end - time.monotonic() < need:
-                            inversion_skipped += 1
-                            print(f"  Moving Inversion uebersprungen (Restzeit < "
-                                  f"{need:.0f}s).", flush=True)
+                    if errs:
+                        print(f"  Verifizieren: FEHLER ({len(errs)} Treffer, "
+                              f"{verify_time:.1f}s)", flush=True)
+                        for e in errs:
+                            print(f"    *** {e}", flush=True)
+                        cycle_errors.extend(errs)
+                    elif written_mb > 0:
+                        print(f"  Verifizieren: OK ({verify_time:.1f}s, {speed:.0f} MB/s)",
+                              flush=True)
+                        verified_mb += written_mb
+                        excluded_mb = pressure.excluded_bytes >> 20
+                        planned_mb = written_mb + excluded_mb
+                        if excluded_mb and written_mb < planned_mb * _MIN_COVERAGE:
+                            inconclusive_cycles += 1
+                            cycle_inconclusive = True
+                            print(f"  Zyklus NICHT AUSSAGEKRAEFTIG: Abdeckung "
+                                  f"{written_mb} von {planned_mb} MB geprueft "
+                                  f"({100 * written_mb / planned_mb:.0f} %, mindestens "
+                                  f"{_MIN_COVERAGE:.0%} noetig).", flush=True)
                         else:
-                            errs = _moving_inversion(
-                                chunks, builder, written_segs, rotation, half,
-                                pressure, cpu_offset=cpu_offset)
-                            cycle_errors.extend(errs)
-                            if not _stop:
-                                inversion_done += 1
+                            verified_cycles += 1
+                            if excluded_mb:
+                                print(f"  Abdeckung: {written_mb} von {planned_mb} MB "
+                                      f"geprueft ({100 * written_mb / planned_mb:.0f} %)",
+                                      flush=True)
+                        if not quick and not _stop and not cycle_inconclusive:
+                            need = (write_time + 2 * verify_time) * 1.1
+                            if end - time.monotonic() < need:
+                                inversion_skipped += 1
+                                print(f"  Moving Inversion uebersprungen (Restzeit < "
+                                      f"{need:.0f}s).", flush=True)
+                            else:
+                                errs = _moving_inversion(
+                                    chunks, builder, written_segs, rotation, half,
+                                    pressure, cpu_offset=cpu_offset)
+                                cycle_errors.extend(errs)
+                                if not _stop:
+                                    inversion_done += 1
+            except WorkerFailure as exc:
+                for msg in exc.messages:
+                    print(f"    *** {msg}", flush=True)
+                if exc.inconclusive:
+                    inconclusive_cycles += 1
+                    cycle_inconclusive = True
+                    print("  Zyklus NICHT AUSSAGEKRAEFTIG: Worker wegen "
+                          "Speichermangel beendet – Abdeckung unvollstaendig.",
+                          flush=True)
+                else:
+                    cycle_errors.extend(exc.messages)
         finally:
             dropped_total_mb += pressure.dropped_bytes >> 20
+            unreleased_total_mb += pressure.unreleased_bytes >> 20
             pressure_events += pressure.events
             pressure.close()
             print(f"  Freigabe {actual_mb} MB ...", end="", flush=True)
@@ -1183,12 +1342,16 @@ def run_cycles(
             if pressure.dropped_bytes:
                 print(f"  Wegen Speicherdruck verworfen (nicht geprueft): "
                       f"{pressure.dropped_bytes >> 20} MB", flush=True)
+            if pressure.unreleased_bytes:
+                print(f"  Wegen Speicherdruck ausgeschlossen, aber nicht freigebbar "
+                      f"(nicht geprueft): {pressure.unreleased_bytes >> 20} MB",
+                      flush=True)
 
         total_errors += len(cycle_errors)
         elapsed = time.monotonic() - start
+        verdict = "FEHLER" if cycle_errors else ("NICHT AUSSAGEKRAEFTIG" if cycle_inconclusive else "OK")
         print(
-            f"Zyklus {cycle} abgeschlossen: "
-            f"{'FEHLER' if cycle_errors else 'OK'} | "
+            f"Zyklus {cycle} abgeschlossen: {verdict} | "
             f"Laufzeit: {elapsed:.0f}s / {duration_seconds}s | "
             f"Gesamtfehler: {total_errors}",
             flush=True,
@@ -1218,9 +1381,11 @@ def run_cycles(
         print(f"Speichersperre (mlock): teilweise, max. {lock_max_mb} MB")
     elif lock_max_mb:
         print(f"Speichersperre (mlock): aktiv, max. {lock_max_mb} MB")
-    if dropped_total_mb:
+    if dropped_total_mb or unreleased_total_mb:
         print(f"Speicherdruck: {pressure_events} Mal, {dropped_total_mb} MB "
-              f"verworfen")
+              f"verworfen"
+              + (f", {unreleased_total_mb} MB nicht freigebbar"
+                 if unreleased_total_mb else ""))
     if not quick:
         print(f"Moving Inversion: {inversion_done} Durchlaeufe, "
               f"{inversion_skipped} uebersprungen (Zeit)")
@@ -1231,6 +1396,14 @@ def run_cycles(
         return 1
     if verified_cycles == 0 or verified_mb == 0:
         print("ERGEBNIS: NICHT AUSSAGEKRÄFTIG – keine verifizierten Zyklen")
+        return 2
+    if inconclusive_cycles:
+        print(f"ERGEBNIS: NICHT AUSSAGEKRÄFTIG – {inconclusive_cycles} Zyklus/Zyklen "
+              f"wegen Speichermangel/-druck unvollstaendig (Abdeckung < "
+              f"{_MIN_COVERAGE:.0%})")
+        return 2
+    if aborted_reason:
+        print(f"ERGEBNIS: NICHT AUSSAGEKRÄFTIG – {aborted_reason}")
         return 2
     print("ERGEBNIS: BESTANDEN – Keine Fehler gefunden")
     return 0

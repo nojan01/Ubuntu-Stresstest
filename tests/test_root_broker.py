@@ -11,7 +11,8 @@ def _broker(tmp_path):
     for name, body in {
         "nvme": 'echo "{\\"args\\": \\"$*\\"}"; echo warn >&2; exit 3',
         "fio": 'trap "exit 143" TERM; echo start; while :; do sleep 0.1; done',
-        "dcgmi": 'echo "dcgm $*"; exit 0',
+        "dcgmi": 'case "$1" in diag) echo "dcgm $*"; exit 0;; esac; '
+                 'trap "exit 143" TERM; echo start; while :; do sleep 0.1; done',
     }.items():
         tool = tmp_path / name
         tool.write_text("#!/bin/sh\n" + body + "\n")
@@ -42,7 +43,9 @@ def test_run_returns_stdout_stderr_and_exit_code_in_one_session(tmp_path):
 
 def test_rejects_unlisted_commands(tmp_path):
     broker = _broker(tmp_path)
-    for command in (["nvme", "format", "/dev/nvme0"], ["sh", "-c", "id"], ["fio", "a;b"]):
+    # fio ist als freier RUN-Befehl nicht mehr erlaubt (nur noch als geprüfter FIOJOB).
+    for command in (["nvme", "format", "/dev/nvme0"], ["sh", "-c", "id"], ["fio", "a;b"],
+                    ["fio", "job.fio"]):
         with pytest.raises(RuntimeError):
             broker.run(command)
     with pytest.raises(RuntimeError):
@@ -55,14 +58,14 @@ def test_cancelled_authorization_raises(tmp_path):
         RootBroker("/bin/false").start()
 
 
-class _FioRunner(BaseTestRunner):
+class _LongRunner(BaseTestRunner):
     def build_command(self):
-        return ["fio", "job.fio"]
+        return ["dcgmi", "stress"]
 
 
 def test_runner_streams_and_stops_through_broker(tmp_path):
     broker = _broker(tmp_path)
-    runner = _FioRunner(TestParameters(0))
+    runner = _LongRunner(TestParameters(0))
     runner.root_broker = broker
     runner.start()
     time.sleep(0.5)

@@ -195,11 +195,38 @@ _FIO_ETA_PERCENT = re.compile(r"^Jobs:.*?\[(\d+(?:\.\d+)?)%\]")
 # Laufzeit und Fortschritt erst ab dann zaehlt.
 AUTHORIZED_MARKER = "@@HARDWARETEST-AUTHORIZED@@"
 
+# fio laeuft in einer eigenen Prozessgruppe (setsid); Stopp per stdin-EOF oder
+# SIGTERM an den Wrapper beendet die ganze Gruppe, nach Frist mit SIGKILL.
 PKEXEC_STOP_WRAPPER = (
-    'echo "' + AUTHORIZED_MARKER + '"; exec 3<&0; fio "$@" </dev/null & pid=$!; '
-    '(read _ <&3; kill -TERM "$pid" 2>/dev/null) & stopper=$!; '
-    'wait "$pid"; status=$?; kill "$stopper" 2>/dev/null; exit "$status"'
+    'echo "' + AUTHORIZED_MARKER + '"; exec 3<&0; '
+    'if command -v setsid >/dev/null 2>&1; then setsid fio "$@" </dev/null & '
+    'else fio "$@" </dev/null & fi; pid=$!; '
+    'stop() { kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; '
+    '(sleep 8; kill -KILL "-$pid" 2>/dev/null; kill -KILL "$pid" 2>/dev/null) & }; '
+    'trap stop TERM INT HUP; '
+    '(read _ <&3; kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null) & stopper=$!; '
+    'while :; do wait "$pid"; status=$?; kill -0 "$pid" 2>/dev/null || break; done; '
+    'kill -KILL "-$pid" 2>/dev/null; kill "$stopper" 2>/dev/null; exit "$status"'
 )
+
+# Platzhalter statt lokaler Jobdatei, wenn die Root-Sitzung die Jobdatei selbst schreibt.
+_BROKER_JOB_PLACEHOLDER = "@@broker-job@@"
+
+
+def _job_tokens(lines: Sequence[str]) -> List[str]:
+    """Jobdatei-Zeilen in Broker-Tokens: ``[name]`` → ``@name``, ``key=value`` unverändert."""
+    tokens: List[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            tokens.append("@" + line[1:-1])
+        elif "=" in line and not any(ch.isspace() for ch in line):
+            tokens.append(line)
+        else:
+            raise TestExecutionError(f"Ungültige fio-Jobzeile: {line!r}")
+    return tokens
 
 
 class FioRunner(BaseTestRunner):
@@ -235,6 +262,31 @@ class FioRunner(BaseTestRunner):
         # Verify nur bei Workloads die schreiben
         self._has_writes = self.rw in ("write", "randwrite", "randrw", "readwrite", "rw")
         self.verify = verify and self._has_writes
+        # Verifizierende Jobs duerfen sich nicht ueberschreiben: disjunkte Bereiche
+        # innerhalb der Gesamtgroesse (size_mb bleibt die belegte Gesamtmenge).
+        if self.verify and self.num_jobs > 1:
+            self.num_jobs = min(self.num_jobs, self.size_mb)
+            self.job_size_mb = max(1, self.size_mb // self.num_jobs)
+        else:
+            self.job_size_mb = self.size_mb
+
+    @property
+    def total_size_mb(self) -> int:
+        """Tatsaechlich belegte Dateigroesse ueber alle Jobs."""
+        return self.job_size_mb * self.num_jobs if self.verify else self.size_mb
+
+    def estimated_verify_seconds(self) -> float:
+        """Grobe obere Schranke fuer die Verify-Phase (konservativ 20 MB/s)."""
+        if not self.verify:
+            return 0.0
+        return max(30.0, self.total_size_mb / 20.0)
+
+    @property
+    def watchdog_slack_seconds(self) -> float:  # type: ignore[override]
+        # fio begrenzt sich per --runtime selbst; der Watchdog ist nur Notbremse
+        # und darf fio nicht kurz vor Abschluss oder waehrend des Verify beenden.
+        duration = max(0, self.params.duration_seconds)
+        return max(60.0, 0.25 * duration) + self.estimated_verify_seconds()
 
     def build_command(self) -> List[str]:
         duration = self.params.duration_seconds
@@ -242,7 +294,7 @@ class FioRunner(BaseTestRunner):
             "fio",
             "--name=hardwaretest",
             f"--filename={self.filename}",
-            f"--size={self.size_mb}M",
+            f"--size={self.job_size_mb}M",
             f"--rw={self.rw}",
             f"--bs={self.block_size}",
             f"--runtime={duration}",
@@ -257,12 +309,32 @@ class FioRunner(BaseTestRunner):
             "--create_on_open=1",
         ]
         if self.verify:
+            if self.num_jobs > 1:
+                cmd.append(f"--offset_increment={self.job_size_mb}M")
             cmd += [
                 "--verify=crc32c",
                 "--do_verify=1",
                 "--verify_fatal=1",
             ]
         return cmd
+
+    def _submit_to_broker(self, cmd: List[str]) -> str:
+        """CLI-Optionen in geprüfte Broker-Tokens umsetzen (kein freies ``fio``)."""
+        name = "hardwaretest"
+        flags: List[str] = []
+        options: List[str] = []
+        for arg in cmd[1:]:
+            if arg.startswith("--name="):
+                name = arg[len("--name="):]
+            elif arg == "--group_reporting":
+                options.append("group_reporting=1")
+            elif arg.startswith("--eta="):
+                flags.append(arg)
+            elif arg.startswith("--") and "=" in arg:
+                options.append(arg[2:])
+            else:
+                raise TestExecutionError(f"fio-Option nicht über die Root-Sitzung erlaubt: {arg}")
+        return self.root_broker.submit_fio_job([*flags, f"@{name}", *options])
 
 
 class _FioJobFileRunner(BaseTestRunner):
@@ -284,6 +356,7 @@ class _FioJobFileRunner(BaseTestRunner):
     ) -> None:
         super().__init__(params, log_fn=log_fn)
         self._job_file: Optional[str] = None
+        self._job_dir: Optional[str] = None
         self._eta_fraction = 0.0
         self._command_prefix: List[str] = []
         self._pkexec_path: Optional[str] = None
@@ -303,20 +376,29 @@ class _FioJobFileRunner(BaseTestRunner):
                 self._pkexec_path = pkexec_path
 
     def build_command(self) -> List[str]:
+        if self.root_broker is not None:
+            # Die Root-Sitzung schreibt die Jobdatei selbst aus geprüften Tokens.
+            return ["fio", *self._extra_fio_args(), _BROKER_JOB_PLACEHOLDER]
         lines = self._job_lines()
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            delete=False,
-            prefix="hardwaretest-fio-job-",
-            suffix=".fio",
-        ) as job_file:
+        self._cleanup_job_file()
+        # Privates Verzeichnis (0700) und Datei (0600): kein Austausch der Jobdatei
+        # durch andere Benutzer, bevor fio sie (ggf. als root) liest.
+        self._job_dir = tempfile.mkdtemp(prefix="hardwaretest-fio-job-")
+        self._job_file = os.path.join(self._job_dir, "job.fio")
+        fd = os.open(self._job_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as job_file:
             job_file.write("\n".join(lines))
-            self._job_file = job_file.name
         command = ["fio", *self._extra_fio_args(), self._job_file]
         if self._pkexec_path:
             script = PKEXEC_STOP_WRAPPER
             return [self._pkexec_path, "sh", "-c", script, "hardwaretest-fio", *command[1:]]
         return [*self._command_prefix, *command]
+
+    def _submit_to_broker(self, cmd: List[str]) -> str:
+        if cmd[-1] != _BROKER_JOB_PLACEHOLDER or cmd[0] != "fio":
+            raise TestExecutionError("fio-Befehl nicht für die Root-Sitzung geeignet")
+        tokens = [*cmd[1:-1], *_job_tokens(self._job_lines())]
+        return self.root_broker.submit_fio_job(tokens)
 
     def start(self) -> None:
         self.authorized = not self._pkexec_path
@@ -381,6 +463,10 @@ class _FioJobFileRunner(BaseTestRunner):
             with contextlib.suppress(OSError):
                 os.unlink(self._job_file)
             self._job_file = None
+        if self._job_dir:
+            with contextlib.suppress(OSError):
+                os.rmdir(self._job_dir)
+            self._job_dir = None
 
     def _stop_with_pkexec(self) -> None:
         if not self._process or self._process.poll() is not None:

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from hardwaretest.core.zfs import list_pools, read_status, worker_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
 class ZfsWorker(QThread):
@@ -171,13 +172,13 @@ class ZfsPanel(QWidget):
         self._worker = worker
         worker.result.connect(callback)
         worker.error.connect(self.failed)
-        worker.finished.connect(self.worker_finished)
+        connect_finished(worker, self.worker_finished)
         self.update_controls()
         worker.start()
 
-    def worker_finished(self):
-        self._worker.deleteLater()
-        self._worker = None
+    def worker_finished(self, worker=None):
+        if not release_worker(self, "_worker", worker):
+            return
         self.busy_changed.emit(self._monitoring or self._process is not None)
         self.update_controls()
         if self._monitoring and not self._timer.isActive():

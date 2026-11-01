@@ -124,7 +124,7 @@ def test_selected_health_only_checks_selected_controller(tmp_path, monkeypatch):
     monkeypatch.setattr(test_plan, "list_nvme_devices", lambda: [DRIVE, other])
     reads = []
     monkeypatch.setattr(test_plan, "read_nvme_smart",
-                        lambda controller, *_: reads.append(controller) or NvmeHealth(controller, media_errors=0))
+                        lambda controller, *_: reads.append(controller) or NvmeHealth(controller, critical_warning=0, media_errors=0))
     assert plan._run_nvme().status == "passed"
     assert reads == ["/dev/nvme0"]
 
@@ -134,7 +134,7 @@ def test_full_read_compares_smart_and_records_identity(tmp_path, monkeypatch, af
     plan = executor(tmp_path, nvme_devices=(DRIVE,), nvme_read_enabled=True, language="en")
     monkeypatch.setattr(test_plan.shutil, "which", lambda _: "/bin/fake")
     monkeypatch.setattr(test_plan, "list_nvme_devices", lambda: [DRIVE])
-    samples = iter([NvmeHealth("/dev/nvme0", media_errors=0), NvmeHealth("/dev/nvme0", media_errors=after)])
+    samples = iter([NvmeHealth("/dev/nvme0", critical_warning=0, media_errors=0), NvmeHealth("/dev/nvme0", critical_warning=0, media_errors=after)])
     monkeypatch.setattr(test_plan, "read_nvme_smart", lambda *args: next(samples))
     commands = []
     monkeypatch.setattr(test_plan, "FioNvmeFullReadRunner", lambda *args, **kw: commands.append((args, kw)))
@@ -152,7 +152,7 @@ def test_cancelled_read_is_never_reported_as_passed(tmp_path, monkeypatch):
     monkeypatch.setattr(test_plan.shutil, "which", lambda _: "/bin/fake")
     monkeypatch.setattr(test_plan, "list_nvme_devices", lambda: [DRIVE])
     reads = []
-    monkeypatch.setattr(test_plan, "read_nvme_smart", lambda *a: reads.append(1) or NvmeHealth("/dev/nvme0", media_errors=0))
+    monkeypatch.setattr(test_plan, "read_nvme_smart", lambda *a: reads.append(1) or NvmeHealth("/dev/nvme0", critical_warning=0, media_errors=0))
     monkeypatch.setattr(test_plan, "FioNvmeFullReadRunner", lambda *a, **kw: None)
     plan._run_process_step = lambda *a, **kw: plan._instant_result("nvme_read", "cancelled", "cancelled")
     result = plan._run_nvme_read()

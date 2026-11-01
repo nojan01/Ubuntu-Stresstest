@@ -101,10 +101,14 @@ class KernelEvents:
         r"I/O error|EXT4-fs error|BTRFS.*(?:error|corrupt)|XFS.*(?:error|corrupt)|"
         r"PCIe Bus Error|AER:.*(?:error|fatal)", re.I,
     )
+    # Eintraege pro journalctl-Seite und Obergrenze pro poll()-Aufruf.
+    page_size = 500
+    max_entries_per_poll = 5000
 
     def __init__(self) -> None:
         self.cursor = ""
         self.available = False
+        self.backlog = False
         try:
             result = self._run(["-n", "0", "--show-cursor"])
             match = re.search(r"-- cursor: (.+)", result.stdout)
@@ -121,28 +125,71 @@ class KernelEvents:
             capture_output=True, text=True, timeout=5,
         )
 
+    @staticmethod
+    def _read_page(cursor: str, limit: int) -> list[str]:
+        """Liest bis zu ``limit`` Eintraege vorwaerts ab ``cursor`` (aeltester zuerst).
+
+        journalctl kennt keine Begrenzung „vom Anfang“ (``-n`` zaehlt vom Ende);
+        darum wird der Strom gelesen und nach ``limit`` Zeilen beendet, damit bei
+        Bursts keine Eintraege uebersprungen werden.
+        """
+        process = subprocess.Popen(
+            ["journalctl", "-k", "-b", "--no-pager", "--after-cursor", cursor, "-o", "json"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        )
+        lines: list[str] = []
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                if line.strip():
+                    lines.append(line)
+                if len(lines) >= limit:
+                    break
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        if len(lines) < limit and process.returncode not in (0, None):
+            raise subprocess.SubprocessError(f"journalctl exit {process.returncode}")
+        return lines
+
     def poll(self) -> list[str]:
         if not self.available:
             return []
+        events: list[str] = []
+        processed = 0
+        self.backlog = False
         try:
-            result = self._run(["--after-cursor", self.cursor, "-n", "500", "-o", "json"])
-            if result.returncode:
-                self.available = False
-                return []
-            lines = result.stdout.splitlines()
-            events = []
-            if len(lines) >= 500:
-                events.append("kernel: log burst; limited to 500 entries per sample")
-            for line in lines:
-                entry = json.loads(line)
-                self.cursor = entry.get("__CURSOR", self.cursor)
-                message = entry.get("MESSAGE", "")
-                if isinstance(message, str) and self.pattern.search(message):
-                    events.append(message[:2000])
+            while processed < self.max_entries_per_poll:
+                limit = min(self.page_size, self.max_entries_per_poll - processed)
+                lines = self._read_page(self.cursor, limit)
+                for line in lines:
+                    entry = json.loads(line)
+                    message = entry.get("MESSAGE", "")
+                    if isinstance(message, str) and self.pattern.search(message):
+                        events.append(message[:2000])
+                    # Cursor nur bis zum tatsaechlich verarbeiteten Eintrag verschieben.
+                    self.cursor = entry.get("__CURSOR", self.cursor)
+                processed += len(lines)
+                if len(lines) < limit:
+                    break
+            else:
+                # Obergrenze erreicht: nur melden, wenn wirklich noch Eintraege folgen.
+                # Der Rest bleibt hinter dem Cursor und wird beim naechsten poll() gelesen.
+                if self._read_page(self.cursor, 1):
+                    self.backlog = True
+                    events.append(
+                        f"kernel: log burst; {processed} entries inspected this sample, "
+                        "remaining entries deferred to the next sample"
+                    )
             return events
         except (OSError, ValueError, subprocess.SubprocessError):
             self.available = False
-            return []
+            return events
 
 
 class MonitorSession:
@@ -230,6 +277,8 @@ class MonitorSession:
         alerts.extend(self.journal.poll())
         if not self.journal.available:
             self.unavailable.add("kernel journal")
+        if getattr(self.journal, "backlog", False):
+            self.unavailable.add("kernel journal (backlog)")
         for alert in alerts:
             self.alert_count += 1
             if len(self.alerts) < 100:

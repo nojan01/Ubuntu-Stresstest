@@ -45,6 +45,7 @@ from hardwaretest.tests.nvidia_runner import dcgmi_available
 from hardwaretest.tests.vulkan_runner import vulkan_loader_available
 from hardwaretest.core.nvme import list_nvme_devices
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 from hardwaretest.ui.report_browser import open_html_report
 from hardwaretest.ui.sensor_limits import edit_sensor_limits, load_sensor_limits
 
@@ -313,14 +314,12 @@ class TestPlanPanel(QWidget):
         self._set_runtime_text(self.current_step, "NVMe-Laufwerke werden gesucht …")
         worker.completed.connect(self._scanned_drives)
         worker.failed.connect(lambda message: self._set_raw_text(self.current_step, message))
-        worker.finished.connect(self._scan_finished)
+        connect_finished(worker, self._scan_finished)
         worker.start()
 
-    def _scan_finished(self) -> None:
-        worker = self._scan_worker
-        self._scan_worker = None
-        if worker is not None:
-            worker.deleteLater()
+    def _scan_finished(self, worker=None) -> None:
+        if not release_worker(self, "_scan_worker", worker):
+            return
         self.start_btn.setEnabled(self._worker is None)
         self.drive_scan_btn.setEnabled(self._worker is None)
 
@@ -434,7 +433,7 @@ class TestPlanPanel(QWidget):
         worker.step_progress.connect(self.step_progress.setValue)
         worker.completed.connect(self._completed)
         worker.failed.connect(self._failed)
-        worker.finished.connect(self._worker_finished)
+        connect_finished(worker, self._worker_finished)
         self._set_running(True)
         worker.start()
 
@@ -488,12 +487,9 @@ class TestPlanPanel(QWidget):
         self.result.setStyleSheet("color: #ff4444; font-weight: bold;")
         self._set_raw_text(self.current_step, message)
 
-    def _worker_finished(self) -> None:
-        worker = self._worker
-        self._worker = None
-        if worker is not None:
-            worker.deleteLater()
-        self._set_running(False)
+    def _worker_finished(self, worker=None) -> None:
+        if release_worker(self, "_worker", worker):
+            self._set_running(False)
 
     def _populate_results(self, result: TestPlanResult) -> None:
         self.results.setRowCount(len(result.steps))

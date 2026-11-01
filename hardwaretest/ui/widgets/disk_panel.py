@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, ClassVar, List, Optional, Tuple
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QProcess, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
 	QComboBox,
 	QDialog,
@@ -135,8 +135,14 @@ def find_unmountable_disks(lsblk_json: str) -> List[Tuple[str, List[Tuple[str, s
 class DeviceSelectionMixin:
 	"""Shared helpers for panels that operate on block devices."""
 
+	LSBLK_TIMEOUT_SECONDS = 10
+	UNMOUNT_TIMEOUT_MS = 120000
+
 	def _init_device_selection(self) -> None:
 		self._devices: List[BlockDevice] = []
+		self._unmount_process: Optional[QProcess] = None
+		self._unmount_queue: List[Tuple[str, str]] = []
+		self._unmount_errors: List[str] = []
 
 	def _refresh_device_list(self) -> None:
 		devices = self._scan_block_devices()
@@ -165,9 +171,13 @@ class DeviceSelectionMixin:
 				check=True,
 				capture_output=True,
 				text=True,
+				timeout=self.LSBLK_TIMEOUT_SECONDS,
 			)
 		except FileNotFoundError:
 			self._append_log("lsblk nicht gefunden. Bitte util-linux installieren.")
+			return []
+		except subprocess.TimeoutExpired:
+			self._append_log("lsblk antwortet nicht (Zeitüberschreitung) – hängt ein Gerät?")
 			return []
 		except subprocess.CalledProcessError as exc:
 			stderr = (exc.stderr or "").strip()
@@ -237,12 +247,14 @@ class DeviceSelectionMixin:
 		return False
 
 	def _unmount_device_dialog(self) -> None:
+		if getattr(self, "_unmount_process", None) is not None:
+			return
 		try:
 			out = subprocess.run(
 				["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINTS"],
-				check=True, capture_output=True, text=True,
+				check=True, capture_output=True, text=True, timeout=self.LSBLK_TIMEOUT_SECONDS,
 			).stdout
-		except (OSError, subprocess.CalledProcessError) as exc:
+		except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
 			self._append_log(f"lsblk fehlgeschlagen: {exc}")
 			return
 		candidates = find_unmountable_disks(out)
@@ -257,20 +269,76 @@ class DeviceSelectionMixin:
 		if not ok:
 			return
 		_disk, mounts = candidates[labels.index(choice)]
-		errors = []
-		for part, mp in mounts:
-			if shutil.which("udisksctl"):
-				cmd = ["udisksctl", "unmount", "-b", part]
-			else:
-				cmd = ["pkexec", "umount", part]
-			proc = subprocess.run(cmd, capture_output=True, text=True)
-			if proc.returncode == 0:
-				self._append_log(f"{part} ({mp}) ausgehängt.")
-			else:
-				errors.append(f"{part}: {(proc.stderr or proc.stdout).strip()}")
-		if errors:
-			QMessageBox.warning(self, "Aushängen", "Aushängen fehlgeschlagen:\n" + "\n".join(errors))
-		self._refresh_device_list()
+		self._unmount_queue = list(mounts)
+		self._unmount_errors = []
+		self._set_unmount_controls_enabled(False)
+		self._unmount_next()
+
+	def _set_unmount_controls_enabled(self, enabled: bool) -> None:
+		for name in ("unmount_btn", "scan_btn", "start_btn"):
+			button = getattr(self, name, None)
+			if button is not None:
+				button.setEnabled(enabled)
+		if enabled:
+			self._update_device_controls_enabled()
+
+	def _unmount_next(self) -> None:
+		# Aushängen läuft asynchron per QProcess, ein Mountpunkt nach dem anderen.
+		if not self._unmount_queue:
+			self._unmount_process = None
+			if self._unmount_errors:
+				QMessageBox.warning(self, "Aushängen", "Aushängen fehlgeschlagen:\n" + "\n".join(self._unmount_errors))
+			self._set_unmount_controls_enabled(True)
+			self._refresh_device_list()
+			return
+		part, mp = self._unmount_queue.pop(0)
+		if shutil.which("udisksctl"):
+			program, args = "udisksctl", ["unmount", "-b", part]
+		else:
+			program, args = "pkexec", ["umount", part]
+		process = QProcess(self)
+		self._unmount_process = process
+		process.finished.connect(lambda code, _status, p=process: self._unmount_finished(p, part, mp, code))
+		process.errorOccurred.connect(lambda error, p=process: self._unmount_error(p, part, mp, error))
+		QTimer.singleShot(self.UNMOUNT_TIMEOUT_MS, lambda p=process: self._unmount_timeout(p, part, mp))
+		process.start(program, args)
+
+	def _unmount_timeout(self, process, part: str, mp: str) -> None:
+		if self._unmount_process is process and process.state() != QProcess.ProcessState.NotRunning:
+			process.kill()
+			self._unmount_done(process, part, mp, False, "Zeitüberschreitung")
+
+	def _unmount_error(self, process, part: str, mp: str, error) -> None:
+		if error == QProcess.ProcessError.FailedToStart:
+			self._unmount_done(process, part, mp, False, "Programm konnte nicht gestartet werden")
+
+	def _unmount_finished(self, process, part: str, mp: str, code: int) -> None:
+		message = ""
+		if code != 0:
+			message = (bytes(process.readAllStandardError()).decode("utf-8", "replace")
+				or bytes(process.readAllStandardOutput()).decode("utf-8", "replace")).strip()
+		self._unmount_done(process, part, mp, code == 0, message)
+
+	def _unmount_done(self, process, part: str, mp: str, ok: bool, message: str) -> None:
+		# Idempotent: finished, errorOccurred und Timeout können sich überschneiden.
+		if self._unmount_process is not process:
+			return
+		self._unmount_process = None
+		process.deleteLater()
+		if ok:
+			self._append_log(f"{part} ({mp}) ausgehängt.")
+		else:
+			self._unmount_errors.append(f"{part}: {message}")
+		self._unmount_next()
+
+	def close_privileged_session(self) -> None:
+		process = getattr(self, "_unmount_process", None)
+		if process is not None:
+			self._unmount_queue = []
+			self._unmount_process = None
+			process.kill()
+			process.waitForFinished(2000)
+			process.deleteLater()
 
 	def _set_all_devices_checked(self, checked: bool) -> None:
 		state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked

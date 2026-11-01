@@ -369,28 +369,76 @@ def is_running_as_root() -> bool:
     return os.geteuid() == 0
 
 
+# Prozessnamen echter grafischer polkit-Authentifizierungsagenten (Praefix-Vergleich
+# auf den Basisnamen des Kommandos). ``polkitd`` ist der Systemdienst und zaehlt
+# ausdruecklich NICHT: er ist auch auf Servern/Live-Systemen ohne Agent aktiv, wo
+# pkexec dann bis zum Timeout blockieren wuerde.
+POLKIT_AGENT_NAMES: Tuple[str, ...] = (
+    "polkit-gnome-authentication-agent",
+    "polkit-kde-authentication-agent",
+    "polkit-mate-authentication-agent",
+    "polkit-efl-authentication-agent",
+    "lxpolkit",
+    "lxqt-policykit-agent",
+    "xfce-polkit",
+    "mate-polkit",
+    "hyprpolkitagent",
+    "budgie-polkit-dialog",
+    "dde-polkit-agent",
+    "pantheon-agent-polkit",
+    "ukui-polkit",
+    "polkit-dumb-agent",
+    "ts-polkitagent",
+    # GNOME Shell bringt den Agenten eingebaut mit (kein separater Prozess).
+    "gnome-shell",
+)
+
+# Keine Agenten: Systemdienst und dessen Hilfsprozess.
+_POLKIT_NON_AGENT_NAMES: Tuple[str, ...] = ("polkitd", "polkit-agent-helper")
+
+
+def _polkit_agent_processes(ps_output: str, uid: Optional[int]) -> List[str]:
+    """Filtert ``ps -eo uid=,args=``-Zeilen nach laufenden Agenten des Benutzers ``uid``.
+
+    ``uid=None`` deaktiviert die Benutzerfilterung (Fallback, falls keine UID lesbar).
+    """
+    found: List[str] = []
+    for line in ps_output.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        uid_text, args = parts
+        if uid is not None:
+            try:
+                if int(uid_text) != uid:
+                    continue
+            except ValueError:
+                continue
+        command = args.split()[0] if args.split() else ""
+        name = os.path.basename(command).lower()
+        if not name or name.startswith(_POLKIT_NON_AGENT_NAMES):
+            continue
+        if name.startswith(POLKIT_AGENT_NAMES):
+            found.append(name)
+    return found
+
+
 def _is_polkit_agent_running() -> bool:
-    """Check whether a polkit authentication agent is active.
+    """Check whether a polkit authentication agent is active for the current user.
 
     Without a running agent, ``pkexec`` blocks forever waiting for a dialog
-    that will never appear (common on Ubuntu Server + XFCE4).
+    that will never appear (common on Ubuntu Server + XFCE4). Nur Agenten des
+    aktuellen Benutzers zaehlen; ein Agent eines anderen Benutzers kann fuer
+    unsere Sitzung keinen Dialog anzeigen.
     """
-    agent_names = (
-        "polkit-gnome-authentication-agent",
-        "polkit-kde-authentication-agent",
-        "xfce-polkit",
-        "lxpolkit",
-        "lxqt-policykit-agent",
-        "polkitd",
-        "polkit-mate-authentication-agent",
-    )
     try:
         result = subprocess.run(
-            ["ps", "-eo", "comm"],
+            ["ps", "-eo", "uid=,args="],
             capture_output=True, text=True, timeout=5,
         )
-        running = result.stdout.lower()
-        return any(name in running for name in agent_names)
+        if result.returncode != 0:
+            return False
+        return bool(_polkit_agent_processes(result.stdout, os.getuid()))
     except Exception:
         return False
 
@@ -672,9 +720,14 @@ def check_memtest86_installed() -> Tuple[bool, str]:
 
 @dataclass
 class SmartInfo:
-    """SMART-Zusammenfassung eines Datentraegers."""
+    """SMART-Zusammenfassung eines Datentraegers.
+
+    ``healthy`` ist dreiwertig: ``True`` = SMART-Status eindeutig bestanden,
+    ``False`` = Laufwerk meldet Fehler, ``None`` = Status nicht bestimmbar
+    (Abfrage fehlgeschlagen, keine Health-Angabe in der Ausgabe).
+    """
     device: str
-    healthy: bool
+    healthy: Optional[bool]
     model: str = ""
     serial: str = ""
     temperature_c: int = 0
@@ -684,6 +737,60 @@ class SmartInfo:
     uncorrectable_sectors: int = 0
     raw_output: str = ""
     error: str = ""
+    exit_status: int = 0
+    warnings: List[str] = field(default_factory=list)
+
+
+# smartctl-Exitcode-Bitmaske (siehe smartctl(8), Abschnitt EXIT STATUS)
+SMARTCTL_BIT_CMDLINE = 0x01
+SMARTCTL_BIT_DEVICE_OPEN = 0x02
+SMARTCTL_BIT_CMD_FAILED = 0x04
+SMARTCTL_BIT_DISK_FAILING = 0x08
+SMARTCTL_BIT_PREFAIL_BELOW_THRESH = 0x10
+SMARTCTL_BIT_PAST_PREFAIL = 0x20
+SMARTCTL_BIT_ERROR_LOG = 0x40
+SMARTCTL_BIT_SELFTEST_LOG = 0x80
+
+_SMARTCTL_WARNING_BITS = (
+    (SMARTCTL_BIT_PREFAIL_BELOW_THRESH, "Prefail-Attribut unter Schwellwert"),
+    (SMARTCTL_BIT_PAST_PREFAIL, "Attribut war in der Vergangenheit unter Schwellwert"),
+    (SMARTCTL_BIT_ERROR_LOG, "Eintraege im SMART-Fehlerprotokoll"),
+    (SMARTCTL_BIT_SELFTEST_LOG, "Fehler im Selbsttest-Protokoll"),
+)
+
+
+def _apply_smartctl_exit_status(info: SmartInfo, returncode: int) -> None:
+    """Wertet die smartctl-Exitcode-Bitmaske aus und setzt healthy/error/warnings."""
+    info.exit_status = returncode
+    if returncode < 0:
+        info.healthy = None
+        info.error = f"smartctl durch Signal {-returncode} beendet"
+        return
+    if returncode & (SMARTCTL_BIT_CMDLINE | SMARTCTL_BIT_DEVICE_OPEN):
+        info.healthy = None
+        if returncode & SMARTCTL_BIT_CMDLINE:
+            info.error = "smartctl: Kommandozeilenfehler (Exitcode-Bit 0)"
+        else:
+            info.error = "smartctl: Geraet konnte nicht geoeffnet werden (Exitcode-Bit 1)"
+        return
+    if returncode & SMARTCTL_BIT_CMD_FAILED:
+        info.warnings.append("SMART-Kommando fehlgeschlagen oder Pruefsummenfehler")
+    if returncode & SMARTCTL_BIT_DISK_FAILING:
+        info.healthy = False
+        info.warnings.append("smartctl meldet DISK FAILING")
+    for bit, text in _SMARTCTL_WARNING_BITS:
+        if returncode & bit:
+            info.warnings.append(text)
+
+
+def _smart_passed_from_json(data: dict) -> Optional[bool]:
+    smart_status = data.get("smart_status")
+    if not isinstance(smart_status, dict):
+        return None
+    passed = smart_status.get("passed")
+    if isinstance(passed, bool):
+        return passed
+    return None
 
 
 def read_smart_info(device: str) -> SmartInfo:
@@ -693,7 +800,7 @@ def read_smart_info(device: str) -> SmartInfo:
     """
     smartctl = shutil.which("smartctl")
     if not smartctl:
-        return SmartInfo(device=device, healthy=False,
+        return SmartInfo(device=device, healthy=None,
                          error="smartctl nicht gefunden (sudo apt install smartmontools)")
     # Versuche mit pkexec oder sudo
     prefix: List[str] = []
@@ -711,22 +818,23 @@ def read_smart_info(device: str) -> SmartInfo:
         )
         raw = result.stdout or ""
     except (subprocess.SubprocessError, OSError) as exc:
-        return SmartInfo(device=device, healthy=False, error=str(exc))
+        return SmartInfo(device=device, healthy=None, error=str(exc))
 
     # JSON-Parsing (smartctl -j gibt JSON aus)
     try:
         data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("smartctl-JSON ist kein Objekt")
     except (json.JSONDecodeError, ValueError):
         # Fallback: Textausgabe ohne -j
         return _parse_smart_text(device, prefix, smartctl)
 
-    info = SmartInfo(device=device, healthy=True, raw_output=raw)
+    info = SmartInfo(device=device, healthy=None, raw_output=raw)
     info.model = data.get("model_name", "")
     info.serial = data.get("serial_number", "")
 
-    # SMART overall health
-    smart_status = data.get("smart_status", {})
-    info.healthy = smart_status.get("passed", True)
+    # SMART overall health: nur ein explizites bool zaehlt
+    info.healthy = _smart_passed_from_json(data)
 
     # Temperatur
     temp_data = data.get("temperature", {})
@@ -747,6 +855,9 @@ def read_smart_info(device: str) -> SmartInfo:
         elif attr_id == 198:
             info.uncorrectable_sectors = raw_val
 
+    _apply_smartctl_exit_status(info, result.returncode)
+    if info.healthy is None and not info.error:
+        info.error = "SMART-Gesamtstatus nicht in smartctl-Ausgabe enthalten"
     return info
 
 
@@ -759,13 +870,17 @@ def _parse_smart_text(device: str, prefix: List[str], smartctl: str) -> SmartInf
         )
         raw = result.stdout or ""
     except (subprocess.SubprocessError, OSError) as exc:
-        return SmartInfo(device=device, healthy=False, error=str(exc))
+        return SmartInfo(device=device, healthy=None, error=str(exc))
 
-    info = SmartInfo(device=device, healthy=True, raw_output=raw)
+    info = SmartInfo(device=device, healthy=None, raw_output=raw)
     for line in raw.splitlines():
         low = line.lower()
-        if "overall-health" in low:
-            info.healthy = "passed" in low
+        if "overall-health" in low or "smart health status" in low:
+            value = low.split(":", 1)[-1].strip()
+            if "passed" in value or value == "ok":
+                info.healthy = True
+            elif value:
+                info.healthy = False
         elif "device model" in low or "model number" in low:
             info.model = line.split(":", 1)[-1].strip()
         elif "serial number" in low:
@@ -788,14 +903,22 @@ def _parse_smart_text(device: str, prefix: List[str], smartctl: str) -> SmartInf
                 if p.isdigit():
                     info.pending_sectors = int(p)
                     break
+    _apply_smartctl_exit_status(info, result.returncode)
+    if info.healthy is None and not info.error:
+        info.error = "SMART-Gesamtstatus nicht in smartctl-Ausgabe enthalten"
     return info
 
 
 def format_smart_summary(info: SmartInfo) -> str:
     """Menschenlesbare SMART-Zusammenfassung."""
-    if info.error:
-        return f"{info.device}: {info.error}"
-    status = "✓ OK" if info.healthy else "✗ FEHLER"
+    if info.error and info.healthy is None:
+        return f"{info.device}: ? UNBEKANNT – {info.error}"
+    if info.healthy is True:
+        status = "✓ OK"
+    elif info.healthy is False:
+        status = "✗ FEHLER"
+    else:
+        status = "? UNBEKANNT"
     parts = [f"{info.device}: {status}"]
     if info.model:
         parts.append(f"Modell: {info.model}")
@@ -809,6 +932,8 @@ def format_smart_summary(info: SmartInfo) -> str:
         parts.append(f"⚠ Pending: {info.pending_sectors}")
     if info.uncorrectable_sectors > 0:
         parts.append(f"⚠ Uncorr: {info.uncorrectable_sectors}")
+    for w in info.warnings:
+        parts.append(f"⚠ {w}")
     return " | ".join(parts)
 
 

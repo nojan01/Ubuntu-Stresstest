@@ -182,13 +182,39 @@ class MainWindow(QMainWindow):
         self._temperature_lock = False
         self._update_test_lock()
 
-    def closeEvent(self, event) -> None:
-        active_runners = []
+    # Maximale Wartezeit je Runner, bis stdout-/Watchdog-Thread beendet sind.
+    _RUNNER_JOIN_TIMEOUT = 15.0
+    _THREAD_JOIN_TIMEOUT_MS = 15000
+
+    def _active_runners(self) -> list:
+        runners = []
         for panel in self._test_panels:
             for name in ("runner", "_runner", "_io_runner"):
                 runner = getattr(panel, name, None)
                 if runner is not None and runner.is_running():
-                    active_runners.append(runner)
+                    runners.append(runner)
+        return runners
+
+    def _privileged_prompt_active(self) -> bool:
+        checker = getattr(self.system_panel, "is_busy", None)
+        return bool(checker is not None and checker())
+
+    @staticmethod
+    def _shutdown_runner(runner, timeout: float) -> None:
+        """Runner stoppen und seine Hintergrund-Threads joinen, bevor Widgets zerstört werden."""
+        runner.stop(aborted=True)
+        waiter = getattr(runner, "wait_finished", None)
+        if waiter is not None:
+            waiter(timeout)
+            return
+        # Fallback, solange der Core noch kein wait_finished() anbietet.
+        for name in ("_stdout_thread", "_watchdog_thread"):
+            thread = getattr(runner, name, None)
+            if thread is not None and thread.is_alive():
+                thread.join(timeout)
+
+    def closeEvent(self, event) -> None:
+        active_runners = self._active_runners()
         if active_runners:
             reply = QMessageBox.question(
                 self,
@@ -200,11 +226,15 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            for runner in active_runners:
-                runner.stop(aborted=True)
         if self.filesystem_panel.is_busy() or self.zfs_panel.is_busy() or self.monitoring_panel.is_busy():
             QMessageBox.information(self, language_manager.tr("Aktion läuft"), language_manager.tr(
                 "Bitte das Monitoring zuerst stoppen und laufende Dateisystem-Aktionen abschließen lassen."
+            ))
+            event.ignore()
+            return
+        if self._privileged_prompt_active():
+            QMessageBox.information(self, language_manager.tr("Aktion läuft"), language_manager.tr(
+                "Bitte die laufende Passwortabfrage zuerst abschließen oder abbrechen."
             ))
             event.ignore()
             return
@@ -215,10 +245,25 @@ class MainWindow(QMainWindow):
             ))
             event.ignore()
             return
+        for runner in active_runners:
+            self._shutdown_runner(runner, self._RUNNER_JOIN_TIMEOUT)
+        # Auch Runner joinen, die zwischen Abfrage und Stop fertig wurden, aber
+        # deren stdout-Thread noch log_fn auf Panels aufruft.
+        for panel in self._test_panels:
+            for name in ("runner", "_runner", "_io_runner"):
+                runner = getattr(panel, name, None)
+                waiter = getattr(runner, "wait_finished", None) if runner is not None else None
+                if waiter is not None and runner not in active_runners:
+                    waiter(self._RUNNER_JOIN_TIMEOUT)
         for panel in [*self._test_panels, self.proliant_panel, self.system_panel]:
             closer = getattr(panel, "close_privileged_session", None)
             if closer is not None:
                 closer()
+        # Sicherheitsnetz: QThreads, die trotz Abfrage noch laufen (z. B. Telemetrie), abwarten.
+        for thread in self.findChildren(QThread):
+            if thread.isRunning():
+                thread.requestInterruption()
+                thread.wait(self._THREAD_JOIN_TIMEOUT_MS)
         super().closeEvent(event)
 
     def _add_menus(self) -> None:

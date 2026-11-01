@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import List, Optional
 
@@ -283,6 +284,32 @@ class NetworkRunner(BaseTestRunner):
         return lines
 
 
+REQUIRED_MEASUREMENTS: dict[str, tuple[str, ...]] = {
+    "ping": ("packet_loss_percent", "latency_avg_ms", "jitter_ms"),
+    "iperf3": ("throughput_mbit_s",),
+}
+
+
+def infer_mode(summary: Optional[dict[str, float]]) -> str:
+    return "iperf3" if summary and "throughput_mbit_s" in summary else "ping"
+
+
+def invalid_measurements(summary: Optional[dict[str, float]], mode: Optional[str] = None) -> list[str]:
+    """Pflichtmesswerte, die fehlen oder nicht endlich/negativ sind.
+
+    Pro Modus zentral definiert, damit GUI und Testplan dieselbe Bewertung nutzen.
+    """
+    mode = mode or infer_mode(summary)
+    values = summary or {}
+    invalid: list[str] = []
+    for key in REQUIRED_MEASUREMENTS.get(mode, ()):
+        value = values.get(key)
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(value) or value < 0):
+            invalid.append(key)
+    return invalid
+
+
 def threshold_failures(
     summary: Optional[dict[str, float]],
     *,
@@ -290,11 +317,27 @@ def threshold_failures(
     max_latency_avg_ms: float,
     max_jitter_ms: float,
     min_throughput_mbit_s: float,
+    mode: Optional[str] = None,
 ) -> list[tuple[str, float, float]]:
-    """Return stable failure codes plus actual and configured values."""
+    """Return stable failure codes plus actual and configured values.
+
+    Fehlende oder ungueltige Pflichtmesswerte des Modus werden als
+    ``missing_summary`` gemeldet, damit ein Lauf ohne RTT-/Jitter-Zeile nie
+    als bestanden gilt.
+    """
     if not summary:
         return [("missing_summary", 0.0, 0.0)]
+    mode = mode or infer_mode(summary)
+    limits = {
+        "packet_loss_percent": max_packet_loss_percent,
+        "latency_avg_ms": max_latency_avg_ms,
+        "jitter_ms": max_jitter_ms,
+        "throughput_mbit_s": min_throughput_mbit_s,
+    }
     failures: list[tuple[str, float, float]] = []
+    invalid = invalid_measurements(summary, mode)
+    for key in invalid:
+        failures.append(("missing_summary", float("nan"), limits[key]))
     checks = (
         ("packet_loss", "packet_loss_percent", max_packet_loss_percent, lambda a, b: a > b),
         ("latency", "latency_avg_ms", max_latency_avg_ms, lambda a, b: a > b),
@@ -302,7 +345,9 @@ def threshold_failures(
         ("throughput", "throughput_mbit_s", min_throughput_mbit_s, lambda a, b: b > 0 and a < b),
     )
     for code, key, limit, failed in checks:
-        if key in summary and failed(summary[key], limit):
+        if key in invalid or key not in summary:
+            continue
+        if failed(summary[key], limit):
             failures.append((code, summary[key], limit))
     return failures
 

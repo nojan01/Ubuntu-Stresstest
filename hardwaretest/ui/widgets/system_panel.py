@@ -178,20 +178,34 @@ class SystemPanel(QWidget):
         pkexec = shutil.which("pkexec")
         if not pkexec or self._process is not None:
             return
-        self._process = QProcess(self)
-        self._process.finished.connect(self._password_finished)
+        process = QProcess(self)
+        self._process = process
+        process.finished.connect(lambda code, _status, p=process: self._password_done(p, code))
+        process.errorOccurred.connect(lambda error, p=process: self._password_error(p, error))
         self.password_button.setEnabled(False)
-        self._process.start(pkexec, inv.dmidecode_command())
+        process.start(pkexec, inv.dmidecode_command())
 
-    def _password_finished(self, code: int, _status) -> None:
-        process, self._process = self._process, None
+    def is_busy(self) -> bool:
+        """True, solange die pkexec-Passwortabfrage bzw. dmidecode läuft."""
+        return self._process is not None
+
+    def _password_error(self, process: QProcess, error) -> None:
+        # Bei „Crashed“ folgt noch finished(); nur FailedToStart bleibt sonst ohne Abschluss.
+        if error == QProcess.ProcessError.FailedToStart:
+            self._password_done(process, -1, _t("pkexec konnte nicht gestartet werden", "pkexec could not be started"))
+
+    def _password_done(self, process: QProcess, code: int, fallback_error: str = "") -> None:
+        # Idempotent: finished und errorOccurred können beide eintreffen.
+        if self._process is not process:
+            return
+        self._process = None
         output = bytes(process.readAllStandardOutput()).decode("utf-8", "replace")
         error = bytes(process.readAllStandardError()).decode("utf-8", "replace").strip()
         process.deleteLater()
         if code == 0 and output:
             self._memory, self._memory_error = inv.parse_dmidecode(output), ""
         else:
-            self._memory_error = error or _t("Abgebrochen", "Cancelled")
+            self._memory_error = error or fallback_error or _t("Abgebrochen", "Cancelled")
         self.retranslate()
 
     def text_lines(self) -> list[str]:
@@ -411,6 +425,9 @@ class SystemPanel(QWidget):
                 dev.sector_text(d)] for d in devices.disks])
 
     def close_privileged_session(self) -> None:
-        if self._process is not None:
-            self._process.kill()
-            self._process.waitForFinished(2000)
+        process, self._process = self._process, None
+        if process is not None:
+            process.kill()
+            process.waitForFinished(2000)
+            process.deleteLater()
+            self.password_button.setEnabled(True)

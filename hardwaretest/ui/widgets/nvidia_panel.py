@@ -38,6 +38,7 @@ from hardwaretest.tests.nvidia_runner import (
     dcgmi_available,
 )
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
 class _GpuScanWorker(QThread):
@@ -270,7 +271,7 @@ class NvidiaPanel(QWidget):
         self._scan_worker = worker
         worker.completed.connect(self._show_gpus)
         worker.failed.connect(self._scan_failed)
-        worker.finished.connect(self._scan_finished)
+        connect_finished(worker, self._scan_finished)
         worker.start()
 
     def _run_linux_check(self) -> None:
@@ -347,9 +348,9 @@ class NvidiaPanel(QWidget):
         self._set_diagnostic_enabled(False)
         self._set_monitoring_available(False)
 
-    def _scan_finished(self) -> None:
-        self._scan_worker = None
-        self.scan_btn.setEnabled(True)
+    def _scan_finished(self, worker=None) -> None:
+        if release_worker(self, "_scan_worker", worker):
+            self.scan_btn.setEnabled(True)
 
     def _start_diagnostic(self) -> None:
         indices = [index for index, checkbox in self._gpu_checks.items() if checkbox.isChecked()]
@@ -498,7 +499,7 @@ class NvidiaPanel(QWidget):
         self._telemetry_worker = worker
         worker.completed.connect(self._show_telemetry)
         worker.failed.connect(self._telemetry_failed)
-        worker.finished.connect(self._telemetry_finished)
+        connect_finished(worker, self._telemetry_finished)
         worker.start()
 
     def _show_telemetry(self, value: object) -> None:
@@ -524,8 +525,8 @@ class NvidiaPanel(QWidget):
         self.telemetry.setPlainText(message)
         self._set_runtime_text(self.monitor_status, "GPU-Liveüberwachung fehlgeschlagen.")
 
-    def _telemetry_finished(self) -> None:
-        self._telemetry_worker = None
+    def _telemetry_finished(self, worker=None) -> None:
+        release_worker(self, "_telemetry_worker", worker)
 
     def _poll_diagnostic(self) -> None:
         runner = self._runner
@@ -555,14 +556,43 @@ class NvidiaPanel(QWidget):
             self._finish_stress(runner, result, aborted)
             return
         counts = runner.status_counts()
+        evaluation_error = runner.evaluation_error() if result is not None and result.passed else None
         self.output.setPlainText("\n".join(runner.output_lines))
         self._runner = None
         self.progress.setVisible(False)
         self._set_running(False)
-        if aborted:
+        if aborted and counts["fail"] > 0:
+            self._set_runtime_text(
+                self.result,
+                "✗ DCGM-Diagnose ABGEBROCHEN – {failed} fehlgeschlagene Prüfung(en) bis zum Abbruch",
+                failed=counts["fail"],
+            )
+            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(
+                self.diag_status,
+                "DCGM meldet {failed} fehlgeschlagene Prüfung(en). Details stehen im Protokoll.",
+                failed=counts["fail"],
+            )
+        elif aborted and counts["pass"] > 0:
+            self._set_runtime_text(
+                self.result,
+                "✓ DCGM-Diagnose ABGEBROCHEN – {passed} Prüfung(en) bis zum Abbruch bestanden",
+                passed=counts["pass"],
+            )
+            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(
+                self.diag_status,
+                "Ergebnisse: {passed} bestanden, {warned} Warnungen, {skipped} übersprungen.",
+                passed=counts["pass"], warned=counts["warn"], skipped=counts["skip"],
+            )
+        elif aborted:
             self._set_runtime_text(self.result, "? DCGM-Diagnose abgebrochen")
             self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
-            self._set_runtime_text(self.diag_status, "DCGM-Diagnose wurde manuell beendet.")
+            self._set_runtime_text(self.diag_status, "DCGM-Diagnose wurde manuell beendet – kein auswertbares Teilergebnis.")
+        elif evaluation_error is not None:
+            self._set_runtime_text(self.result, "✗ DCGM-Diagnose FEHLGESCHLAGEN")
+            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(self.diag_status, "DCGM-Ergebnis nicht auswertbar: {reason}", reason=evaluation_error)
         elif result is not None and result.passed and counts["fail"] == 0:
             self._set_runtime_text(self.result, "✓ DCGM-Diagnose BESTANDEN")
             self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
@@ -585,10 +615,30 @@ class NvidiaPanel(QWidget):
         self._runner = None
         self.progress.setVisible(False)
         self._set_running(False)
-        if aborted:
+        if aborted and result is None:
             self._set_runtime_text(self.result, "? GPU-Lasttest abgebrochen")
             self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.diag_status, "GPU-Lasttest wurde manuell beendet.")
+        elif aborted and result.passed:
+            self._set_runtime_text(
+                self.result,
+                "✓ GPU-Lasttest ABGEBROCHEN – bis zum Abbruch keine Fehler erkannt ({seconds:.0f}s)",
+                seconds=float(result.duration_actual or 0.0),
+            )
+            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(self.diag_status, "GPU-Lasttest wurde manuell beendet.")
+        elif aborted:
+            self._set_runtime_text(
+                self.result,
+                "✗ GPU-Lasttest ABGEBROCHEN – {count} Fehlermeldung(en) bis zum Abbruch",
+                count=len(result.errors),
+            )
+            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self._set_runtime_text(
+                self.diag_status,
+                "{count} Fehlermeldung(en). Details stehen im Protokoll.",
+                count=len(result.errors),
+            )
         elif result is not None and result.passed:
             self._set_runtime_text(self.result, "✓ GPU-Lasttest BESTANDEN")
             self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")

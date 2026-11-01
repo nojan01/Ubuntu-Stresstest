@@ -8,11 +8,10 @@ import os
 import shlex
 import re
 import shutil
-import subprocess
 import tempfile
 from typing import Callable, Optional
 
-from PySide6.QtCore import QProcess
+from PySide6.QtCore import QProcess, QTimer
 from PySide6.QtWidgets import (
     QFormLayout,
     QMessageBox,
@@ -50,6 +49,8 @@ class InfoPanel(QWidget):
         self.summary.setMinimumHeight(summary_min_height)
         self.summary.setMaximumHeight(summary_max_height)
 
+        self._fastfetch_process: Optional[QProcess] = None
+        self._fastfetch_attempt = 0
         self.fastfetch_view = QTextEdit()
         self.fastfetch_view.setReadOnly(True)
         fastfetch_min_height = 260 if not compact_mode else 190
@@ -285,42 +286,62 @@ class InfoPanel(QWidget):
                 return resolved
         return None
 
+    # fastfetch läuft asynchron per QProcess; länger als diese Zeit wird abgebrochen.
+    FASTFETCH_TIMEOUT_MS = 15000
+    _FASTFETCH_COMMANDS = (["--logo", "none", "--pipe"], ["--logo", "none"])
+
     def _update_fastfetch_output(self) -> None:
         if shutil.which("fastfetch") is None:
             self.fastfetch_view.setPlainText(
                 "fastfetch ist nicht installiert. sudo apt install fastfetch"
             )
             return
-        commands = [["fastfetch", "--logo", "none", "--pipe"], ["fastfetch", "--logo", "none"]]
-        result = None
-        last_error: Optional[Exception] = None
-        for cmd in commands:
-            try:
-                trial = subprocess.run(
-                    cmd,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-            except Exception as exc:  # pragma: no cover - depends on system
-                last_error = exc
-                continue
-            if (trial.stdout and trial.stdout.strip()) or (trial.stderr and trial.stderr.strip()):
-                result = trial
-                break
-        if result is None:
-            if last_error is not None:
-                self.fastfetch_view.setPlainText(f"fastfetch konnte nicht gestartet werden: {last_error}")
-            else:
-                self.fastfetch_view.setPlainText("fastfetch lieferte keine Ausgabe.")
+        if getattr(self, "_fastfetch_process", None) is not None:
             return
-        output = (result.stdout or "").strip()
+        self._fastfetch_attempt = 0
+        self.fastfetch_view.setPlainText(language_manager.tr("Wird ermittelt…"))
+        self._start_fastfetch()
+
+    def _start_fastfetch(self) -> None:
+        args = list(self._FASTFETCH_COMMANDS[self._fastfetch_attempt])
+        process = QProcess(self)
+        self._fastfetch_process = process
+        process.finished.connect(lambda code, _status, p=process: self._fastfetch_finished(p, code))
+        process.errorOccurred.connect(lambda error, p=process: self._fastfetch_error(p, error))
+        QTimer.singleShot(self.FASTFETCH_TIMEOUT_MS, lambda p=process: self._fastfetch_timeout(p))
+        process.start("fastfetch", args)
+
+    def _fastfetch_timeout(self, process: QProcess) -> None:
+        if self._fastfetch_process is process and process.state() != QProcess.ProcessState.NotRunning:
+            process.kill()
+            self._fastfetch_finish(process, "fastfetch antwortet nicht (Zeitüberschreitung).")
+
+    def _fastfetch_error(self, process: QProcess, error) -> None:
+        if error == QProcess.ProcessError.FailedToStart:
+            self._fastfetch_finish(process, f"fastfetch konnte nicht gestartet werden: {error}")
+
+    def _fastfetch_finished(self, process: QProcess, _code: int) -> None:
+        if self._fastfetch_process is not process:
+            return
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", "replace").strip()
         if not output:
-            output = (result.stderr or "").strip()
-        if not output:
-            output = "fastfetch lieferte keine Ausgabe."
-        output = self._strip_ansi(output)
-        self.fastfetch_view.setPlainText(output)
+            output = bytes(process.readAllStandardError()).decode("utf-8", "replace").strip()
+        if not output and self._fastfetch_attempt + 1 < len(self._FASTFETCH_COMMANDS):
+            # Ohne --pipe erneut versuchen (ältere fastfetch-Versionen).
+            self._fastfetch_process = None
+            process.deleteLater()
+            self._fastfetch_attempt += 1
+            self._start_fastfetch()
+            return
+        self._fastfetch_finish(process, self._strip_ansi(output) if output else "fastfetch lieferte keine Ausgabe.")
+
+    def _fastfetch_finish(self, process: QProcess, text: str) -> None:
+        # Idempotent: finished, errorOccurred und Timeout können sich überschneiden.
+        if self._fastfetch_process is not process:
+            return
+        self._fastfetch_process = None
+        process.deleteLater()
+        self.fastfetch_view.setPlainText(text)
 
     @staticmethod
     def _strip_ansi(text: str) -> str:

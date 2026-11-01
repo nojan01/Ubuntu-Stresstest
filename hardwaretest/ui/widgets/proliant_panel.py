@@ -21,6 +21,7 @@ from hardwaretest.core import ipmi
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.system_info import read_edac_info
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 _CSS = {"ok": "color: #2e7d32; font-weight: bold;", "warn": "color: #e65100; font-weight: bold;",
         "error": "color: #c62828; font-weight: bold;", "info": "color: #757575; font-weight: bold;"}
@@ -229,6 +230,7 @@ class ProliantPanel(QWidget):
         events_layout.setContentsMargins(0, 0, 0, 0)
         filters = QHBoxLayout()
         self.event_filter = QComboBox()
+        self.event_filter.setProperty("hardwaretest_dynamic", True)
         self.event_filter.currentIndexChanged.connect(self.show_events)
         self.event_search = QLineEdit()
         self.event_search.textChanged.connect(self.show_events)
@@ -244,6 +246,7 @@ class ProliantPanel(QWidget):
         iml_layout.setContentsMargins(0, 0, 0, 0)
         iml_filters = QHBoxLayout()
         self.iml_filter = QComboBox()
+        self.iml_filter.setProperty("hardwaretest_dynamic", True)
         self.iml_filter.currentIndexChanged.connect(self.show_iml)
         self.iml_search = QLineEdit()
         self.iml_search.textChanged.connect(self.show_iml)
@@ -361,14 +364,15 @@ class ProliantPanel(QWidget):
         if self._broker is None and os.geteuid() != 0:
             self.summary.setStyleSheet("")
             self.summary.setText(_t("Wird ausgelesen … (Passwort-Abfrage beachten)", "Reading … (watch for password prompt)"))
-        self._worker = ProliantWorker(self)
-        self._worker.done.connect(self.show_result)
-        self._worker.finished.connect(self._finished)
-        self._worker.start()
+        worker = ProliantWorker(self)
+        self._worker = worker
+        worker.done.connect(self.show_result)
+        connect_finished(worker, self._finished)
+        worker.start()
 
-    def _finished(self):
-        self._worker = None
-        self.read_btn.setEnabled(True)
+    def _finished(self, worker=None):
+        if release_worker(self, "_worker", worker):
+            self.read_btn.setEnabled(True)
 
     def show_result(self, data):
         if "exception" in data:

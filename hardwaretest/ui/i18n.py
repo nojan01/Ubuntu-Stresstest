@@ -50,6 +50,7 @@ _EN: dict[str, str] = {
     "Aktion läuft": "Operation running",
     "Bitte das Monitoring zuerst stoppen und laufende Dateisystem-Aktionen abschließen lassen.": "Please stop monitoring first and let filesystem operations finish.",
     "Bitte laufende Tests beenden und warten, bis die Hintergrundaktion abgeschlossen ist.": "Please stop running tests and wait for background operations to finish.",
+    "Bitte die laufende Passwortabfrage zuerst abschließen oder abbrechen.": "Please complete or cancel the pending password prompt first.",
     "HPE Smart Array – RAID-Info (nur HPE-Controller)": "HPE Smart Array – RAID info (HPE controllers only)",
     "Modell: {value}": "Model: {value}",
     "Seriennummer: {value}": "Serial number: {value}",
@@ -82,6 +83,8 @@ _EN: dict[str, str] = {
     "⌛ NVMe-Lese-Test läuft": "⌛ NVMe read test is running",
     "✗ NVMe-Lese-Test konnte nicht gestartet werden": "✗ NVMe read test could not be started",
     "? NVMe-Lese-Test abgebrochen": "? NVMe read test cancelled",
+    "✓ NVMe-Lese-Test ABGEBROCHEN – bis zum Abbruch keine Fehler erkannt ({seconds:.0f}s)": "✓ NVMe read test CANCELLED – no errors detected up to cancellation ({seconds:.0f}s)",
+    "✗ NVMe-Lese-Test ABGEBROCHEN – {count} Problem(e) bis zum Abbruch erkannt": "✗ NVMe read test CANCELLED – {count} problem(s) detected up to cancellation",
     "Lese-Test wurde manuell beendet.": "Read test was stopped manually.",
     "🔑 Warte auf Passwort-Eingabe …": "🔑 Waiting for password …",
     "Der Lese-Test startet nach der Autorisierung.": "The read test starts after authorization.",
@@ -149,6 +152,11 @@ _EN: dict[str, str] = {
     "⌛ GPU-Lasttest läuft": "⌛ GPU stress test running",
     "GPU-Lasttest läuft {minutes} min auf {count} GPU(s) …": "GPU stress test running {minutes} min on {count} GPU(s) …",
     "? GPU-Lasttest abgebrochen": "? GPU stress test aborted",
+    "✓ GPU-Lasttest ABGEBROCHEN – bis zum Abbruch keine Fehler erkannt ({seconds:.0f}s)": "✓ GPU stress test ABORTED – no errors detected up to abort ({seconds:.0f}s)",
+    "✗ GPU-Lasttest ABGEBROCHEN – {count} Fehlermeldung(en) bis zum Abbruch": "✗ GPU stress test ABORTED – {count} error message(s) up to abort",
+    "✗ DCGM-Diagnose ABGEBROCHEN – {failed} fehlgeschlagene Prüfung(en) bis zum Abbruch": "✗ DCGM diagnostics CANCELLED – {failed} failed check(s) up to cancellation",
+    "✓ DCGM-Diagnose ABGEBROCHEN – {passed} Prüfung(en) bis zum Abbruch bestanden": "✓ DCGM diagnostics CANCELLED – {passed} check(s) passed up to cancellation",
+    "DCGM-Diagnose wurde manuell beendet – kein auswertbares Teilergebnis.": "DCGM diagnostics were stopped manually – no evaluable partial result.",
     "Test abgebrochen.": "Test aborted.",
     "(CPU-Paket)": "(CPU package)",
     "Aktualisiert {time}": "Updated {time}",
@@ -275,6 +283,8 @@ _EN: dict[str, str] = {
     "Keine": "None",
     "OK": "OK",
     "WARNUNG": "WARNING",
+    "UNBEKANNT": "UNKNOWN",
+    "DCGM-Ergebnis nicht auswertbar: {reason}": "DCGM result cannot be evaluated: {reason}",
     "Netzwerk": "Network",
     "Gesamttest": "Test plan",
     "– Gesamttest ÜBERSPRUNGEN – keine Prüfung ausgeführt": "– Test plan SKIPPED – no checks executed",
@@ -546,6 +556,18 @@ _EN: dict[str, str] = {
     "Über Hardwaretest": "About Hardwaretest",
     "Über Hardwaretest / About": "About Hardwaretest",
     "Sprache": "Language",
+    "Tests laufen": "Tests running",
+    "Es laufen noch Tests. Wirklich abbrechen und Hardwaretest schließen?": "Tests are still running. Really abort them and close Hardwaretest?",
+    "✓ BESTANDEN – Keine Fehler gefunden ({seconds:.0f}s)": "✓ PASSED – no errors found ({seconds:.0f}s)",
+    "✗ FEHLER GEFUNDEN – {error}": "✗ ERRORS FOUND – {error}",
+    "✓ BESTANDEN ({seconds:.0f}s)": "✓ PASSED ({seconds:.0f}s)",
+    "✗ FEHLER – {error}": "✗ ERROR – {error}",
+    "Bitte eine Dauer groesser als 0 Sekunden auswaehlen.": "Please select a duration greater than 0 seconds.",
+    "btop konnte nicht gestartet werden. Bitte Installation pruefen.": "btop could not be started. Please check the installation.",
+    "MCE-Logs konnten nicht gestartet werden. Bitte Installation pruefen.": "MCE logs could not be started. Please check the installation.",
+    "{page}/{pages} ({first}–{last})": "{page}/{pages} ({first}–{last})",
+    "Swap noch aktiv": "Swap still active",
+    "Swap konnte nicht deaktiviert werden.\n\nDer Test koennte auf die Festplatte ausweichen und unzuverlaessige Ergebnisse liefern.\n\nTrotzdem starten?": "Swap could not be disabled.\n\nThe test might spill over to disk and produce unreliable results.\n\nStart anyway?",
 }
 
 _EN_PARTS: tuple[tuple[str, str], ...] = (
@@ -661,9 +683,14 @@ class LanguageManager(QObject):
             tabs.setTabText(index, self.tr(text))
 
     def _translate_combo(self, combo: QComboBox) -> None:
-        if not hasattr(combo, "_hardwaretest_items_de"):
-            combo._hardwaretest_items_de = [combo.itemText(i) for i in range(combo.count())]
-        for index, text in enumerate(combo._hardwaretest_items_de):
+        # Dynamisch befüllte Boxen (Geräte, Pools …) übersetzen ihre Panels selbst;
+        # der Cache würde sonst beim Sprachwechsel veraltete Einträge zurückschreiben.
+        if combo.property("hardwaretest_dynamic"):
+            return
+        cached = getattr(combo, "_hardwaretest_items_de", None)
+        if cached is None or len(cached) != combo.count():
+            cached = combo._hardwaretest_items_de = [combo.itemText(i) for i in range(combo.count())]
+        for index, text in enumerate(cached):
             combo.setItemText(index, self.tr(text))
 
 

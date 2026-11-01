@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from hardwaretest.core.filesystem_check import VMFS_TYPES, list_filesystems, result_text, worker_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
 class ScanWorker(QThread):
@@ -129,18 +130,19 @@ class FilesystemPanel(QWidget):
     def scan(self):
         if self.is_busy():
             return
-        self._scan = ScanWorker(self)
-        self._scan.result.connect(self.scanned)
-        self._scan.error.connect(self.status.setText)
-        self._scan.finished.connect(self.scan_finished)
+        worker = ScanWorker(self)
+        self._scan = worker
+        worker.result.connect(self.scanned)
+        worker.error.connect(self.status.setText)
+        connect_finished(worker, self.scan_finished)
         self.status.setText(self.text("Suche läuft …", "Scanning …"))
         self.busy_changed.emit(True)
         self.selection()
         self._scan.start()
 
-    def scan_finished(self):
-        self._scan.deleteLater()
-        self._scan = None
+    def scan_finished(self, worker=None):
+        if not release_worker(self, "_scan", worker):
+            return
         self.busy_changed.emit(False)
         self.selection()
 

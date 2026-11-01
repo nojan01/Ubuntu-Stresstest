@@ -39,6 +39,7 @@ from hardwaretest.tests.stress_ng import STRESS_NG_MODES, StressNgRunner
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,8 @@ class TestPanel(QWidget):
         self._title = title
         self.system_info_provider = system_info_provider
         self.runner: Optional[BaseTestRunner] = None
+        self._swap_worker: Optional[_SwapWorker] = None
+        self._swap_on_worker: Optional[_SwapOnWorker] = None
         self._system_info: SystemInfo = self.system_info_provider()
 
         # --- Testmodus-Auswahl ---
@@ -381,6 +384,8 @@ class TestPanel(QWidget):
 
     def _disable_swap(self) -> None:
         """Deaktiviert Swap – prueft Sicherheit, dann im Hintergrund-Thread."""
+        if self._swap_worker is not None:
+            return
         # 0. Refresh system info so the safety check is up-to-date.
         self._refresh_system_info(update_memory_value=False)
 
@@ -423,6 +428,7 @@ class TestPanel(QWidget):
 
         worker.finished_ok.connect(self._on_swap_done)
         worker.failed.connect(self._on_swap_failed)
+        connect_finished(worker, self._on_swap_worker_finished)
         worker.start()
 
     # -- slots for the background swap worker --------------------------------
@@ -431,7 +437,6 @@ class TestPanel(QWidget):
         """Called (on the main thread) when swapoff succeeded."""
         self._append_log("✓ Swap erfolgreich deaktiviert.")
         self._refresh_system_info(update_memory_value=False)
-        self._swap_worker = None
 
     def _on_swap_failed(self, error_msg: str) -> None:
         """Called (on the main thread) when swapoff failed."""
@@ -444,12 +449,17 @@ class TestPanel(QWidget):
             f"Swap konnte nicht deaktiviert werden:\n{error_msg}\n\n"
             "Manuell ausfuehren: sudo swapoff -a",
         )
-        self._swap_worker = None
+
+    def _on_swap_worker_finished(self, worker=None) -> None:
+        if release_worker(self, "_swap_worker", worker):
+            self._refresh_system_info(update_memory_value=False)
 
     # -- slots for the background swap-on worker -----------------------------
 
     def _enable_swap(self) -> None:
         """Aktiviert Swap wieder – im Hintergrund-Thread."""
+        if self._swap_on_worker is not None:
+            return
         password: Optional[str] = None
         if needs_password_for_swap():
             pw, ok = QInputDialog.getText(
@@ -471,13 +481,13 @@ class TestPanel(QWidget):
         self._swap_on_worker = worker
         worker.finished_ok.connect(self._on_swap_on_done)
         worker.failed.connect(self._on_swap_on_failed)
+        connect_finished(worker, self._on_swap_on_worker_finished)
         worker.start()
 
     def _on_swap_on_done(self) -> None:
         """Called (on the main thread) when swapon succeeded."""
         self._append_log("✓ Swap erfolgreich aktiviert.")
         self._refresh_system_info(update_memory_value=False)
-        self._swap_on_worker = None
 
     def _on_swap_on_failed(self, error_msg: str) -> None:
         """Called (on the main thread) when swapon failed."""
@@ -489,7 +499,10 @@ class TestPanel(QWidget):
             f"Swap konnte nicht aktiviert werden:\n{error_msg}\n\n"
             "Manuell ausfuehren: sudo swapon -a",
         )
-        self._swap_on_worker = None
+
+    def _on_swap_on_worker_finished(self, worker=None) -> None:
+        if release_worker(self, "_swap_on_worker", worker):
+            self._refresh_system_info(update_memory_value=False)
 
 
     def _check_memtest(self) -> None:

@@ -23,7 +23,7 @@ class NvmeDevice:
 @dataclass(frozen=True)
 class NvmeHealth:
     device: str
-    critical_warning: int = 0
+    critical_warning: Optional[int] = None
     temperature_c: Optional[int] = None
     available_spare: Optional[int] = None
     percentage_used: Optional[int] = None
@@ -35,8 +35,25 @@ class NvmeHealth:
     data_units_written: Optional[int] = None
 
     @property
-    def healthy(self) -> bool:
-        return self.critical_warning == 0 and (self.media_errors or 0) == 0
+    def health_known(self) -> bool:
+        """True, wenn beide Pflichtfelder (critical_warning, media_errors) gelesen wurden."""
+        return self.critical_warning is not None and self.media_errors is not None
+
+    @property
+    def missing_fields(self) -> tuple[str, ...]:
+        missing = []
+        if self.critical_warning is None:
+            missing.append("critical_warning")
+        if self.media_errors is None:
+            missing.append("media_errors")
+        return tuple(missing)
+
+    @property
+    def healthy(self) -> Optional[bool]:
+        """Dreiwertig: None = nicht bestimmbar, da Pflichtfelder fehlen."""
+        if not self.health_known:
+            return None
+        return self.critical_warning == 0 and self.media_errors == 0
 
 
 @dataclass(frozen=True)
@@ -113,7 +130,7 @@ def parse_smart_log(device: str, raw_json: str) -> NvmeHealth:
         temperature -= 273
     return NvmeHealth(
         device=controller_path(device),
-        critical_warning=_as_int(data.get("critical_warning")) or 0,
+        critical_warning=_as_int(data.get("critical_warning")),
         temperature_c=temperature,
         available_spare=_as_int(data.get("avail_spare")),
         percentage_used=_as_int(data.get("percentage_used")),

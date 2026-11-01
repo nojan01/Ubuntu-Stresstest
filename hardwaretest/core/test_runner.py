@@ -116,6 +116,8 @@ class BaseTestRunner:
     _use_watchdog = True
     # Zeit zwischen SIGTERM und SIGKILL nach Ablauf der Testzeit.
     terminate_grace_seconds = 10
+    # Zeit zwischen SIGTERM und SIGKILL bei stop() durch den Bediener.
+    stop_grace_seconds = 10
     # Zusätzliche Wartezeit vor dem Watchdog-Abbruch für Programme mit eigener Zeitsteuerung.
     watchdog_slack_seconds = 0
 
@@ -136,6 +138,12 @@ class BaseTestRunner:
         self._collected_errors: List[str] = []
         self._result: Optional[TestResult] = None
         self._aborted = False
+        # Das Ergebnis wird genau einmal erstellt – egal ob stop(), Watchdog
+        # oder der Ausgabe-Thread zuerst das Prozessende feststellt.
+        self._finalize_lock = threading.RLock()
+        self._finalized = False
+        # Wartezeit auf den Ausgabe-Thread nach Prozessende (gepufferte Zeilen).
+        self.output_join_timeout = 10.0
         # Optional: gemeinsame Root-Sitzung (eine pkexec-Autorisierung).
         self.root_broker = None
         self._broker_job: Optional[str] = None
@@ -146,6 +154,8 @@ class BaseTestRunner:
         self._ras_lock = threading.Lock()
         self._ras_errors: List[str] = []
         self._ras_warnings: List[str] = []
+        # rasdaemon vorhanden, aber Stand beim Start nicht lesbar → Warnung im Ergebnis.
+        self._ras_unreadable = False
 
     def build_command(self) -> List[str]:  # pragma: no cover - abstract hook
         raise NotImplementedError
@@ -155,13 +165,18 @@ class BaseTestRunner:
             raise TestExecutionError("Test läuft bereits")
         self._collected_errors = []
         self._result = None
+        self._finalized = False
         self._aborted = False
         cmd = self.build_command()
         self._ras_errors = []
         self._ras_warnings = []
-        self._ras_baseline = ras.snapshot(self._ras_runner()) if self.check_ras else None
+        self._ras_unreadable = False
+        self._ras_baseline = None
+        if self.check_ras:
+            self._ras_baseline = ras.snapshot(self._ras_runner())
+            self._ras_unreadable = self._ras_baseline is None and ras.rasdaemon_installed()
         if self.root_broker is not None:
-            self._broker_job = self.root_broker.submit(cmd)
+            self._broker_job = self._submit_to_broker(cmd)
             self._log(f"Starte (root): {' '.join(cmd)}")
             cmd = self.root_broker.relay_command(self._broker_job)
         else:
@@ -186,30 +201,71 @@ class BaseTestRunner:
             )
             self._watchdog_thread.start()
 
+    def _submit_to_broker(self, cmd: List[str]) -> str:
+        """Auftrag an die Root-Sitzung übergeben; liefert die Job-Kennung."""
+        return self.root_broker.submit(cmd)
+
+    def _terminate_process(self, grace_seconds: float) -> None:
+        """Beendet den Testprozess (bei Broker-Jobs die Root-Prozessgruppe) und wartet."""
+        process = self._process
+        if process is None or process.poll() is not None:
+            return
+        if self._broker_job and self.root_broker is not None:
+            with contextlib.suppress(Exception):
+                self.root_broker.kill(self._broker_job, grace_seconds=grace_seconds)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=grace_seconds + 5)
+            if process.poll() is None:
+                process.kill()
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=grace_seconds)
+        except subprocess.TimeoutExpired:
+            self._log("Prozess reagiert nicht auf SIGTERM – sende SIGKILL.")
+            process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=5)
+
+    def _join_output_thread(self, timeout: Optional[float]) -> bool:
+        thread = self._stdout_thread
+        if thread is None or thread is threading.current_thread():
+            return True
+        thread.join(timeout=timeout)
+        return not thread.is_alive()
+
     def stop(self, aborted: bool = False) -> None:
         if aborted:
             self._aborted = True
         self._watchdog_cancel.set()
-        if self._watchdog_thread is not None:
-            self._watchdog_thread = None
-        if self._process and self._process.poll() is None and self._broker_job:
-            self._log("Stoppe Test...")
-            self.root_broker.kill(self._broker_job)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                self._process.wait(timeout=10)
         if self._process and self._process.poll() is None:
             self._log("Stoppe Test...")
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
+            self._terminate_process(self.stop_grace_seconds)
+        # Erst alle gepufferten Ausgabezeilen auswerten, dann genau einmal finalisieren.
+        if self._process is not None:
+            self._join_output_thread(self.output_join_timeout)
         self._finalize_result()
         self._process = None
         self._start_time = None
 
     def is_running(self) -> bool:
-        return bool(self._process and self._process.poll() is None)
+        """True, bis der Prozess beendet *und* das Ergebnis erstellt ist."""
+        process = self._process
+        if process is None:
+            return False
+        return process.poll() is None or self._result is None
+
+    def wait_finished(self, timeout: Optional[float] = None) -> bool:
+        """Wartet auf Ausgabe- und Watchdog-Thread; True, wenn beide beendet sind."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        finished = True
+        for thread in (self._stdout_thread, self._watchdog_thread):
+            if thread is None or thread is threading.current_thread():
+                continue
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
+            finished = finished and not thread.is_alive()
+        return finished
 
     def progress(self) -> float:
         if not self._start_time or self.params.duration_seconds <= 0:
@@ -242,16 +298,32 @@ class BaseTestRunner:
             ]
 
     def _finalize_result(self) -> None:
-        """Erstellt das TestResult nach Abschluss des Tests."""
-        if self._broker_job and (self._process is None or self._process.poll() is not None):
+        """Erstellt das TestResult nach Abschluss des Tests (idempotent)."""
+        with self._finalize_lock:
+            if self._finalized:
+                return
+            self._finalized = True
+            self._build_result()
+
+    def _process_finished(self) -> bool:
+        process = self._process
+        if process is None:
+            return True
+        poll = getattr(process, "poll", None)
+        return poll is None or poll() is not None
+
+    def _build_result(self) -> None:
+        if self._broker_job and self._process_finished():
             self.root_broker.done(self._broker_job)
             self._broker_job = None
         elapsed = 0.0
         if self._start_time:
             elapsed = time.time() - self._start_time
         exit_code = self._process.returncode if self._process else None
-        if self._ras_baseline is not None and (self._process is None or self._process.poll() is not None):
+        if self._ras_baseline is not None and self._process_finished():
             self._collect_ras()
+        if self._ras_unreadable and RAS_UNREADABLE not in self._ras_warnings:
+            self._ras_warnings.append(RAS_UNREADABLE)
         # Nicht-Null Exit-Code als Fehler werten
         non_zero_exit = exit_code is not None and exit_code != 0
         # Bei bewusstem Abbruch durch den Benutzer wurde der Prozess von uns
@@ -307,16 +379,9 @@ class BaseTestRunner:
                 f"Testzeit ({duration}s) abgelaufen – Prozess wird automatisch beendet."
             )
             try:
-                self._process.terminate()
-                self._process.wait(timeout=self.terminate_grace_seconds)
+                self._terminate_process(self.terminate_grace_seconds)
             except PermissionError:
                 self.stop(aborted=True)
-            except subprocess.TimeoutExpired:
-                self._log("Prozess reagiert nicht auf SIGTERM – sende SIGKILL.")
-                try:
-                    self._process.kill()
-                except PermissionError:
-                    self.stop(aborted=True)
 
     def _stream_output(self) -> None:
         process = self._process
@@ -327,7 +392,7 @@ class BaseTestRunner:
             self._log(stripped)
             self._check_line_for_errors(stripped)
         process.wait()
-        if self._process is not process:
+        if self._finalized:
             return  # stop() hat das Ergebnis bereits erstellt
         self._finalize_result()
         if self._result:

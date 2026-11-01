@@ -59,6 +59,15 @@ def _render_pre_block(lines: List[str]) -> str:
     return f"<pre>{escape(cleaned)}</pre>"
 
 
+_ANCHOR_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _anchor_id(command_id: str, index: int) -> str:
+    """Sichere interne Anker-ID: Whitelist ``[A-Za-z0-9_-]`` plus laufender Index."""
+    safe = _ANCHOR_UNSAFE.sub("-", command_id).strip("-")
+    return f"sec-{index}-{safe}" if safe else f"sec-{index}"
+
+
 def generate_html_report(json_path: Path) -> str:
     """Read a JSON system report and return a complete HTML string."""
     with open(json_path, "r", encoding="utf-8") as fh:
@@ -81,10 +90,12 @@ def generate_html_report(json_path: Path) -> str:
     # ── Build navigation + sections ──────────────────────────────────────
     nav_items = []
     sections = []
-    for cmd in commands:
-        cid = cmd.get("id", "unknown")
+    for index, cmd in enumerate(commands):
+        cid = str(cmd.get("id", "unknown"))
+        anchor = _anchor_id(cid, index)
         label, icon = _SECTION_LABELS.get(cid, (cid, "📄"))
-        nav_items.append(f'<a href="#{cid}">{icon} {escape(label)}</a>')
+        label = escape(label, quote=True)
+        nav_items.append(f'<a href="#{anchor}">{icon} {label}</a>')
 
         lines = cmd.get("output_lines", [])
         if not lines:
@@ -100,8 +111,8 @@ def generate_html_report(json_path: Path) -> str:
 
         command_str = escape(cmd.get("command", ""))
         sections.append(
-            f'<section id="{cid}">'
-            f'<h2>{icon} {escape(label)}</h2>'
+            f'<section id="{anchor}">'
+            f'<h2>{icon} {label}</h2>'
             f'<div class="cmd-hint">$ {command_str}</div>'
             f'{body}'
             f'</section>'

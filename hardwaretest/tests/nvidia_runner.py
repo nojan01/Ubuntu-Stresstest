@@ -64,9 +64,27 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         self._process.wait()
         self._finalize_result()
 
+    def parsed_payload(self) -> Optional[object]:
+        """Das aus der dcgmi-Ausgabe extrahierte JSON oder None, wenn keins vorliegt."""
+        return _extract_json("\n".join(self.output_lines))
+
+    def evaluation_error(self) -> Optional[str]:
+        """Begruendung, warum das Ergebnis nicht auswertbar ist (None = auswertbar).
+
+        Erfolg setzt gueltiges JSON und mindestens einen erkannten Teststatus voraus;
+        sonst wuerden „0 bestanden, 0 fehlgeschlagen“ faelschlich als bestanden gelten.
+        """
+        payload = self.parsed_payload()
+        if payload is None:
+            return "dcgmi lieferte kein auswertbares JSON"
+        counts = self.status_counts()
+        if sum(counts.values()) == 0:
+            return "dcgmi-JSON enthält keinen Teststatus"
+        return None
+
     def status_counts(self) -> dict[str, int]:
         """Count DCGM result states without relying on one schema version."""
-        payload = _extract_json("\n".join(self.output_lines))
+        payload = self.parsed_payload()
         counts = {"pass": 0, "fail": 0, "warn": 0, "skip": 0}
 
         def visit(value: object) -> None:

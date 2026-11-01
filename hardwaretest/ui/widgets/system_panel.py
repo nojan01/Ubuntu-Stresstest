@@ -103,6 +103,10 @@ class SystemPanel(QWidget):
         self.clock_group = QGroupBox()
         clock_layout = QVBoxLayout(self.clock_group)
         self.clock_table = _table()
+        self.clock_note = QLabel()
+        self.clock_note.setWordWrap(True)
+        self.clock_note.setVisible(False)
+        clock_layout.addWidget(self.clock_note)
         clock_layout.addWidget(self.clock_table)
         layout.addWidget(self.clock_group)
 
@@ -177,6 +181,7 @@ class SystemPanel(QWidget):
 
     def _update_clocks(self) -> None:
         clocks = inv.read_cpu_clocks(self._packages)
+        dmi = inv.dmi_processor_map(self._packages, self._memory)
         hybrid = any(clock.core_type for clock in clocks)
         headers = ["CPU", _t("Sockel", "Socket"), _t("Kern", "Core")]
         headers += [_t("Typ", "Type")] if hybrid else []
@@ -184,7 +189,16 @@ class SystemPanel(QWidget):
         rows = []
         for clock in clocks:
             row = [clock.cpu, clock.socket, clock.core] + ([clock.core_type] if hybrid else [])
-            rows.append([*row, _mhz(clock.current_mhz), _mhz(clock.min_mhz), _mhz(clock.max_mhz)])
+            proc = dmi.get(clock.socket)
+            maximum = clock.max_mhz or (proc.max_mhz if proc else None)
+            rows.append([*row, _mhz(clock.current_mhz), _mhz(clock.min_mhz), _mhz(maximum)])
+        self.clock_note.setVisible(bool(clocks) and not any(clock.cpufreq for clock in clocks))
+        self.clock_note.setText(_t(
+            "Kein cpufreq-Treiber: Die Taktsteuerung liegt beim BIOS (z. B. HPE Power Regulator nicht auf "
+            "„OS Control“). Aktueller Takt aus /proc/cpuinfo, Max aus DMI (dmidecode), Min nicht verfügbar.",
+            "No cpufreq driver: clock control is handled by the BIOS (e.g. HPE Power Regulator not set to "
+            "“OS Control”). Current clock from /proc/cpuinfo, max from DMI (dmidecode), min unavailable.",
+        ))
         if self.clock_table.rowCount() == len(rows) and self.clock_table.columnCount() == len(headers):
             for row, values in enumerate(rows):
                 for column, value in enumerate(values):
@@ -215,6 +229,17 @@ class SystemPanel(QWidget):
 
     def _show_cpu(self) -> None:
         clocks = inv.read_cpu_clocks(self._packages)
+        dmi = inv.dmi_processor_map(self._packages, self._memory)
+
+        def dmi_field(attr: str):
+            return lambda p: getattr(dmi[p.socket], attr) if p.socket in dmi else ""
+
+        def cores_enabled(p):
+            proc = dmi.get(p.socket)
+            if not proc or not proc.core_enabled:
+                return ""
+            return f"{proc.core_enabled} / {proc.core_count}" if proc.core_count else proc.core_enabled
+
         fields = [
             (_t("Modell", "Model"), lambda p: p.model_name),
             (_t("Hersteller", "Vendor"), lambda p: p.vendor),
@@ -222,22 +247,37 @@ class SystemPanel(QWidget):
             ("Microcode", lambda p: p.microcode),
             (_t("Kerne", "Cores"), lambda p: p.core_text),
             ("Threads", lambda p: p.threads),
-            (_t("Takt min / max", "Clock min / max"), lambda p: self._clock_range(p, clocks)),
+            (_t("Takt min / max", "Clock min / max"), lambda p: self._clock_range(p, clocks, dmi.get(p.socket))),
             (_t("Befehlssätze", "Instruction sets"), lambda p: ", ".join(p.notable_flags)),
             (_t("Bekannte CPU-Fehler (Kernel)", "Known CPU bugs (kernel)"), lambda p: " ".join(p.bugs)),
         ]
+        if dmi:
+            fields += [
+                (_t("Steckplatz (DMI)", "Socket (DMI)"), dmi_field("designation")),
+                (_t("Basistakt (DMI)", "Base clock (DMI)"), dmi_field("current_speed")),
+                (_t("Max. Takt (DMI)", "Max clock (DMI)"), dmi_field("max_speed")),
+                (_t("Externer Takt", "External clock"), dmi_field("external_clock")),
+                (_t("Spannung", "Voltage"), dmi_field("voltage")),
+                (_t("Kerne aktiv / vorhanden", "Cores enabled / present"), cores_enabled),
+                (_t("Sockeltyp", "Socket type"), dmi_field("upgrade")),
+                ("Status", dmi_field("status")),
+                (_t("Teilenummer", "Part number"), dmi_field("part_number")),
+                (_t("Seriennummer", "Serial number"), dmi_field("serial")),
+            ]
         headers = [""] + [f"{_t('Sockel', 'Socket')} {p.socket}" for p in self._packages]
         rows = [[label] + [getter(p) for p in self._packages] for label, getter in fields]
+        rows = [row for row in rows if any(value not in (None, "") for value in row[1:])]
         _fill(self.cpu_table, headers, rows)
         flags = sorted({flag for p in self._packages for flag in p.flags})
         self.flags_label.setText(_t("Alle CPU-Flags: ", "All CPU flags: ") + (" ".join(flags) or "–"))
 
     @staticmethod
-    def _clock_range(package: inv.CpuPackage, clocks: list[inv.CpuClock]) -> str:
+    def _clock_range(package: inv.CpuPackage, clocks: list[inv.CpuClock], proc: inv.DmiProcessor | None = None) -> str:
         own = [c for c in clocks if c.socket == package.socket]
         lows = [c.min_mhz for c in own if c.min_mhz]
         highs = [c.max_mhz for c in own if c.max_mhz]
-        return f"{_mhz(min(lows) if lows else None)} / {_mhz(max(highs) if highs else None)}"
+        high = max(highs) if highs else (proc.max_mhz if proc else None)
+        return f"{_mhz(min(lows) if lows else None)} / {_mhz(high)}"
 
     def _show_caches(self) -> None:
         headers = ["Cache", _t("Art", "Type"), _t("Je Kern/Cluster", "Per instance"), _t("Gesamt", "Total"),

@@ -6,6 +6,7 @@ Die Speichermodule liefert ``dmidecode`` (root nötig: direkt, per ``sudo -n`` o
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 import json
 import os
@@ -18,7 +19,8 @@ from typing import Callable, Optional
 CPU_SYSFS = Path("/sys/devices/system/cpu")
 HYBRID_SYSFS = Path("/sys/devices")
 DMI_SYSFS = Path("/sys/class/dmi/id")
-DMIDECODE_ARGS = ["-t", "1", "-t", "16", "-t", "17"]
+CPUINFO = Path("/proc/cpuinfo")
+DMIDECODE_ARGS = ["-t", "1", "-t", "4", "-t", "16", "-t", "17"]
 
 # Für Stresstests aussagekräftige Befehlssätze, in Anzeigereihenfolge.
 NOTABLE_FLAGS = (
@@ -75,6 +77,8 @@ class CpuClock:
     current_mhz: Optional[float]
     min_mhz: Optional[float]
     max_mhz: Optional[float]
+    # False: kein cpufreq-Treiber (Takt regelt das BIOS, z. B. HPE Power Regulator) → Ist-Takt aus /proc/cpuinfo
+    cpufreq: bool = True
 
 
 @dataclass
@@ -127,8 +131,37 @@ class MemoryDevice:
 
 
 @dataclass
+class DmiProcessor:
+    """DMI-Typ 4 (ein bestückter Sockel)."""
+
+    designation: str = ""
+    manufacturer: str = ""
+    version: str = ""
+    max_speed: str = ""
+    current_speed: str = ""
+    external_clock: str = ""
+    voltage: str = ""
+    core_count: str = ""
+    core_enabled: str = ""
+    thread_count: str = ""
+    status: str = ""
+    upgrade: str = ""
+    part_number: str = ""
+    serial: str = ""
+
+    @property
+    def max_mhz(self) -> Optional[float]:
+        return _speed_mhz(self.max_speed)
+
+    @property
+    def base_mhz(self) -> Optional[float]:
+        return _speed_mhz(self.current_speed)
+
+
+@dataclass
 class MemoryInventory:
     devices: list[MemoryDevice] = field(default_factory=list)
+    processors: list[DmiProcessor] = field(default_factory=list)
     error_correction: list[str] = field(default_factory=list)
     max_capacity: list[str] = field(default_factory=list)
     slots_declared: int = 0
@@ -224,8 +257,26 @@ def read_core_types(sysfs: Path = HYBRID_SYSFS) -> dict[int, str]:
     return types if len(set(types.values())) > 1 else {}
 
 
+def parse_cpuinfo_mhz(text: str) -> dict[int, float]:
+    """Logische CPU → „cpu MHz“ aus /proc/cpuinfo (x86, auch ohne cpufreq-Treiber)."""
+    result: dict[int, float] = {}
+    cpu: Optional[int] = None
+    for line in text.splitlines():
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        key = key.strip()
+        if key == "processor":
+            cpu = _int_or(value, None)
+        elif key == "cpu MHz" and cpu is not None:
+            with contextlib.suppress(ValueError):
+                result[cpu] = float(value.strip())
+    return result
+
+
 def read_cpu_clocks(
     packages: Optional[list[CpuPackage]] = None, sysfs: Path = CPU_SYSFS, hybrid_sysfs: Path = HYBRID_SYSFS,
+    cpuinfo: Path = CPUINFO,
 ) -> list[CpuClock]:
     owners: dict[int, str] = {}
     for package in packages or []:
@@ -233,19 +284,36 @@ def read_cpu_clocks(
             owners[cpu] = package.socket
     types = read_core_types(hybrid_sysfs)
     clocks: list[CpuClock] = []
+    fallback: Optional[dict[int, float]] = None
     for path in sorted(sysfs.glob("cpu[0-9]*"), key=lambda item: int(item.name[3:])):
         cpu = int(path.name[3:])
         freq = path / "cpufreq"
+        current = _khz_to_mhz(_read(freq / "scaling_cur_freq"))
+        has_cpufreq = current is not None
+        if not has_cpufreq:
+            if fallback is None:
+                fallback = parse_cpuinfo_mhz(_read(cpuinfo))
+            current = fallback.get(cpu)
         clocks.append(CpuClock(
             cpu=cpu,
             socket=_read(path / "topology/physical_package_id") or owners.get(cpu, "?"),
             core=_read(path / "topology/core_id") or "?",
             core_type=types.get(cpu, ""),
-            current_mhz=_khz_to_mhz(_read(freq / "scaling_cur_freq")),
+            current_mhz=current,
             min_mhz=_khz_to_mhz(_read(freq / "cpuinfo_min_freq")),
             max_mhz=_khz_to_mhz(_read(freq / "cpuinfo_max_freq")),
+            cpufreq=has_cpufreq,
         ))
     return clocks
+
+
+def dmi_processor_map(
+    packages: list[CpuPackage], memory: Optional[MemoryInventory],
+) -> dict[str, DmiProcessor]:
+    """Ordnet die bestückten DMI-Prozessoren den Sockeln in Reihenfolge zu."""
+    if memory is None:
+        return {}
+    return {package.socket: proc for package, proc in zip(packages, memory.processors, strict=False)}
 
 
 def parse_lscpu_caches(text: str) -> list[CacheLevel]:
@@ -322,6 +390,26 @@ def parse_dmidecode(text: str) -> MemoryInventory:
             if values.get("Maximum Capacity"):
                 inventory.max_capacity.append(values["Maximum Capacity"])
             inventory.slots_declared += _int_or(values.get("Number Of Devices"), 0)
+        elif "\nProcessor Information" in "\n" + block:
+            status = values.get("Status", "")
+            if "unpopulated" in status.lower():
+                continue
+            inventory.processors.append(DmiProcessor(
+                designation=_clean(values.get("Socket Designation", "")),
+                manufacturer=_clean(values.get("Manufacturer", "")),
+                version=_clean(values.get("Version", "")),
+                max_speed=_clean(values.get("Max Speed", "")),
+                current_speed=_clean(values.get("Current Speed", "")),
+                external_clock=_clean(values.get("External Clock", "")),
+                voltage=_clean(values.get("Voltage", "")),
+                core_count=_clean(values.get("Core Count", "")),
+                core_enabled=_clean(values.get("Core Enabled", "")),
+                thread_count=_clean(values.get("Thread Count", "")),
+                status=_clean(status),
+                upgrade=_clean(values.get("Upgrade", "")),
+                part_number=_clean(values.get("Part Number", "")),
+                serial=_clean(values.get("Serial Number", "")),
+            ))
         elif "\nMemory Device" in "\n" + block:
             inventory.devices.append(MemoryDevice(
                 locator=values.get("Locator", "?"),
@@ -404,12 +492,25 @@ def inventory_lines(
     if bios:
         lines.append("BIOS: " + bios + (f" ({board.get('bios_date')})" if board.get("bios_date") else ""))
 
+    dmi = dmi_processor_map(packages, memory)
     for package in packages:
         lines.append(
             f"CPU {_tt(language, 'Sockel', 'socket')} {package.socket}: {package.model_name} – "
             f"{package.core_text} {_tt(language, 'Kerne', 'cores')}, {package.threads} Threads, "
             f"Family {package.family} Model {package.model} Stepping {package.stepping}, Microcode {package.microcode}"
         )
+        proc = dmi.get(package.socket)
+        if proc:
+            lines.append("  DMI: " + " · ".join(filter(None, (
+                proc.designation,
+                f"{_tt(language, 'Basistakt', 'base clock')} {proc.current_speed}" if proc.current_speed else "",
+                f"{_tt(language, 'max.', 'max')} {proc.max_speed}" if proc.max_speed else "",
+                f"{_tt(language, 'ext. Takt', 'ext. clock')} {proc.external_clock}" if proc.external_clock else "",
+                proc.voltage,
+                f"{_tt(language, 'Kerne aktiv', 'cores enabled')} {proc.core_enabled}/{proc.core_count}"
+                if proc.core_enabled and proc.core_count else "",
+                proc.part_number, f"S/N {proc.serial}" if proc.serial else "",
+            ))))
         if package.notable_flags:
             lines.append(f"  {_tt(language, 'Befehlssätze', 'Instruction sets')}: {', '.join(package.notable_flags)}")
     if caches:
@@ -459,6 +560,11 @@ def _int_or(value, default):
 def _khz_to_mhz(value: str) -> Optional[float]:
     number = _int_or(value, None)
     return None if number is None else number / 1000
+
+
+def _speed_mhz(value: str) -> Optional[float]:
+    match = re.match(r"(\d+)\s*MHz", value or "", re.I)
+    return float(match.group(1)) if match and int(match.group(1)) > 0 else None
 
 
 def _bits(value: str) -> Optional[int]:

@@ -53,6 +53,32 @@ System Information
 \tProduct Name: ProLiant DL380 Gen10
 \tSerial Number: CZJ1234567
 
+Handle 0x0400, DMI type 4, 48 bytes
+Processor Information
+\tSocket Designation: Proc 1
+\tType: Central Processor
+\tManufacturer: Intel(R) Corporation
+\tVersion: Intel(R) Xeon(R) Gold 6230 CPU @ 2.10GHz
+\tVoltage: 1.6 V
+\tExternal Clock: 100 MHz
+\tMax Speed: 4000 MHz
+\tCurrent Speed: 2100 MHz
+\tStatus: Populated, Enabled
+\tUpgrade: Socket LGA3647-1
+\tSerial Number: Not Specified
+\tPart Number: Not Specified
+\tCore Count: 20
+\tCore Enabled: 20
+\tThread Count: 40
+\tCharacteristics:
+\t\t64-bit capable
+
+Handle 0x0401, DMI type 4, 48 bytes
+Processor Information
+\tSocket Designation: Proc 2
+\tStatus: Unpopulated
+\tMax Speed: 4000 MHz
+
 Handle 0x1000, DMI type 16, 23 bytes
 Physical Memory Array
 \tLocation: System Board Or Motherboard
@@ -170,6 +196,27 @@ def test_parse_dmidecode_modules_and_ecc() -> None:
     assert module.configured_speed == "2666 MT/s" and module.rank == "2" and module.serial == ""
     assert memory.devices[1].ecc is None
     assert memory.total_mib == 32 * 1024
+    assert len(memory.processors) == 1  # unbestückter Sockel ignoriert
+    proc = memory.processors[0]
+    assert proc.designation == "Proc 1" and proc.base_mhz == 2100 and proc.max_mhz == 4000
+    assert proc.external_clock == "100 MHz" and proc.core_enabled == "20" and proc.upgrade == "Socket LGA3647-1"
+    assert proc.serial == "" and proc.part_number == ""
+    packages = inv.parse_cpuinfo(CPUINFO)
+    assert inv.dmi_processor_map(packages, memory) == {"0": proc}
+    assert inv.dmi_processor_map(packages, None) == {}
+
+
+def test_clocks_without_cpufreq_fall_back_to_cpuinfo(tmp_path) -> None:
+    cpu_root = tmp_path / "cpu"
+    for cpu in (0, 1):
+        (cpu_root / f"cpu{cpu}/topology").mkdir(parents=True)
+        (cpu_root / f"cpu{cpu}/topology/physical_package_id").write_text("0\n")
+    cpuinfo = tmp_path / "cpuinfo"
+    cpuinfo.write_text("processor\t: 0\ncpu MHz\t\t: 2100.000\n\nprocessor\t: 1\ncpu MHz\t\t: 3456.789\n")
+    clocks = inv.read_cpu_clocks(sysfs=cpu_root, hybrid_sysfs=tmp_path / "none", cpuinfo=cpuinfo)
+    assert [(c.cpu, c.current_mhz, c.max_mhz, c.cpufreq) for c in clocks] == [
+        (0, 2100.0, None, False), (1, 3456.789, None, False),
+    ]
 
 
 def test_read_memory_inventory_uses_runner() -> None:
@@ -181,7 +228,7 @@ def test_read_memory_inventory_uses_runner() -> None:
 
     memory, error = inv.read_memory_inventory(run)
     assert error == "" and memory is not None and len(memory.installed) == 1
-    assert calls == [["dmidecode", "-t", "1", "-t", "16", "-t", "17"]]
+    assert calls == [["dmidecode", "-t", "1", "-t", "4", "-t", "16", "-t", "17"]]
 
     def denied(command, **kwargs):
         return subprocess.CompletedProcess(command, 1, "", "sudo: Ein Passwort ist notwendig\n")
@@ -200,6 +247,7 @@ def test_inventory_lines_text() -> None:
     assert "Cache: L3 55 MiB" in text
     assert "Memory: 32 GiB, 1/12 slots populated, error correction: Multi-bit ECC" in text
     assert "PROC 1 DIMM 1 · 32 GB · DDR4 · DIMM · 2666 MT/s · Rank 2 · ECC · HPE · P00924-B21" in text
+    assert "  DMI: Proc 1 · base clock 2100 MHz · max 4000 MHz · ext. clock 100 MHz · 1.6 V · cores enabled 20/20" in text
     german = inv.inventory_lines("de", packages, [], board, None, "sudo: Ein Passwort ist notwendig")
     assert german[-1] == "Speichermodule: nicht lesbar (sudo: Ein Passwort ist notwendig)"
 
@@ -221,6 +269,10 @@ def test_system_panel_smoke(monkeypatch) -> None:
         language_manager.set_language("de")
         panel = system_panel.SystemPanel()
         assert panel.cpu_table.columnCount() == 3  # Beschriftung + 2 Sockel
+        labels = [panel.cpu_table.item(r, 0).text() for r in range(panel.cpu_table.rowCount())]
+        row = labels.index("Max. Takt (DMI)")
+        assert panel.cpu_table.item(row, 1).text() == "4000 MHz" and panel.cpu_table.item(row, 2).text() == "–"
+        assert "Seriennummer" not in labels  # leere DMI-Zeilen ausgeblendet
         assert panel.memory_table.rowCount() == 2
         assert panel.memory_table.item(1, 2).text() == "leer"
         assert "Belegt: 1 / 12" in panel.memory_summary.text()

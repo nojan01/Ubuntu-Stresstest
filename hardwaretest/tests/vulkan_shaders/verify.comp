@@ -1,0 +1,15 @@
+#version 450
+// Liest das Prüfmuster zurück und zählt Abweichungen.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) buffer Data { uint data[]; };
+layout(std430, binding = 1) buffer Errors { uint errors; };
+layout(push_constant) uniform Params { uint pat; uint base; uint n; uint iters; } p;
+
+void main() {
+    uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+    for (uint i = gl_GlobalInvocationID.x; i < p.n; i += stride) {
+        if (data[i] != (((p.base + i) * 0x9E3779B1u) ^ p.pat)) {
+            atomicAdd(errors, 1u);
+        }
+    }
+}

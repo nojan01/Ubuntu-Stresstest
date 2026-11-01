@@ -1,0 +1,22 @@
+#version 450
+// Rechenlast: FMA-Ketten, alle Threads müssen dasselbe Ergebnis liefern.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) buffer Out { float result[]; };
+layout(push_constant) uniform Params { uint pat; uint base; uint n; uint iters; } p;
+
+void main() {
+    const float a = 0.999999;
+    const float b = 1e-6;
+    precise float x0 = 0.0;
+    precise float x1 = 0.5;
+    precise float x2 = 1.0;
+    precise float x3 = 2.0;
+    for (uint k = 0u; k < p.iters; k++) {
+        x0 = fma(x0, a, b);
+        x1 = fma(x1, a, b);
+        x2 = fma(x2, a, b);
+        x3 = fma(x3, a, b);
+    }
+    precise float sum = (x0 + x1) + (x2 + x3);
+    result[gl_GlobalInvocationID.x] = sum;
+}

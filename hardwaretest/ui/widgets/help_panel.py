@@ -480,6 +480,28 @@ Die vollständige Installationsanleitung liegt unter
 
 <hr>
 
+<h2>Tab: GPU (Vulkan)</h2>
+<p>
+Herstellerneutraler Lasttest für Grafikkarten von <b>AMD</b> (Radeon, Radeon Pro,
+Instinct), <b>Intel</b> (UHD/Iris Xe, Arc) und <b>NVIDIA</b> (über NVK oder den
+proprietären Treiber) mit Vulkan Compute. Benötigt werden nur der Vulkan-Loader
+(<code>libvulkan1</code>) und ein Vulkan-Treiber, z. B. <code>mesa-vulkan-drivers</code>
+(RADV, ANV, NVK). Software-Renderer (llvmpipe) werden ausgeblendet.
+Der Test füllt den eingestellten Anteil des freien Grafikspeichers mit wechselnden
+Bitmustern, prüft sie auf der GPU (Fehler werden per Zähler erfasst) und erzeugt
+dazwischen Rechenlast mit Ergebnisvergleich aller Threads. Rechen- oder
+Speicherfehler führen zu „FEHLGESCHLAGEN“. Bei <b>integrierten GPUs</b> werden
+höchstens 25 % des gemeinsamen Speichers belegt, damit das System bedienbar bleibt.
+Die Liveüberwachung liest ohne Zusatzprogramme aus sysfs: Temperatur, Leistung,
+Auslastung, GPU-/Speichertakt, VRAM und Lüfter (Umfang je nach Treiber: amdgpu
+liefert fast alles, i915/xe vor allem den Takt).
+Server-Grafikchips (Matrox, ASPEED) haben keinen Vulkan-Treiber und erscheinen
+nur als „ohne Vulkan“. Für NVIDIA-Karten mit proprietärem Treiber bietet der Tab
+„NVIDIA GPU“ zusätzlich den CUDA-Lasttest und DCGM-Diagnosen.
+</p>
+
+<hr>
+
 <h2>Tab: Gesamttest</h2>
 <p><b>Netzwerk-Grenzwerte:</b> Maximalen Paketverlust, mittlere Latenz, Jitter und
 minimalen Durchsatz vor dem Start einstellen. Die Bewertung gilt für jeden
@@ -538,7 +560,7 @@ Nenn- und Ist-Takt, Rank, ECC, Spannung, Hersteller, Teile- und Seriennummer).
 </p>
 <p>
 Die Speichermodule liest <code>dmidecode</code> mit Root-Rechten. Das .deb erlaubt
-Mitgliedern der Gruppe sudo genau <code>dmidecode -t 1 -t 16 -t 17</code> ohne Passwort;
+Mitgliedern der Gruppe sudo genau <code>dmidecode -t 1 -t 4 -t 16 -t 17</code> ohne Passwort;
 sonst erscheint „Speichermodule mit Passwort auslesen“. „In Zwischenablage kopieren“
 liefert alles als Text, z. B. für Tickets.
 </p>
@@ -1045,6 +1067,28 @@ The complete installation guide is available at
 
 <hr>
 
+<h2>Tab: GPU (Vulkan)</h2>
+<p>
+Vendor-neutral stress test for graphics cards from <b>AMD</b> (Radeon, Radeon Pro,
+Instinct), <b>Intel</b> (UHD/Iris Xe, Arc) and <b>NVIDIA</b> (via NVK or the
+proprietary driver) using Vulkan compute. Only the Vulkan loader
+(<code>libvulkan1</code>) and a Vulkan driver such as <code>mesa-vulkan-drivers</code>
+(RADV, ANV, NVK) are required. Software renderers (llvmpipe) are hidden.
+The test fills the configured share of free graphics memory with changing bit
+patterns, verifies them on the GPU (errors are counted) and generates compute load
+with result comparison across all threads in between. Compute or memory errors
+result in “FAILED”. <b>Integrated GPUs</b> use at most 25 % of the shared memory
+so the system stays usable.
+Live monitoring reads sysfs without additional tools: temperature, power, load,
+GPU/memory clock, VRAM and fan (depending on the driver: amdgpu provides almost
+everything, i915/xe mainly the clock).
+Server graphics chips (Matrox, ASPEED) have no Vulkan driver and are only listed
+as “without Vulkan”. For NVIDIA cards with the proprietary driver, the “NVIDIA GPU”
+tab additionally offers the CUDA stress test and DCGM diagnostics.
+</p>
+
+<hr>
+
 <h2>Tab: Test plan</h2>
 <p><b>Network thresholds:</b> Configure maximum packet loss, average latency,
 jitter and minimum throughput before starting. Each round is evaluated.
@@ -1100,7 +1144,7 @@ rated and configured speed, rank, ECC, voltage, manufacturer, part and serial nu
 </p>
 <p>
 Memory modules are read by <code>dmidecode</code> with root privileges. The .deb lets
-members of the sudo group run exactly <code>dmidecode -t 1 -t 16 -t 17</code> without a
+members of the sudo group run exactly <code>dmidecode -t 1 -t 4 -t 16 -t 17</code> without a
 password; otherwise "Read memory modules with password" appears. "Copy to clipboard"
 returns everything as text, e.g. for tickets.
 </p>

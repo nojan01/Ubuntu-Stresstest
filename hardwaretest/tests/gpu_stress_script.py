@@ -17,6 +17,7 @@ import argparse
 import contextlib
 import ctypes
 import os
+import signal
 import struct
 import sys
 import time
@@ -278,12 +279,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     percent = max(10, min(95, args.memory_percent))
 
     # Je GPU ein Prozess; fork vor cuInit ist mit CUDA unproblematisch.
-    children = {}
+    children: dict[int, int] = {}
+    parent = os.getpid()
+
+    def forward(signum, _frame):
+        for child in children:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child, signal.SIGTERM)
+        os._exit(128 + signum)
+
     for gpu in gpus:
         pid = os.fork()
         if pid == 0:
             code = 2
             try:
+                # Endet der Elternprozess (z. B. per SIGKILL), soll die GPU-Last mitenden.
+                with contextlib.suppress(OSError, AttributeError):
+                    ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+                if os.getppid() != parent:
+                    os._exit(2)
                 code = 1 if run_gpu(gpu, args.duration, percent) else 0
             except Exception as exc:
                 _say(gpu, f"FEHLER: {exc}")
@@ -291,6 +305,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 sys.stdout.flush()
                 os._exit(code)
         children[pid] = gpu
+    signal.signal(signal.SIGTERM, forward)
+    signal.signal(signal.SIGINT, forward)
 
     failed = []
     for pid, gpu in children.items():

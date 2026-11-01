@@ -49,6 +49,10 @@ def main() -> int:
         from hardwaretest.tests.gpu_stress_script import main as gpu_stress_main
 
         return gpu_stress_main(sys.argv[2:])
+    if sys.argv[1:2] == ["--vulkan-stress-worker"]:
+        from hardwaretest.tests.vulkan_stress_script import main as vulkan_stress_main
+
+        return vulkan_stress_main(sys.argv[2:])
     if "--version" in sys.argv[1:]:
         print(f"Hardwaretest {__version__}")
         return 0

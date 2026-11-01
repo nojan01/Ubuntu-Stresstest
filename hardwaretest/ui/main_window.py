@@ -29,6 +29,7 @@ from hardwaretest.ui.widgets.disk_panel import (
 from hardwaretest.ui.widgets.help_panel import HelpPanel
 from hardwaretest.ui.widgets.network_panel import NetworkPanel
 from hardwaretest.ui.widgets.nvme_panel import NvmePanel
+from hardwaretest.ui.widgets.gpu_panel import GpuPanel
 from hardwaretest.ui.widgets.nvidia_panel import NvidiaPanel
 from hardwaretest.ui.widgets.test_plan_panel import TestPlanPanel
 from hardwaretest.ui.widgets.filesystem_panel import FilesystemPanel
@@ -89,6 +90,9 @@ class MainWindow(QMainWindow):
         nvidia_panel = NvidiaPanel()
         self._tabs.addTab(nvidia_panel, "NVIDIA GPU")
 
+        gpu_panel = GpuPanel()
+        self._tabs.addTab(gpu_panel, "GPU (Vulkan)")
+
         network_panel = NetworkPanel()
         self._tabs.addTab(network_panel, "Netzwerk")
 
@@ -107,9 +111,9 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self.proliant_panel, "ProLiant Info")
         self._test_panels = [ram_panel, prime_panel, opendcdiag_panel, mem_ctrl_panel, mem_fill_panel,
                              file_disk_panel, device_disk_panel, destructive_disk_panel,
-                             nvme_panel, nvidia_panel, network_panel, test_plan_panel]
+                             nvme_panel, nvidia_panel, gpu_panel, network_panel, test_plan_panel]
         self._stop_callbacks = [panel.stop_test for panel in self._test_panels[:8]] + [
-            nvme_panel._stop_io_test, nvidia_panel._stop_diagnostic,
+            nvme_panel._stop_io_test, nvidia_panel._stop_diagnostic, gpu_panel.stop_test,
             network_panel._stop, test_plan_panel._stop,
         ]
         self._filesystem_active = False

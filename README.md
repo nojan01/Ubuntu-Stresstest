@@ -2,6 +2,12 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.57
+
+- Neuer Tab **GPU (Vulkan)**: herstellerneutraler GPU-Lasttest für AMD, Intel und NVIDIA über Vulkan Compute (Mesa RADV/ANV/NVK oder Herstellertreiber) – VRAM-Mustertest mit Fehlerzählung auf der GPU und Rechenlast mit Ergebnisvergleich; bei integrierten GPUs höchstens 25 % des gemeinsamen Speichers. Liveüberwachung aus sysfs (Temperatur, Leistung, Auslastung, Takte, VRAM, Lüfter). Empfohlen: `libvulkan1`, `mesa-vulkan-drivers`, `python3`.
+- Tab **System**: Fehlt ein cpufreq-Treiber (Takt regelt das BIOS, z. B. HPE Power Regulator), kommen Ist-Takt aus `/proc/cpuinfo` sowie Nenn- und Maximaltakt aus DMI Typ 4. Die sudoers-Regel des `.deb` erlaubt dafür jetzt `dmidecode -t 1 -t 4 -t 16 -t 17`.
+- Korrigiert: Nach Abbruch eines GPU-Lasttests (CUDA) lief der Kindprozess je GPU weiter. Signale werden jetzt weitergereicht, Kindprozesse enden auch beim harten Beenden des Workers.
+
 ### Neu in 0.2.56
 
 - Neuer Tab **System**: Prozessor je Sockel (Family/Model/Stepping, Microcode, Kerne mit P/E-Aufteilung bei Hybrid-CPUs, Threads, Taktbereich, Befehlssätze, CPU-Fehler laut Kernel, alle Flags), Caches, Takt je logischer CPU, Mainboard/BIOS und Speichermodule je Steckplatz (Größe, Typ, Nenn-/Ist-Takt, Rank, ECC, Spannung, Hersteller, Teile- und Seriennummer). Kopierbar als Text. Das `.deb` installiert `/etc/sudoers.d/hardwaretest-dmidecode`: Mitglieder der Gruppe `sudo` dürfen genau `dmidecode -t 1 -t 16 -t 17` ohne Passwort ausführen; sonst „Speichermodule mit Passwort auslesen“ (pkexec). Neue Abhängigkeit: `dmidecode`.
@@ -323,6 +329,7 @@ sudo bash scripts/install_hardwaretest.sh --yes
 - **NVMe-Diagnose** – Modell, Seriennummer, Firmware und NVMe-SMART-Werte; kurze oder erweiterte Selbsttests mit Protokollauswertung als bestanden/fehlgeschlagen.
 - **NVMe-Lesetests** – Nicht-destruktiver sequenzieller oder zufälliger Lese-Benchmark sowie ein vollständiger Lese-Test über jedes Block des ausgewählten NVMe-Namespace.
 - **NVIDIA-GPU-Diagnose** – Erkennt mehrere NVIDIA-GPUs, zeigt Treiber, CUDA-Kompatibilität, VRAM, Temperatur, Leistung, ECC, Taktraten und PCIe-Anbindung. Eine Liveüberwachung erfasst Auslastung, Temperatur, Leistung, VRAM und Taktraten auch während optionaler NVIDIA-DCGM-Diagnosen.
+- **GPU-Lasttest (Vulkan)** – AMD-, Intel- und NVIDIA-Grafik ohne Herstellertools: VRAM-Mustertest, Rechenlast mit Ergebnisvergleich, Liveüberwachung aus sysfs.
 - **Netzwerkdiagnose** – Zeigt Adapter, Treiber, PCI-Adresse, Linkstatus/-geschwindigkeit, Duplex, MTU und IP-Adressen. Ping ermittelt Paketverlust, Latenz und Jitter; iperf3 misst Durchsatz und Retransmits. Alle Messwerte können gegen Pass/Fail-Grenzen geprüft werden.
 - **Gesamttestplan** – Führt frei auswählbare CPU-, RAM-, NVMe-, Netzwerk- und NVIDIA/DCGM-Prüfungen automatisch nacheinander aus. Jeder Lauf erzeugt ein Klartext- und ein druckoptimiertes HTML-Protokoll; der Browser kann dieses zusätzlich als PDF speichern. Netzwerk-Dauerläufe werden kompakt mit Summenwerten statt einzelner Ping-Pakete oder iperf3-Intervalle protokolliert.
 - **HPE RAID-Info** – SmartArray-Controller-Status via `ssacli` / `hpssacli`.

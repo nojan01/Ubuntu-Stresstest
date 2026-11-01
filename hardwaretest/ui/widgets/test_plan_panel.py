@@ -42,6 +42,7 @@ from hardwaretest.core.test_plan import (
     TestPlanResult,
 )
 from hardwaretest.tests.nvidia_runner import dcgmi_available
+from hardwaretest.tests.vulkan_runner import vulkan_loader_available
 from hardwaretest.core.nvme import list_nvme_devices
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
@@ -146,6 +147,13 @@ class TestPlanPanel(QWidget):
         self.dcgm_level.setRange(1, 4)
         self.dcgm_level.setValue(1)
         self.dcgm_level.setEnabled(dcgmi_available())
+        self.vulkan_check = QCheckBox("GPU-Lasttest (Vulkan) auf allen GPUs")
+        self.vulkan_check.setToolTip(
+            "Rechenlast und Grafikspeicher-Muster über Vulkan (AMD, Intel, NVIDIA), wie im Tab „GPU (Vulkan)“."
+        )
+        self.vulkan_duration = self._seconds_spin(300)
+        self.vulkan_check.setEnabled(vulkan_loader_available())
+        self.vulkan_duration.setEnabled(vulkan_loader_available())
 
         hardware_form = QFormLayout()
         hardware_form.addRow(self.nvme_check)
@@ -157,6 +165,9 @@ class TestPlanPanel(QWidget):
         hardware_form.addRow(self.drives)
         hardware_form.addRow(self.nvidia_check)
         hardware_form.addRow(self.dcgm_check, self.dcgm_level)
+        # Ohne DCGM wird der Schritt gar nicht angeboten (statt nur ausgegraut).
+        hardware_form.setRowVisible(self.dcgm_check, dcgmi_available())
+        hardware_form.addRow(self.vulkan_check, self.vulkan_duration)
         hardware_group = QGroupBox("Datenträger und GPU")
         hardware_group.setLayout(hardware_form)
 
@@ -540,6 +551,8 @@ class TestPlanPanel(QWidget):
             nvidia_enabled=self.nvidia_check.isChecked(),
             dcgm_enabled=self.dcgm_check.isChecked(),
             dcgm_level=self.dcgm_level.value(),
+            vulkan_enabled=self.vulkan_check.isChecked(),
+            vulkan_seconds=self.vulkan_duration.value(),
             monitoring_enabled=self.monitor_check.isChecked(),
             monitoring_interval=self.monitor_interval.value(),
             temperature_limit=self.monitor_limit.value(),
@@ -557,6 +570,7 @@ class TestPlanPanel(QWidget):
             self.iperf_check,
             self.nvidia_check,
             self.dcgm_check,
+            self.vulkan_check,
         ))
 
     def _set_running(self, running: bool) -> None:
@@ -569,7 +583,7 @@ class TestPlanPanel(QWidget):
             self.nvme_read_check, self.drives, self.drive_scan_btn, self.select_all_btn, self.rounds,
             self.iperf_check, self.iperf_duration, self.network_target,
             self.max_loss, self.max_latency, self.max_jitter, self.min_throughput,
-            self.nvidia_check, self.dcgm_check, self.dcgm_level,
+            self.nvidia_check, self.dcgm_check, self.dcgm_level, self.vulkan_check, self.vulkan_duration,
             self.stop_on_error, self.output_dir,
             self.monitor_check, self.monitor_interval, self.monitor_limit,
             self.sensor_limits_btn,
@@ -581,6 +595,9 @@ class TestPlanPanel(QWidget):
         if not running and not dcgmi_available():
             self.dcgm_check.setEnabled(False)
             self.dcgm_level.setEnabled(False)
+        if not running and not vulkan_loader_available():
+            self.vulkan_check.setEnabled(False)
+            self.vulkan_duration.setEnabled(False)
 
     def _set_runtime_text(self, widget: QLabel, source: str, **values: object) -> None:
         widget._hardwaretest_runtime_text = (source, values)

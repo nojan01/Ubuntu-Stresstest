@@ -187,6 +187,8 @@ class NvidiaPanel(QWidget):
         diag_group = QGroupBox("NVIDIA-DCGM-Diagnose")
         diag_group.setLayout(diag_layout)
         self.diag_group = diag_group
+        # Ohne dcgmi gibt es nichts zu bedienen – Bereich ausblenden statt nur deaktivieren.
+        diag_group.setVisible(dcgmi_available())
 
         result_layout = QVBoxLayout()
         result_layout.addWidget(self.result)
@@ -451,7 +453,8 @@ class NvidiaPanel(QWidget):
             minutes=minutes,
             count=len(indices),
         )
-        self.progress.setRange(0, 0)
+        self.progress.setRange(0, 1000)
+        self.progress.setValue(0)
         self.progress.setVisible(True)
         self._set_running(True)
         self._start_monitoring()
@@ -532,6 +535,8 @@ class NvidiaPanel(QWidget):
         lines = getattr(runner, "_ui_log_lines", [])
         self.output.setPlainText("\n".join(lines))
         self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
+        if self.progress.maximum() > 0:  # Lasttest mit fester Dauer; DCGM-Diagnose unbestimmt
+            self.progress.setValue(int(runner.progress() * 1000))
         if not runner.is_running() and runner.get_result() is not None:
             self._finish_diagnostic()
 

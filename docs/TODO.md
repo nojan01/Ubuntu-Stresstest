@@ -13,9 +13,9 @@ Einheitliches Image: NVIDIA-Enterprise-Treiber 595 + DCGM immer enthalten, nouve
 Offen:
 - [ ] Praxistest auf AMD-Karte und Intel Arc (Hardware nötig), Gegenprobe NVIDIA über NVK
 - [ ] ISO bauen, Größe prüfen, Boot mit AMD/Intel-Grafik (`amdgpu`/`i915`/`xe` geladen)
-- [ ] Optional: Schritt „GPU (Vulkan)“ im Gesamttestplan
-- [ ] Intel-iGPU: Leistung über RAPL (uncore/psys) und Auslastung ergänzen
-- [ ] THIRD-PARTY-LICENSES der ISO ergänzen (Mesa: MIT)
+- [x] Optional: Schritt „GPU (Vulkan)“ im Gesamttestplan
+- [x] Intel-iGPU: Leistung über RAPL (uncore) und Auslastung (fdinfo) ergänzen; ISO: udev-Regel macht `energy_uj` lesbar
+- [x] THIRD-PARTY-LICENSES der ISO ergänzen (Mesa: MIT)
 - [ ] NVIDIA-Treiber + DCGM in ein eigenes Teil-Abbild (squashfs) auslagern, das im
       nouveau-Modus nicht in den RAM geladen wird (`toram`) – spart wirklich RAM,
       macht den Bau aber deutlich aufwendiger
@@ -77,7 +77,7 @@ Entscheidung 29.10.2026: künftig **2 Images** – ein freies (öffentlich) und 
   - **Klein:** NVIDIA-Treiber + GPU-Lasttest, AMD/Intel-Firmware + Vulkan, ohne DCGM
   - **Groß:** wie klein, zusätzlich NVIDIA DCGM
 - [ ] Build-Skript vereinfachen: Optionen nur noch `--dcgm` (groß) und `--memtest86` (intern)
-- [ ] Hardwaretest: DCGM-Bereich automatisch ausblenden, wenn `dcgmi` fehlt (statt nur deaktivieren)
+- [x] Hardwaretest: DCGM-Bereich automatisch ausblenden, wenn `dcgmi` fehlt (statt nur deaktivieren)
 - [ ] Einheitliche Hintergründe (textfrei, dezentes Copyright/MIT) für alle Images
 - [ ] Größe prüfen (klein/groß + ca. 60–80 MB AMD/Intel)
 - [ ] Releases: öffentlich `nojan01/Hardwaretest-Live-ISO`, intern mit MemTest86 Pro
@@ -85,15 +85,15 @@ Entscheidung 29.10.2026: künftig **2 Images** – ein freies (öffentlich) und 
 
 ## E) Tab „System“ erweitern: weitere Komponenten
 Gleicher Stil wie CPU/RAM/Board, möglichst ohne root; auch im System-Abschnitt des Gesamttest-Berichts.
-- [ ] **PCIe-Links** (`/sys/bus/pci/devices/*/{current,max}_link_{speed,width}`): aktuelle vs. maximale
+- [x] **PCIe-Links** (`/sys/bus/pci/devices/*/{current,max}_link_{speed,width}`): aktuelle vs. maximale
       Breite/Generation, Abweichung rot markieren (schlechter Sitz, Riser defekt, BIOS) – Priorität 1
-- [ ] **Netzwerk** (`/sys/class/net`, `ethtool -i`, `lspci`): Modell, Treiber, Firmware, MAC, Link/Speed, Steckplatz
-- [ ] **Grafik** (`lspci`, `/sys/class/drm`, `nvidia-smi`): Modell, Treiber, VRAM, VBIOS
-- [ ] **RAID-/HBA-Controller** (`lspci`, `/sys/class/scsi_host`): Modell, Treiber, Firmware;
-      Array-Details per HPE `ssacli`/`storcli` (proprietär → nur internes Image)
-- [ ] **Datenträger** (`lsblk -J -O`, `/sys/block`, `smartctl -i`): Modell, S/N, Firmware, Größe,
+- [x] **Netzwerk** (`/sys/class/net`, `ethtool -i`, `lspci`): Modell, Treiber, Firmware, MAC, Link/Speed, Steckplatz
+- [x] **Grafik** (`lspci`, `/sys/class/drm`, `nvidia-smi`): Modell, Treiber, VRAM, VBIOS
+- [x] **RAID-/HBA-Controller** (`lspci`, `/sys/class/scsi_host`): Modell, Treiber, Firmware
+- [ ] Array-Details per HPE `ssacli`/`storcli` (proprietär → nur internes Image)
+- [x] **Datenträger** (`lsblk`, ohne `smartctl`): Modell, S/N, Firmware, Größe,
       SSD/HDD, NVMe/SATA/SAS, Sektorgröße
-- [ ] Tests mit Beispieldaten (sysfs in tmp_path, lspci/ethtool/lsblk-Ausgaben), Hilfe DE/EN
+- [x] Tests mit Beispieldaten (sysfs in tmp_path, lspci/ethtool/lsblk-Ausgaben), Hilfe DE/EN
 
 ## F) HPE RAID-Controller: Button „HPE Smart Array“ (Disk Geräte) ausbauen
 Heute: `ssacli ctrl all show status` + `show config`, nur Rohtext (`system_info.read_hpe_raid_info`).

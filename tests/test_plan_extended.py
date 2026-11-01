@@ -206,3 +206,39 @@ def test_plan_panel_selection_config_and_cancel_confirmation(monkeypatch):
     assert panel.step_progress.format() == "Current test step: %p%"
     assert panel.log_view.document().maximumBlockCount() == 1000
     panel.deleteLater()
+
+
+def test_vulkan_step_skips_or_runs_all_gpus(tmp_path, monkeypatch):
+    plan = executor(tmp_path, nvme_enabled=False, vulkan_enabled=True, vulkan_seconds=120)
+    assert plan.selected_step_keys() == ["vulkan"]
+    monkeypatch.setattr(test_plan, "vulkan_loader_available", lambda: False)
+    assert plan._run_vulkan().status == "skipped"
+    monkeypatch.setattr(test_plan, "vulkan_loader_available", lambda: True)
+    monkeypatch.setattr(test_plan, "list_vulkan_gpus", lambda: [])
+    assert "Keine Vulkan-GPU" in plan._run_vulkan().summary
+    monkeypatch.setattr(test_plan, "list_vulkan_gpus",
+                        lambda: [{"index": 0, "name": "Arc"}, {"index": 1, "name": "RX"}])
+    seen = {}
+
+    def fake_step(key, runner, summary_extra=""):
+        seen.update(key=key, gpus=runner.gpu_indices, seconds=runner.params.duration_seconds, extra=summary_extra)
+        return plan._instant_result(key, "passed", "ok")
+
+    plan._run_process_step = fake_step
+    assert plan._run_vulkan().name == "GPU-Lasttest (Vulkan)"
+    assert seen == {"key": "vulkan", "gpus": [0, 1], "seconds": 120, "extra": "GPU 0: Arc, GPU 1: RX"}
+
+
+def test_plan_panel_hides_dcgm_without_dcgmi_and_offers_vulkan(monkeypatch):
+    from hardwaretest.ui.widgets import test_plan_panel
+
+    monkeypatch.setattr(test_plan_panel, "dcgmi_available", lambda: False)
+    monkeypatch.setattr(test_plan_panel, "vulkan_loader_available", lambda: True)
+    panel = TestPlanPanel()
+    panel.show()
+    assert not panel.dcgm_check.isVisible() and not panel.dcgm_level.isVisible()
+    panel.vulkan_check.setChecked(True)
+    panel.vulkan_duration.setValue(90)
+    config = panel._config()
+    assert config.vulkan_enabled and config.vulkan_seconds == 90
+    panel.deleteLater()

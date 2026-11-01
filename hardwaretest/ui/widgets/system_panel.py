@@ -1,4 +1,4 @@
-"""Tab „System“: Prozessor, Caches, Takt je Kern, Mainboard/BIOS und Speichermodule."""
+"""Tab „System“: Prozessor, Caches, Takt je Kern, Mainboard/BIOS, Speichermodule und weitere Komponenten."""
 
 from __future__ import annotations
 
@@ -6,12 +6,13 @@ import os
 import shutil
 
 from PySide6.QtCore import QProcess, QTimer
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
+from hardwaretest.core import device_inventory as dev
 from hardwaretest.core import hardware_inventory as inv
 from hardwaretest.ui.i18n import language_manager
 
@@ -30,17 +31,30 @@ def _item(text) -> QTableWidgetItem:
     return item
 
 
-def _fill(table: QTableWidget, headers: list[str], rows: list[list]) -> None:
+_LINK_COLORS = {dev.LINK_WIDTH: QColor("#c62828"), dev.LINK_SPEED: QColor("#ef6c00")}
+
+
+def _fill(table: QTableWidget, headers: list[str], rows: list[list], colors: dict | None = None,
+          max_height: int | None = 420) -> None:
+    """``colors``: {(Zeile, Spalte): QColor} für Statuszellen; ``max_height=None``: alle Zeilen ohne eigene Scrollleiste."""
     table.clear()
     table.setColumnCount(len(headers))
     table.setHorizontalHeaderLabels(headers)
     table.setRowCount(len(rows))
     for row, values in enumerate(rows):
         for column, value in enumerate(values):
-            table.setItem(row, column, _item(value))
+            item = _item(value)
+            color = (colors or {}).get((row, column))
+            if color is not None:
+                item.setBackground(color)
+                item.setForeground(QColor("white"))
+            table.setItem(row, column, item)
     table.resizeColumnsToContents()
     height = table.horizontalHeader().height() + sum(table.rowHeight(r) for r in range(len(rows))) + 4
-    table.setFixedHeight(min(max(height, 60), 420))
+    if table.horizontalScrollBar().isVisible() or max_height is None:
+        height += table.horizontalScrollBar().sizeHint().height()
+    height = max(height, 60)
+    table.setFixedHeight(height if max_height is None else min(height, max_height))
 
 
 def _table() -> QTableWidget:
@@ -64,6 +78,7 @@ class SystemPanel(QWidget):
         self._memory: inv.MemoryInventory | None = None
         self._memory_error = ""
         self._process: QProcess | None = None
+        self._devices = dev.DeviceInventory()
 
         outer = QVBoxLayout(self)
         buttons = QHBoxLayout()
@@ -124,6 +139,15 @@ class SystemPanel(QWidget):
         memory_layout.addWidget(self.memory_summary)
         memory_layout.addWidget(self.memory_table)
         layout.addWidget(self.memory_group)
+
+        self.pci_group, self.pci_table = self._add_table_group(layout)
+        self.pci_note = QLabel()
+        self.pci_note.setWordWrap(True)
+        self.pci_group.layout().insertWidget(0, self.pci_note)
+        self.network_group, self.network_table = self._add_table_group(layout)
+        self.graphics_group, self.graphics_table = self._add_table_group(layout)
+        self.controller_group, self.controller_table = self._add_table_group(layout)
+        self.disk_group, self.disk_table = self._add_table_group(layout)
         layout.addStretch(1)
 
         self._clock_timer = QTimer(self)
@@ -133,8 +157,17 @@ class SystemPanel(QWidget):
         language_manager.language_changed.connect(self.retranslate)
         self.refresh()
 
+    @staticmethod
+    def _add_table_group(layout: QVBoxLayout) -> tuple[QGroupBox, QTableWidget]:
+        group = QGroupBox()
+        table = _table()
+        QVBoxLayout(group).addWidget(table)
+        layout.addWidget(group)
+        return group, table
+
     # ------------------------------------------------------------------ Daten
     def refresh(self) -> None:
+        self._devices = dev.read_device_inventory()
         self._packages = inv.read_cpu_packages()
         self._caches = inv.read_caches()
         self._board = inv.read_board_info()
@@ -164,7 +197,7 @@ class SystemPanel(QWidget):
     def text_lines(self) -> list[str]:
         return inv.inventory_lines(
             language_manager.language, self._packages, self._caches, self._board, self._memory, self._memory_error,
-        )
+        ) + dev.device_lines(language_manager.language, self._devices)
 
     def _copy(self) -> None:
         QGuiApplication.clipboard().setText("\n".join(self.text_lines()))
@@ -221,10 +254,16 @@ class SystemPanel(QWidget):
         self.clock_group.setTitle(_t("Takt je logischer CPU", "Clock per logical CPU"))
         self.board_group.setTitle("Mainboard / BIOS")
         self.memory_group.setTitle(_t("Arbeitsspeicher", "Memory"))
+        self.pci_group.setTitle(_t("PCIe-Verbindungen", "PCIe links"))
+        self.network_group.setTitle(_t("Netzwerk", "Network"))
+        self.graphics_group.setTitle(_t("Grafik", "Graphics"))
+        self.controller_group.setTitle(_t("Speicher-Controller", "Storage controllers"))
+        self.disk_group.setTitle(_t("Datenträger", "Disks"))
         self._show_cpu()
         self._show_caches()
         self._show_board()
         self._show_memory()
+        self._show_devices()
         self._update_clocks()
 
     def _show_cpu(self) -> None:
@@ -336,7 +375,40 @@ class SystemPanel(QWidget):
             rows.append([device.locator, device.bank, device.size, device.kind, device.form_factor, device.speed,
                          device.configured_speed, device.rank, ecc, device.voltage, device.manufacturer,
                          device.part_number, device.serial])
-        _fill(self.memory_table, headers, rows)
+        _fill(self.memory_table, headers, rows, max_height=None)
+
+    def _show_devices(self) -> None:
+        language = language_manager.language
+        devices = self._devices
+        self.pci_note.setText(_t(
+            "Rot: weniger Lanes als möglich (Steckplatz, Riser, Sitz der Karte prüfen). Orange: niedrigere "
+            "Generation – im Leerlauf durch Energiesparen (ASPM) oft normal, unter Last erneut prüfen.",
+            "Red: fewer lanes than possible (check slot, riser, card seating). Orange: lower generation – often "
+            "normal at idle due to power saving (ASPM); check again under load.",
+        ))
+        rows, colors = [], {}
+        for index, device in enumerate(devices.links):
+            rows.append([device.address, device.model, device.driver,
+                         dev.link_text(device.current_speed, device.current_width),
+                         f"Gen{device.possible_generation} x{device.possible_width}",
+                         dev.link_status_text(language, device)])
+            if device.link_state in _LINK_COLORS:
+                colors[(index, 5)] = _LINK_COLORS[device.link_state]
+        _fill(self.pci_table, [_t("Adresse", "Address"), _t("Gerät", "Device"), _t("Treiber", "Driver"),
+                               _t("Aktuell", "Current"), _t("Möglich", "Possible"), "Status"], rows, colors)
+        _fill(self.network_table, ["Interface", _t("Modell", "Model"), _t("Treiber", "Driver"), "Firmware", "MAC",
+                                   _t("Zustand", "State"), _t("Geschwindigkeit", "Speed"), "PCI"],
+              [[n.name, n.model, n.driver, n.firmware, n.mac, n.state, dev.speed_text(language, n.speed_mbps), n.pci]
+               for n in devices.network])
+        _fill(self.graphics_table, ["PCI", _t("Modell", "Model"), _t("Treiber", "Driver"), "VRAM", "VBIOS"],
+              [[g.pci, g.model, g.driver, dev.vram_text(language, g.vram), g.vbios] for g in devices.graphics])
+        _fill(self.controller_table, ["PCI", _t("Art", "Type"), _t("Modell", "Model"), _t("Treiber", "Driver"),
+                                      "Firmware"],
+              [[c.pci, c.kind, c.model, c.driver, c.firmware] for c in devices.controllers])
+        _fill(self.disk_table, [_t("Gerät", "Device"), _t("Modell", "Model"), _t("Größe", "Size"), _t("Art", "Type"),
+                                _t("Seriennummer", "Serial number"), "Firmware", _t("Sektor log./phys.", "Sector log./phys.")],
+              [[d.name, d.model, dev._human(d.size) if d.size else "", dev.disk_type_text(d), d.serial, d.firmware,
+                dev.sector_text(d)] for d in devices.disks])
 
     def close_privileged_session(self) -> None:
         if self._process is not None:

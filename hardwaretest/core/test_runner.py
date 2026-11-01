@@ -319,13 +319,16 @@ class BaseTestRunner:
                     self.stop(aborted=True)
 
     def _stream_output(self) -> None:
-        if not self._process or not self._process.stdout:
+        process = self._process
+        if not process or not process.stdout:
             return
-        for line in self._process.stdout:
+        for line in process.stdout:
             stripped = line.rstrip()
             self._log(stripped)
             self._check_line_for_errors(stripped)
-        self._process.wait()
+        process.wait()
+        if self._process is not process:
+            return  # stop() hat das Ergebnis bereits erstellt
         self._finalize_result()
         if self._result:
             self._log(f"Test beendet – Ergebnis: {self._result.status_text}")

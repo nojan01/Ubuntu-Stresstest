@@ -2,6 +2,14 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.58
+
+- Tab **System** erweitert (ohne root): **PCIe-Verbindungen** mit aktueller und möglicher Generation/Breite (rot: Breite reduziert, orange: Generation reduziert – im Leerlauf oft normal), **Netzwerk** (Modell, Treiber, Firmware, MAC, Zustand, Geschwindigkeit), **Grafik** (Treiber, VRAM, VBIOS), **Speicher-Controller** (mit Firmware) und **Datenträger** (Modell, Größe, HDD/SSD, Seriennummer, Firmware, Sektorgröße). Auch in Zwischenablage und Gesamttest-Bericht.
+- Tab **GPU (Vulkan)**: Fortschrittsbalken läuft zeitbasiert; Abbruch beendet auch die automatisch gestartete Liveüberwachung und wird protokolliert; Liveüberwachung zeigt Uhrzeit, Maximaltakt und bei integrierten GPUs die CPU-Pakettemperatur; „Überwachung stoppen“ zeigt den Zeitpunkt. CUDA-Lasttest mit zeitbasiertem Fortschritt.
+- Integrierte **Intel-GPUs** (i915/xe): Liveüberwachung zeigt jetzt die **Auslastung** (aus `/proc/*/fdinfo` wie `gputop`, ohne root für Prozesse des eigenen Benutzers) und die **Leistung** über den RAPL-Zähler „uncore“. RAPL ist meist nur für root lesbar – dann erscheint „Leistung nur mit root“; im HPE-Live-ISO gibt eine udev-Regel die Zähler frei.
+- **Gesamttest**: optionaler Schritt **GPU-Lasttest (Vulkan)** mit einstellbarer Dauer (Standard 300 s) auf allen Vulkan-GPUs; ohne Vulkan-Loader deaktiviert, ohne Vulkan-GPU übersprungen.
+- Ist `dcgmi` nicht installiert, werden der Bereich **DCGM-Diagnose** im Tab NVIDIA GPU und die DCGM-Option im Gesamttest ausgeblendet statt nur deaktiviert.
+
 ### Neu in 0.2.57
 
 - Neuer Tab **GPU (Vulkan)**: herstellerneutraler GPU-Lasttest für AMD, Intel und NVIDIA über Vulkan Compute (Mesa RADV/ANV/NVK oder Herstellertreiber) – VRAM-Mustertest mit Fehlerzählung auf der GPU und Rechenlast mit Ergebnisvergleich; bei integrierten GPUs höchstens 25 % des gemeinsamen Speichers. Liveüberwachung aus sysfs (Temperatur, Leistung, Auslastung, Takte, VRAM, Lüfter). Empfohlen: `libvulkan1`, `mesa-vulkan-drivers`, `python3`.

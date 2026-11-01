@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Signal
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardwaretest.core.gpu_sysfs import DrmGpu, list_drm_gpus, match_drm
+from hardwaretest.core.gpu_sysfs import DrmGpu, IntelGpuSampler, list_drm_gpus, match_drm
 from hardwaretest.core.test_runner import TestParameters
 from hardwaretest.tests.vulkan_runner import VulkanStressRunner, list_vulkan_gpus
 from hardwaretest.ui.i18n import language_manager
@@ -165,6 +166,7 @@ class GpuPanel(QWidget):
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._poll)
         self._monitor_timer = QTimer(self)
+        self._intel_sampler = IntelGpuSampler()
         self._monitor_timer.timeout.connect(self._refresh_telemetry)
         language_manager.language_changed.connect(self._refresh_texts)
         QTimer.singleShot(0, self._scan)
@@ -234,6 +236,7 @@ class GpuPanel(QWidget):
     # --- Liveüberwachung -------------------------------------------------------
     def _start_monitoring(self) -> None:
         self._monitoring = True
+        self._intel_sampler.reset()
         self._monitor_timer.setInterval(self.monitor_interval.value() * 1000)
         self._monitor_timer.start()
         self.monitor_interval.setEnabled(False)
@@ -247,9 +250,17 @@ class GpuPanel(QWidget):
         self.monitor_interval.setEnabled(True)
         self.monitor_start_btn.setEnabled(True)
         self.monitor_stop_btn.setEnabled(False)
+        lines = self.telemetry.toPlainText().splitlines()
+        if lines and lines[0].startswith(language_manager.tr("Aktualisiert {time}", time="")):
+            lines.pop(0)
+        lines.insert(0, language_manager.tr("Überwachung gestoppt {time} – letzte Messwerte:",
+                                            time=time.strftime("%H:%M:%S")))
+        self.telemetry.setPlainText("\n".join(lines))
 
     def _refresh_telemetry(self) -> None:
         drm = list_drm_gpus()
+        for card in drm:
+            self._intel_sampler.update(card)
         matched = match_drm(self._gpus, drm)
         lines = []
         for gpu in self._gpus:
@@ -259,7 +270,11 @@ class GpuPanel(QWidget):
         for card in drm:
             if id(card) not in known:
                 lines.append(self._format_telemetry(None, language_manager.tr("ohne Vulkan"), card))
-        self.telemetry.setPlainText("\n".join(lines) or language_manager.tr("Keine Grafikkarte gefunden."))
+        if not lines:
+            lines.append(language_manager.tr("Keine Grafikkarte gefunden."))
+        if self._monitoring:
+            lines.insert(0, language_manager.tr("Aktualisiert {time}", time=time.strftime("%H:%M:%S")))
+        self.telemetry.setPlainText("\n".join(lines))
 
     # --- Lasttest --------------------------------------------------------------
     def _start_stress(self) -> None:
@@ -284,10 +299,12 @@ class GpuPanel(QWidget):
         self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
         self._set_text(self.status, "GPU-Lasttest läuft {minutes} min auf {count} GPU(s) …",
                        minutes=minutes, count=len(indices))
-        self.progress.setRange(0, 0)
+        self.progress.setRange(0, 1000)
+        self.progress.setValue(0)
         self.progress.setVisible(True)
         self._set_running(True)
-        if not self._monitoring:
+        self._auto_monitoring = not self._monitoring
+        if self._auto_monitoring:
             self._start_monitoring()
         self._timer.start()
 
@@ -298,6 +315,7 @@ class GpuPanel(QWidget):
             return
         self.output.setPlainText("\n".join(getattr(runner, "_ui_log_lines", [])))
         self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
+        self.progress.setValue(int(runner.progress() * 1000))
         if not runner.is_running() and runner.get_result() is not None:
             self._finish()
 
@@ -312,8 +330,15 @@ class GpuPanel(QWidget):
             return
         self._timer.stop()
         result = runner.get_result()
-        self.output.setPlainText("\n".join(getattr(runner, "_ui_log_lines", [])))
+        lines = getattr(runner, "_ui_log_lines", [])
+        if aborted:
+            lines.append(language_manager.tr("Test abgebrochen."))
+        self.output.setPlainText("\n".join(lines))
+        self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
         self._runner = None
+        if getattr(self, "_auto_monitoring", False) and self._monitoring:
+            self._stop_monitoring()
+        self._auto_monitoring = False
         self.progress.setVisible(False)
         self._set_running(False)
         if aborted:
@@ -384,6 +409,17 @@ class GpuPanel(QWidget):
                 return "–"
             return f"{number:.{digits}f} {unit}" if isinstance(number, float) else f"{number} {unit}"
 
+        clock = value(card.clock_mhz, "MHz")
+        if card.max_clock_mhz:
+            clock = f"{card.clock_mhz if card.clock_mhz is not None else '–'}/{card.max_clock_mhz} MHz"
+        temp = value(card.temperature_c, "°C", 1)
+        if card.package_temperature:
+            temp += " " + language_manager.tr("(CPU-Paket)")
+        power = value(card.power_w, "W", 1)
+        if card.power_rapl:
+            power += " (RAPL)"
+        elif card.power_needs_root:
+            power += " " + language_manager.tr("(Leistung nur mit root)")
         vram = "–"
         if card.vram_total:
             vram = f"{(card.vram_used or 0) / 2**30:.1f}/{card.vram_total / 2**30:.1f} GiB"
@@ -391,7 +427,7 @@ class GpuPanel(QWidget):
             "{label} {name} [{driver} {pci}]: {temp} | {power} | Last {busy} | Takt {clock} | "
             "Speichertakt {mclk} | VRAM {vram} | Lüfter {fan}",
             label=label, name=name, driver=card.driver, pci=card.pci,
-            temp=value(card.temperature_c, "°C", 1), power=value(card.power_w, "W", 1),
-            busy=value(card.busy_percent, "%"), clock=value(card.clock_mhz, "MHz"),
+            temp=temp, power=power,
+            busy=value(card.busy_percent, "%"), clock=clock,
             mclk=value(card.memory_clock_mhz, "MHz"), vram=vram, fan=value(card.fan_rpm, "U/min"),
         )

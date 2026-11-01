@@ -19,7 +19,7 @@ import uuid
 from typing import Callable, Optional
 
 from hardwaretest import __version__
-from hardwaretest.core import hardware_inventory, ipmi
+from hardwaretest.core import device_inventory, hardware_inventory, ipmi
 from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
@@ -37,6 +37,7 @@ from hardwaretest.tests.opendcdiag import (
 )
 from hardwaretest.tests.nvidia_runner import DcgmDiagnosticRunner, dcgmi_available
 from hardwaretest.tests.stress_ng import StressNgRunner
+from hardwaretest.tests.vulkan_runner import VulkanStressRunner, list_vulkan_gpus, vulkan_loader_available
 
 
 STATUS_PASSED = "passed"
@@ -74,6 +75,9 @@ class TestPlanConfig:
     nvidia_enabled: bool = True
     dcgm_enabled: bool = False
     dcgm_level: int = 1
+    vulkan_enabled: bool = False
+    vulkan_seconds: int = 300
+    vulkan_memory_percent: int = 80
     monitoring_enabled: bool = False
     monitoring_interval: int = 10
     temperature_limit: int = 90
@@ -192,6 +196,8 @@ class TestPlanExecutor:
             steps.append("nvidia")
         if config.dcgm_enabled:
             steps.append("dcgm")
+        if config.vulkan_enabled:
+            steps.append("vulkan")
         return steps
 
     def execute(self) -> TestPlanResult:
@@ -239,6 +245,7 @@ class TestPlanExecutor:
             "iperf3": self._run_iperf,
             "nvidia": self._run_nvidia,
             "dcgm": self._run_dcgm,
+            "vulkan": self._run_vulkan,
         }
 
         # Passwort sofort abfragen, damit lange Testpläne unbeaufsichtigt laufen.
@@ -594,6 +601,22 @@ class TestPlanExecutor:
             result.status = STATUS_FAILED
         return result
 
+    def _run_vulkan(self) -> TestPlanStepResult:
+        if not vulkan_loader_available():
+            return self._skipped("vulkan", "Vulkan-Loader (libvulkan1) ist nicht installiert.")
+        try:
+            gpus = list_vulkan_gpus()
+        except Exception as exc:
+            return self._skipped("vulkan", str(exc))
+        if not gpus:
+            return self._skipped("vulkan", "Keine Vulkan-GPU gefunden.")
+        runner = VulkanStressRunner(
+            TestParameters(self.config.vulkan_seconds), [gpu["index"] for gpu in gpus],
+            memory_percent=self.config.vulkan_memory_percent, log_fn=self._log,
+        )
+        names = ", ".join(f"GPU {gpu['index']}: {gpu.get('name', '?')}" for gpu in gpus)
+        return self._run_process_step("vulkan", runner, summary_extra=names)
+
     def _run_process_step(
         self,
         key: str,
@@ -737,9 +760,13 @@ class TestPlanExecutor:
         try:
             run = self._root.run if self._root is not None else None
             memory, error = hardware_inventory.read_memory_inventory(run)
-            return hardware_inventory.inventory_lines(self.config.language, memory=memory, memory_error=error)
+            lines = hardware_inventory.inventory_lines(self.config.language, memory=memory, memory_error=error)
         except Exception as exc:  # Bericht soll trotzdem entstehen
             return [f"System: {exc}"]
+        try:
+            return lines + device_inventory.device_lines(self.config.language, device_inventory.read_device_inventory())
+        except Exception as exc:
+            return [*lines, f"System: {exc}"]
 
     def _nvme_run(self, command, **kwargs):
         """SMART-Abfragen über die zu Beginn autorisierte Root-Sitzung."""
@@ -897,6 +924,7 @@ def _step_name(key: str, language: str) -> str:
         "iperf3": ("Netzwerk-Durchsatz (iperf3)", "Network throughput (iperf3)"),
         "nvidia": ("NVIDIA-Treiber und GPU-Inventar", "NVIDIA driver and GPU inventory"),
         "dcgm": ("NVIDIA-DCGM-Diagnose", "NVIDIA DCGM diagnostics"),
+        "vulkan": ("GPU-Lasttest (Vulkan)", "GPU stress test (Vulkan)"),
         "cancelled": ("Testplan", "Test plan"),
     }
     pair = names.get(key, (key, key))
@@ -1020,6 +1048,8 @@ def _text(source: str, language: str) -> str:
         "OpenDCDiag ist nicht installiert.": "OpenDCDiag is not installed.",
         "OpenDCDiag-Protokoll fehlt oder ist nicht lesbar.": "OpenDCDiag log is missing or unreadable.",
         "Keine NVIDIA-GPU für DCGM gefunden.": "No NVIDIA GPU was found for DCGM.",
+        "Vulkan-Loader (libvulkan1) ist nicht installiert.": "Vulkan loader (libvulkan1) is not installed.",
+        "Keine Vulkan-GPU gefunden.": "No Vulkan GPU found.",
     }
     if language == "en":
         return translations.get(source, source.replace("Prozess beendet mit Exit-Code", "Process exited with code"))

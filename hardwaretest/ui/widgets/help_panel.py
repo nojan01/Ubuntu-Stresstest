@@ -473,6 +473,8 @@ Rechenzentrum: Tesla T4, Ampere A2/A10/A16/A30/A40/A100, Ada L4/L40/L40S,
 RTX 2000–6000 Ada, Hopper H100/H200, Blackwell B200/RTX PRO.
 DCGM-Diagnosen sind für Rechenzentrums-GPUs vorgesehen; bei Workstation-Karten
 laufen nur Teile, GeForce-Karten werden nicht unterstützt.
+Ist <code>dcgmi</code> nicht installiert, wird der Bereich „DCGM-Diagnose“
+ausgeblendet (ebenso die DCGM-Option im Gesamttest).
 Nicht unterstützt: Pascal/Volta (GTX 10xx, P4, P40, P100, V100) und älter.
 Die vollständige Installationsanleitung liegt unter
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
@@ -494,7 +496,14 @@ Speicherfehler führen zu „FEHLGESCHLAGEN“. Bei <b>integrierten GPUs</b> wer
 höchstens 25 % des gemeinsamen Speichers belegt, damit das System bedienbar bleibt.
 Die Liveüberwachung liest ohne Zusatzprogramme aus sysfs: Temperatur, Leistung,
 Auslastung, GPU-/Speichertakt, VRAM und Lüfter (Umfang je nach Treiber: amdgpu
-liefert fast alles, i915/xe vor allem den Takt).
+liefert fast alles, i915/xe vor allem den Takt; bei integrierten Intel-GPUs
+zusätzlich die Temperatur des CPU-Pakets). Bei integrierten Intel-GPUs ermittelt
+die App die Auslastung aus <code>/proc/*/fdinfo</code> (wie <code>intel_gpu_top</code>/
+<code>gputop</code>; ohne root nur für Prozesse des eigenen Benutzers, also auch den
+Lasttest) und die Leistung aus dem RAPL-Zähler „uncore“ (Zusatz „(RAPL)“). Diese
+Zähler sind normalerweise nur für root lesbar („Leistung nur mit root“); im
+HPE-Live-ISO gibt eine udev-Regel sie frei. Takt als aktuell/maximal, im
+Ruhezustand 0 MHz. Die erste Zeile zeigt die Uhrzeit der letzten Aktualisierung.
 Server-Grafikchips (Matrox, ASPEED) haben keinen Vulkan-Treiber und erscheinen
 nur als „ohne Vulkan“. Für NVIDIA-Karten mit proprietärem Treiber bietet der Tab
 „NVIDIA GPU“ zusätzlich den CUDA-Lasttest und DCGM-Diagnosen.
@@ -527,7 +536,11 @@ Benötigt der Plan Root-Rechte (NVMe-Gesundheit, NVMe-Lesetest, DCGM), wird das
 Passwort <b>nur einmal direkt beim Start</b> abgefragt; danach läuft der Plan
 unbeaufsichtigt. Wird die Abfrage abgebrochen, startet der Plan nicht.
 CPU- und RAM-Dauer, verwendeter RAM-Anteil, Netzwerkziel sowie optionale NVIDIA-
-und DCGM-Prüfungen lassen sich vor dem Start festlegen. „Bei erstem Fehler
+und DCGM-Prüfungen lassen sich vor dem Start festlegen. Optional läuft nach
+den NVIDIA-Schritten der <b>GPU-Lasttest (Vulkan)</b> mit einstellbarer Dauer
+auf allen Vulkan-GPUs (80 % des freien Grafikspeichers, bei integrierten GPUs
+höchstens 25 % des gemeinsamen Speichers); ohne Vulkan-Loader ist die Option
+deaktiviert, ohne Vulkan-GPU wird der Schritt übersprungen. „Bei erstem Fehler
 abbrechen“ beendet den Ablauf nach einem fehlgeschlagenen Schritt. Ein manueller
 Abbruch stoppt den aktuell laufenden Prozess und speichert die bis dahin
 vorliegenden Ergebnisse.
@@ -563,6 +576,19 @@ Die Speichermodule liest <code>dmidecode</code> mit Root-Rechten. Das .deb erlau
 Mitgliedern der Gruppe sudo genau <code>dmidecode -t 1 -t 4 -t 16 -t 17</code> ohne Passwort;
 sonst erscheint „Speichermodule mit Passwort auslesen“. „In Zwischenablage kopieren“
 liefert alles als Text, z. B. für Tickets.
+</p>
+<p>
+Darunter folgen weitere Komponenten (ohne root, aus <code>/sys</code>, <code>lspci</code>,
+<code>ethtool</code>, <code>lsblk</code> und – falls vorhanden – <code>nvidia-smi</code>):
+<b>PCIe-Verbindungen</b> der Endgeräte mit aktueller und möglicher Generation/Breite
+(möglich = Minimum aus Karte und Steckplatz). <span style="color:#c62828">Rot</span>: weniger
+Lanes als möglich – Sitz der Karte, Riser oder Steckplatz prüfen.
+<span style="color:#ef6c00">Orange</span>: niedrigere Generation – im Leerlauf durch
+Energiesparen (ASPM) oft normal, unter Last erneut prüfen. Außerdem <b>Netzwerk</b> (Modell,
+Treiber, Firmware, MAC, Zustand, Geschwindigkeit), <b>Grafik</b> (Treiber, VRAM, VBIOS),
+<b>Speicher-Controller</b> (SATA/SAS/RAID/NVMe mit Firmware) und <b>Datenträger</b> (Modell,
+Größe, HDD/SSD, Anschluss, Seriennummer, Firmware, Sektorgröße). Diese Angaben stehen auch
+im System-Abschnitt des Gesamttest-Berichts.
 </p>
 
 <hr>
@@ -1060,6 +1086,8 @@ data center: Tesla T4, Ampere A2/A10/A16/A30/A40/A100, Ada L4/L40/L40S,
 RTX 2000–6000 Ada, Hopper H100/H200, Blackwell B200/RTX PRO.
 DCGM diagnostics target data-center GPUs; on workstation cards only parts run,
 GeForce cards are not supported.
+If <code>dcgmi</code> is not installed, the “DCGM diagnostics” section is hidden
+(as is the DCGM option in the test plan).
 Not supported: Pascal/Volta (GTX 10xx, P4, P40, P100, V100) and older.
 The complete installation guide is available at
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
@@ -1081,7 +1109,14 @@ result in “FAILED”. <b>Integrated GPUs</b> use at most 25 % of the shared me
 so the system stays usable.
 Live monitoring reads sysfs without additional tools: temperature, power, load,
 GPU/memory clock, VRAM and fan (depending on the driver: amdgpu provides almost
-everything, i915/xe mainly the clock).
+everything, i915/xe mainly the clock; for integrated Intel GPUs also the CPU
+package temperature). For integrated Intel GPUs the app derives the load from
+<code>/proc/*/fdinfo</code> (like <code>intel_gpu_top</code>/<code>gputop</code>;
+without root only for processes of the current user, including the stress test)
+and the power from the RAPL “uncore” counter (suffix “(RAPL)”). These counters are
+usually readable by root only (“power needs root”); in the HPE Live ISO a udev rule
+makes them readable. Clock as current/maximum, 0 MHz when idle. The first line
+shows the time of the last update.
 Server graphics chips (Matrox, ASPEED) have no Vulkan driver and are only listed
 as “without Vulkan”. For NVIDIA cards with the proprietary driver, the “NVIDIA GPU”
 tab additionally offers the CUDA stress test and DCGM diagnostics.
@@ -1112,7 +1147,11 @@ password is requested <b>only once right at the start</b>; the plan then runs
 unattended. Cancelling the prompt does not start the plan.
 The test plan runs the selected non-destructive checks sequentially. CPU and RAM
 duration, the memory share, network target, and optional NVIDIA/DCGM checks can
-be configured before starting. “Stop on first failure” ends the plan after a
+be configured before starting. Optionally the <b>GPU stress test (Vulkan)</b>
+runs after the NVIDIA steps with a configurable duration on all Vulkan GPUs (80 %
+of free graphics memory, at most 25 % of shared memory on integrated GPUs); without
+the Vulkan loader the option is disabled, without a Vulkan GPU the step is skipped.
+“Stop on first failure” ends the plan after a
 failed step. Manual cancellation stops the current process and saves all results
 collected up to that point.
 </p>
@@ -1147,6 +1186,18 @@ Memory modules are read by <code>dmidecode</code> with root privileges. The .deb
 members of the sudo group run exactly <code>dmidecode -t 1 -t 4 -t 16 -t 17</code> without a
 password; otherwise "Read memory modules with password" appears. "Copy to clipboard"
 returns everything as text, e.g. for tickets.
+</p>
+<p>
+Further components follow below (without root, from <code>/sys</code>, <code>lspci</code>,
+<code>ethtool</code>, <code>lsblk</code> and – if present – <code>nvidia-smi</code>):
+<b>PCIe links</b> of end devices with current and possible generation/width
+(possible = minimum of card and slot). <span style="color:#c62828">Red</span>: fewer lanes
+than possible – check card seating, riser or slot. <span style="color:#ef6c00">Orange</span>:
+lower generation – often normal at idle due to power saving (ASPM), check again under load.
+Also <b>network</b> (model, driver, firmware, MAC, state, speed), <b>graphics</b> (driver,
+VRAM, VBIOS), <b>storage controllers</b> (SATA/SAS/RAID/NVMe with firmware) and <b>disks</b>
+(model, size, HDD/SSD, transport, serial number, firmware, sector size). This information is
+also part of the system section of the full test report.
 </p>
 
 <hr>

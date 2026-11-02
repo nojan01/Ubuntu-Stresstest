@@ -69,7 +69,7 @@ def test_guard_fails_closed_on_collector_failure(tmp_path):
 
 def test_plan_hot_at_start_does_not_launch_load(monkeypatch, tmp_path):
     factory = monitoring.MonitorSession
-    monkeypatch.setattr(test_plan, "MonitorSession", lambda *a: factory(*a, collect=lambda: ({"temperature.cpu": 95}, []), journal=Journal()))
+    monkeypatch.setattr(test_plan, "MonitorSession", lambda *a: factory(*a, collect=lambda: ({"temperature.cpu": 105}, []), journal=Journal()))
     config = test_plan.TestPlanConfig(output_dir=tmp_path, monitoring_enabled=True, ram_enabled=False, nvme_enabled=False, nvidia_enabled=False)
     executor = test_plan.TestPlanExecutor(config)
     monkeypatch.setattr(executor, "_run_cpu", lambda: (_ for _ in ()).throw(AssertionError("must not start")))
@@ -89,3 +89,14 @@ def test_plan_stops_active_runner_on_critical_signal(tmp_path):
     result = executor._run_process_step("cpu", runner)
     assert stopped == [{"aborted": True}]
     assert result.status == "failed"
+
+
+def test_acpi_fan_metrics_reports_state_percent(tmp_path):
+    for name, kind, cur, maximum in (("cooling_device3", "Processor", 2, 10), ("cooling_device4", "Fan", 1, 1),
+                                     ("cooling_device5", "Fan", 1, 4), ("cooling_device6", "Fan", 0, 0)):
+        device = tmp_path / name
+        device.mkdir()
+        (device / "type").write_text(kind + "\n")
+        (device / "cur_state").write_text(f"{cur}\n")
+        (device / "max_state").write_text(f"{maximum}\n")
+    assert monitoring.acpi_fan_metrics(tmp_path) == {"fan.acpi.4.percent": 100, "fan.acpi.5.percent": 25}

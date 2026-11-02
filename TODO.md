@@ -15,6 +15,31 @@ entspricht der derzeitigen Priorität.
 - Wiederholte Ping-/iperf3-Läufe im Gesamttestplan mit kompakter Zusammenfassung und CSV – umgesetzt in 0.2.29.
 - Frei konfigurierbare Netzwerk-Grenzwerte auch im Gesamttestplan – umgesetzt in 0.2.30.
 - Übersicht der Netzwerkadapter, Link-Geschwindigkeit und Treiber – umgesetzt
+- Offen (nach Feature-Freeze): ethtool-Selbsttest und Fehlerzähler
+  - `ethtool -t <iface>` (Online-Selbsttest des Treibers: Register, EEPROM,
+    Interrupt, Loopback, Link; `offline` gründlicher, trennt kurz den Link) –
+    unterstützt von Broadcom (tg3/bnx2/bnxt), Intel (igb/ixgbe/i40e/ice), Mellanox
+  - `ethtool -S` Fehlerzähler (CRC, rx/tx errors, dropped) vor und nach dem
+    iperf3-/Ping-Lauf vergleichen und Zuwächse als Fehler werten
+  - `ethtool -m` für SFP/DAC-Module (Temperatur, Rx/Tx-Leistung, Herstellerdaten)
+  - Herstellertools (Broadcom bnxtnvm/bnxtmt, Intel nvmupdate, Mellanox MFT
+    `mlxlink`) sind lizenz-/NDA-gebunden bzw. nur für Firmware – nicht ins ISO;
+    allenfalls Mellanox MFT (frei als .deb) optional
+- Offen (nach Feature-Freeze): Fibre-Channel-HBAs (QLogic/Marvell qla2xxx,
+  Emulex/Broadcom lpfc, HPE-gebrandet)
+  - Übersicht aus `/sys/class/fc_host/hostN/`: `port_state`, `speed`,
+    `port_name` (WWPN), `fabric_name`, Firmware aus
+    `/sys/class/scsi_host/hostN/fw_version` (vgl. `systool -c fc_host -v`)
+  - Fehlerzähler `/sys/class/fc_host/hostN/statistics/` (`link_failure_count`,
+    `loss_of_sync_count`, `loss_of_signal_count`, `invalid_crc_count`,
+    `error_frames`) vor/nach einem Lesetest vergleichen; Zuwächse als Fehler
+  - Lasttest nur mit sichtbarer LUN: fio lesend auf `/dev/mapper/mpath*` bzw.
+    `/dev/sdX` (wie Disk-Gerätetest), Pfadstatus per `multipath -ll`
+  - Ohne Fabric: Loopback-Stecker am SFP → `port_state` Online, Zähler ruhig
+  - Herstellertools (frei ladbar, proprietär, nicht ins Repo): QLogic
+    `qaucli` (hp-qaucli) und Emulex `hbacmd` (hp-elxocmcore) mit
+    `LoopBackTest`, SFP-Daten (`GetXcvrData`); allenfalls optional beim
+    ISO-Build einbinden wie MemTest86
 
 ### NVMe-Test und -Diagnose
 

@@ -89,7 +89,7 @@ class TestPlanConfig:
     vulkan_memory_percent: int = 80
     monitoring_enabled: bool = False
     monitoring_interval: int = 10
-    temperature_limit: int = 90
+    temperature_limit: int = 100
     sensor_temperature_limits: tuple[tuple[str, float], ...] = ()
 
 

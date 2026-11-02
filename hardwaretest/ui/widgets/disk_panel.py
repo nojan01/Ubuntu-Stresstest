@@ -52,6 +52,32 @@ from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.system_events import system_events
 
 
+RAM_BACKED_FSTYPES = frozenset({"tmpfs", "ramfs", "overlay", "squashfs", "devtmpfs"})
+
+
+def mount_fstype(path: Path, mounts_file: str = "/proc/self/mounts") -> str:
+	"""Dateisystemtyp des Mounts, der ``path`` enthält (längster passender Mountpoint)."""
+	try:
+		target = str(path.resolve())
+		lines = Path(mounts_file).read_text().splitlines()
+	except OSError:
+		return ""
+	best, best_len = "", -1
+	for line in lines:
+		fields = line.split()
+		if len(fields) < 3:
+			continue
+		mountpoint = fields[1].replace("\\040", " ")
+		if (target == mountpoint or target.startswith(mountpoint.rstrip("/") + "/")) and len(mountpoint) > best_len:
+			best, best_len = fields[2], len(mountpoint)
+	return best
+
+
+def is_ram_backed(path: Path, mounts_file: str = "/proc/self/mounts") -> bool:
+	"""Live-System (ISO): Root ist overlay/tmpfs im RAM – ein Dateitest dort prüft keinen Datenträger."""
+	return mount_fstype(path, mounts_file) in RAM_BACKED_FSTYPES
+
+
 @dataclass
 class BlockDevice:
 	name: str
@@ -454,7 +480,7 @@ class FileDiskPanel(QWidget):
 		self.mce_btn = QPushButton("MCE-Logs")
 
 		safety_label = QLabel(
-			"fio erstellt/löscht ausschließlich die angegebene Datei. Keine bestehenden Daten werden verändert."
+			"fio erstellt/löscht ausschließlich die angegebene Datei. Bestehende Daten werden nicht verändert."
 		)
 		safety_label.setWordWrap(True)
 
@@ -551,6 +577,12 @@ class FileDiskPanel(QWidget):
 			return
 		if path.exists():
 			self._append_log("Die Testdatei existiert bereits; bitte einen neuen Dateinamen wählen.")
+			return
+		if is_ram_backed(path.parent):
+			self._append_log(language_manager.tr(
+				"Der Zielordner liegt im Arbeitsspeicher (Live-System: {fstype}). Der Test würde nur den RAM messen. "
+				"Bitte einen eingehängten Datenträger wählen, z. B. unter /media oder /mnt."
+			).format(fstype=mount_fstype(path.parent)))
 			return
 		size_mb = self.file_size_mb.value()
 		required_bytes = size_mb * 1024 * 1024
@@ -1209,6 +1241,20 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		message.setDefaultButton(QMessageBox.StandardButton.No)
 		if message.exec() != QMessageBox.StandardButton.Yes:
 			self._append_log("Destruktiver Test abgebrochen – keine Bestätigung.")
+			return
+		# Zweite, unabhängige Rückfrage: Datenverlust ist nicht rückgängig zu machen.
+		confirm = QMessageBox(self)
+		confirm.setIcon(QMessageBox.Critical)
+		confirm.setWindowTitle(language_manager.tr("Wirklich überschreiben?"))
+		confirm.setText(language_manager.tr(
+			"Alle Daten auf {count} Datenträger(n) gehen unwiderruflich verloren:\n{devices}\n\n"
+			"Wollen Sie das wirklich?"
+		).format(count=len(selected), devices="\n".join(dev.path for dev in selected)))
+		confirm.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+		confirm.setDefaultButton(QMessageBox.StandardButton.Cancel)
+		confirm.button(QMessageBox.StandardButton.Yes).setText(language_manager.tr("Ja, unwiderruflich überschreiben"))
+		if confirm.exec() != QMessageBox.StandardButton.Yes:
+			self._append_log("Destruktiver Test abgebrochen – zweite Bestätigung verweigert.")
 			return
 		try:
 			self._verify_selected_devices(selected)

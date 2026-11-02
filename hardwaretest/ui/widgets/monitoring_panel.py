@@ -123,7 +123,7 @@ class MonitoringPanel(QWidget):
         self.duration.setSuffix(" h")
         self.limit = QSpinBox()
         self.limit.setRange(30, 120)
-        self.limit.setValue(90)
+        self.limit.setValue(100)
         self.limit.setSuffix(" °C")
         self.directory = QLineEdit(str(Path.home() / "Hardwaretest-Berichte"))
         for widget, de, en in (

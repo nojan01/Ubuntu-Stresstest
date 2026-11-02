@@ -58,6 +58,11 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._tabs = QTabWidget()
+        # Scroll-Pfeile der Tableiste etwas breiter – bei iLO-Auflösung sonst schwer zu treffen.
+        self._tabs.setStyleSheet(
+            "QTabBar QToolButton { min-width: 20px; }"
+            "QTabBar::scroller { width: 44px; }"
+        )
         screen = QGuiApplication.primaryScreen()
         available_geom = screen.availableGeometry() if screen else None
         compact_mode = self._should_use_compact_mode(available_geom)

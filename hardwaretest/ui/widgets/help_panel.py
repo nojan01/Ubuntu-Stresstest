@@ -39,10 +39,20 @@ _HELP_DE = """\
 
 <h2>Übersicht</h2>
 <p>
-Diese Anwendung führt verschiedene Hardware-Stresstests durch, um die
-Stabilität von CPU, RAM, Speichercontroller und Festplatten zu prüfen.
+Diese Anwendung prüft die Stabilität von CPU, RAM, Speichercontroller,
+Datenträgern (SATA/SAS/NVMe), Grafikkarten und Netzwerk, liest Dateisysteme,
+ZFS-Pools und HPE-ProLiant-Daten aus und überwacht das System langfristig.
 Alle Tests laufen unter Linux und nutzen bewährte Werkzeuge wie
-<b>stress-ng</b>, <b>Prime95 (mprime)</b>, <b>OpenDCDiag</b> und <b>fio</b>.
+<b>stress-ng</b>, <b>Prime95 (mprime)</b>, <b>OpenDCDiag</b>, <b>fio</b>,
+<b>nvme-cli</b>, <b>smartctl</b>, <b>ipmitool</b> und <b>iperf3</b>.
+</p>
+<p>
+<b>Welcher Tab wofür?</b> Einzeltests (stress-ng, Prime95, OpenDCDiag,
+Speichercontroller, RAM-Fuelltest, Disk, NVMe, GPU, Netzwerk) für gezielte
+Fehlersuche; <b>Gesamttest</b> für eine Abnahme mit Bericht; <b>Dateisystem</b>,
+<b>ProLiant Info</b>, <b>System</b> und <b>Informationen</b> lesen nur aus;
+<b>Langzeitmonitoring</b> begleitet Tests oder den Dauerbetrieb. Alle Tests sind
+nicht-destruktiv – mit Ausnahme von <b>Disk (Destruktiv)</b>.
 </p>
 
 <h2>Allgemeine Bedienhinweise</h2>
@@ -82,6 +92,17 @@ Alle Tests laufen unter Linux und nutzen bewährte Werkzeuge wie
       Hinweis: Korrigierte CPU-Fehler meldet der Kernel teils erst nach bis zu
       5 Minuten; nach sehr kurzen Tests fehlen sie dann noch. Alle Einträge:
       <code>sudo ras-mc-ctl --errors</code>.</li>
+  <li><b>Hilfsknöpfe:</b> „Systemwerte aktualisieren“ liest freien RAM, Swap und
+      CPU-Anzahl neu ein. „btop starten“ öffnet den Systemmonitor, „Kernel-Logs“
+      und „MCE-Logs“ zeigen <code>dmesg</code> bzw. Machine-Check-Einträge – nach
+      jedem Test einmal ansehen.</li>
+  <li><b>Root-Rechte:</b> Gerätetests, NVMe, Dateisystem, ProLiant Info und Teile
+      von OpenDCDiag/System fragen das Administratorpasswort ab. Auf dem Live-ISO
+      entfällt die Abfrage meist; im .deb erlauben sudoers-Regeln einzelne Befehle
+      ohne Passwort.</li>
+  <li><b>Gleichzeitigkeit:</b> Immer nur einen Stresstest laufen lassen – parallele
+      Tests verfälschen Temperaturen, Durchsatz und die Fehlerzuordnung. Nur das
+      Langzeitmonitoring ist als Begleiter gedacht.</li>
 </ul>
 
 <hr>
@@ -93,17 +114,23 @@ Flexibler Stresstest für CPU und RAM mit verschiedenen Modi:
 <table>
   <tr><th>Modus</th><th>Beschreibung</th><th>Einsatz</th></tr>
   <tr>
-    <td><b>CPU-Last</b></td>
+    <td><b>CPU-Last (maximale Hitze)</b></td>
     <td>Maximale CPU-Belastung (Matrix, alle Methoden)</td>
     <td>CPU-Stabilität, Kühlung testen</td>
   </tr>
   <tr>
-    <td><b>RAM-Test</b></td>
+    <td><b>CPU-Mischlast mit Ergebnisprüfung</b></td>
+    <td>Ganzzahl, Gleitkomma, FMA, Vektor, Matrix, L1-Cache und Kompression
+        gleichzeitig, jede Lastart mit <code>--verify</code></td>
+    <td>Rechenfehler einzelner Einheiten finden</td>
+  </tr>
+  <tr>
+    <td><b>RAM-Test (Fehler finden)</b></td>
     <td>Aggressiver Speichertest mit <code>--verify</code></td>
     <td>RAM-Fehler finden</td>
   </tr>
   <tr>
-    <td><b>RAM-Bandbreite</b></td>
+    <td><b>RAM-Bandbreite (Durchsatz)</b></td>
     <td>memcpy + stream Workloads</td>
     <td>Speicherdurchsatz messen</td>
   </tr>
@@ -119,10 +146,16 @@ Flexibler Stresstest für CPU und RAM mit verschiedenen Modi:
   </tr>
 </table>
 <p>
-<b>RAM (MB):</b> Speichermenge pro Worker. Bei RAM-Tests sollte möglichst
-der gesamte freie Speicher aufgeteilt werden.<br>
-<b>memtest86+:</b> Für den gründlichsten RAM-Test empfehlen wir zusätzlich
-memtest86+, das außerhalb des Betriebssystems läuft.
+<b>RAM (MB):</b> Gesamte Speichermenge für den Test; sie wird gleichmäßig auf die
+Worker verteilt. Bei RAM-Tests möglichst den gesamten freien Speicher nutzen, aber
+Reserve für OS und GUI lassen (ohne Swap friert das System sonst ein).<br>
+<b>CPU-Worker / GUI-Reserve:</b> siehe „Allgemeine Bedienhinweise“. Die Reserve hält
+die Oberfläche bedienbar; für maximale Hitze Reserve 1, für lange Läufe 2.<br>
+<b>Swap deaktivieren / aktivieren:</b> schaltet Swap systemweit ab bzw. wieder an
+(Root). „memtest86+ pruefen“ zeigt, ob memtest86+ im Boot-Menü verfügbar ist.<br>
+<b>Sinnvoll:</b> schneller Erst-Check (10–30 Min.) und Kühlungstest; RAM-Test als
+Ergänzung zum RAM-Fuelltest. <b>Nicht geeignet</b> als alleiniger RAM-Nachweis –
+dafür RAM-Fuelltest und memtest86+ (außerhalb des Betriebssystems) verwenden.
 </p>
 
 <hr>
@@ -157,8 +190,14 @@ Nutzt <b>mprime</b> (die Linux-Version von Prime95) für Torture-Tests:
 <b>Binary-Pfad:</b> Standard ist <code>vendor/prime95/mprime</code> (mitgeliefert).
 Fallback: <code>~/Prime95/mprime</code> oder <code>mprime</code> im PATH. Kann angepasst werden.<br>
 <b>Minuten pro FFT:</b> Wie lange jeder FFT-Größenbereich getestet wird (Standard: 15 Min.).<br>
-<b>Direktmodus:</b> Nutzt die bestehende <code>prime.txt</code>/<code>local.txt</code>
-ohne sie zu überschreiben.
+<b>Worker Threads:</b> Standard = logische CPUs minus GUI-Reserve.<br>
+<b>Direktmodus</b> („Nur mprime -t“): Nutzt die bestehende <code>prime.txt</code>/<code>local.txt</code>
+ohne sie zu überschreiben – nur für eigene, handgepflegte Konfigurationen.<br>
+<b>Worauf achten:</b> Prime95 meldet Fehler erst nach vollständigen Durchläufen;
+unter 1 Stunde ist die Aussage schwach, 4+ Stunden Blend gelten als belastbar.
+Kühlung beobachten – Small FFTs treiben die CPU an die Temperaturgrenze.
+<b>Sinnvoll</b> für CPU, Spannungsversorgung und Speicher-Timings;
+<b>nicht sinnvoll</b> für Datenträger oder GPU.
 </p>
 
 <hr>
@@ -173,8 +212,11 @@ und vergleicht. Läuft auf Intel und AMD.
 <ul>
   <li><b>Ergebnis:</b> Fehlerhafte Kerne werden mit Sockel, Kern und logischer CPU genannt,
       z. B. <code>S1 Core 3 (CPU 35)</code>. Ein einziger Fehler bedeutet: Prozessor tauschen.</li>
-  <li><b>CPU-Auswahl:</b> leer = alle CPUs; sonst z. B. <code>0-7,16</code> oder
-      <code>p1</code> (Sockel 1).</li>
+  <li><b>CPU-Auswahl:</b> „Alle CPUs“ (Standard), „Nur Sockel N“ je erkanntem Sockel
+      oder „Benutzerdefiniert …“ – dann wird das Textfeld frei für die
+      <code>--cpuset</code>-Schreibweise von OpenDCDiag: logische CPUs/Threads, z. B.
+      <code>0-7,16</code>; <code>p1</code> = Sockel 1; <code>c3</code> = Kern 3.
+      Sinnvoll, um einen verdächtigen Sockel oder Kern gezielt nachzutesten.</li>
   <li><b>Variante:</b> Auf CPUs ohne AVX2 (z. B. ProLiant Gen8) wird automatisch die
       generische Variante gewählt.</li>
   <li><b>Rechte:</b> Ohne root werden Tests mit MSR-Zugriff und In-Field Scan übersprungen
@@ -182,6 +224,9 @@ und vergleicht. Läuft auf Intel und AMD.
       Gruppe sudo, OpenDCDiag ohne Passwort als root zu starten
       (/etc/sudoers.d/hardwaretest-opendcdiag); der Tab nutzt das automatisch.</li>
   <li><b>Dauer:</b> 10 Minuten als Schnelltest, für Abnahmen 1 Stunde oder mehr.</li>
+  <li><b>Worauf achten:</b> OpenDCDiag ergänzt Prime95/stress-ng, ersetzt sie aber nicht –
+      es findet Rechenfehler je Kern, keine Kühlungs- oder RAM-Probleme. Ein Fehler ist
+      reproduzierbar? Dann mit „Nur Sockel N“ eingrenzen und den Prozessor tauschen.</li>
 </ul>
 
 <hr>
@@ -265,6 +310,12 @@ Kommunikation zwischen CPU-Kernen unter Druck setzen.
   <li><b>Operationen:</b> Maximale Anzahl Durchläufe pro Stressor.
       „unbegrenzt" (0) = läuft bis die Zeit abläuft.</li>
   <li><b>Dauer:</b> Gesamtlaufzeit. Für gründliche Tests mind. 30 Min., besser 2+ Stunden.</li>
+  <li><b>Worauf achten:</b> Der Test erzeugt wenig Hitze, aber hohe Bus-Last;
+      Fehler zeigen sich meist als Machine Check oder EDAC-Eintrag, nicht als Absturz –
+      deshalb nach dem Lauf „MCE-Logs“ und die EDAC-Anzeige prüfen.
+      <b>Sinnvoll</b> bei Mehrsockel-Systemen, nach RAM-/CPU-Tausch und bei
+      sporadischen Abstürzen ohne Befund in Prime95; <b>wenig sinnvoll</b> auf
+      Einzelsockel-Systemen als Erst-Check – dort reichen stress-ng und RAM-Fuelltest.</li>
 </ul>
 
 <hr>
@@ -284,7 +335,7 @@ Zwei Kerne bleiben für OS/GUI frei; welche das sind, wechselt jeden Zyklus, sod
 gesperrt, damit wirklich RAM und nicht Swap geprüft wird.</li>
 <li><b>Verifizieren:</b> durch <i>andere</i> CPUs als beim Schreiben (auf
 Mehrsockel-Systemen damit auch über den anderen Speichercontroller).</li>
-<li><b>Moving Inversion</b> (nur Vollmodus, wenn die Restzeit reicht): erneut
+<li><b>Moving Inversion</b> (wenn die Restzeit reicht): erneut
 lesen und vergleichen, invertiert schreiben, das Invertierte prüfen. Findet Bits,
 die mit der Zeit kippen, und Kopplungen beim Umschalten aller Bits.</li>
 <li><b>Freigeben</b> und kurze Pause (Speicherrückgang in btop sichtbar). Der Testspeicher
@@ -300,9 +351,22 @@ protokolliert die Wartezeit.</li>
 <li>Walking-One/Zero je Byte – Bit-Verwechslungen.</li>
 <li>Zufällige 64-Bit-Wörter und Zufallsdaten (wechseln jede Runde).</li>
 <li>Address-in-Data und invertiert – Fehler der Adressdecodierung.</li>
-<li><b>Datenleitungstest</b> (Vollmodus, einmal je Musterrunde): 64-Bit
+<li><b>Datenleitungstest</b> (einmal je Musterrunde): 64-Bit
 Walking-One/Zero über 128 MB. Meldet die betroffenen Datenbits.</li>
-<li>Schnellmodus: nur 0xAA, 0x55, Address und Zufall.</li>
+</ul>
+
+<h3>Optionen</h3>
+<ul>
+<li><b>Speicher:</b> „automatisch“ (0) = gesamter verfügbarer RAM abzüglich Reserve;
+ein fester Wert belegt genau diese Menge je Zyklus.</li>
+<li><b>Reserve (OS/GUI):</b> bleibt bei automatischer Speichermenge frei
+(Standard 512 MB; der Test erzwingt mindestens 1 % des RAM).</li>
+<li><b>Blockgroesse:</b> Größe der Einzelblöcke (Standard 256 MB). Kleinere Blöcke
+helfen bei fragmentiertem Speicher, größere sind schneller.</li>
+<li><b>Pause je Zyklus:</b> Wartezeit mit freigegebenem Speicher (Standard 3 s),
+sodass der Rückgang z. B. in btop sichtbar ist. 0 = sofort weiter.</li>
+<li><b>Swap deaktivieren</b> vor dem Start, sonst wird Testspeicher ausgelagert
+und die Aussage verwässert.</li>
 </ul>
 
 <h3>Schutz des Systems</h3>
@@ -353,33 +417,49 @@ mit SmartArray RAID-Controllern, SAS-/NVMe-Laufwerken.
 
 <h3>Datei-Test (sicher)</h3>
 <ul>
-  <li>Liest/schreibt in einer temporären Datei auf einem beliebigen Dateisystem.</li>
+  <li>Liest/schreibt in einer temporären Datei auf einem beliebigen Dateisystem
+      („Testdatei“ über „Pfad wählen“ festlegen).</li>
   <li>Kein Root-Zugriff nötig – sicher auf Produktivsystemen.</li>
   <li>Workload wählbar: <code>read</code>, <code>write</code>, <code>randread</code>,
       <code>randwrite</code>, <code>readwrite</code>, <code>randrw</code>.</li>
+  <li><b>Blockgröße</b> (Standard 128k; 4k für IOPS, 1M für Durchsatz), <b>Dateigröße</b>
+      (Standard 4096 MB – deutlich größer als RAM und Laufwerks-Cache wählen, sonst wird nur
+      der Cache gemessen), <b>iodepth</b> (32) und <b>Jobs</b> (parallele fio-Prozesse).</li>
   <li>Bei Schreib-Workloads wird automatisch <b>CRC32c-Verifikation</b> aktiviert
       (<code>--verify=crc32c --do_verify=1 --verify_fatal=1</code>).</li>
-  <li>Geeignet für: Dateisystem-Integritätstests, SSD-Dauerlauf, IOPS-Benchmarks.</li>
+  <li><span class="warn">Live-ISO:</span> Liegt der Zielordner im Arbeitsspeicher
+      (overlay, tmpfs, ramfs, squashfs), verweigert der Test den Start – er würde nur den
+      RAM messen. Einen eingehängten Datenträger unter <code>/media</code> oder
+      <code>/mnt</code> wählen.</li>
+  <li>Geeignet für: Dateisystem-Integritätstests, SSD-Dauerlauf, IOPS-Benchmarks auf
+      Laufwerken mit Daten. <b>Nicht geeignet</b>, um defekte Sektoren zu finden – dafür
+      den Geräte-Test nutzen, der jeden Block liest.</li>
 </ul>
 
 <h3>Geräte-Test (nur lesen)</h3>
 <ul>
-  <li>Liest alle Blöcke direkt vom Blockgerät via <code>fio</code> mit Root-Rechten (sudo-Passwortdialog).</li>
+  <li>„Rohgeräte-Read starten“ liest alle Blöcke direkt vom Blockgerät via <code>fio</code>
+      mit Root-Rechten (sudo-Passwortdialog).</li>
   <li>Erkennt defekte Sektoren, SCSI-Fehler und Medium-Errors – besonders wichtig
       nach RAID-Rebuilds auf HPE SmartArray.</li>
   <li>Nutzt <code>continue_on_error=read</code>: Liest alle Blöcke weiter, auch
       wenn einzelne fehlschlagen → komplettes Fehlerbild.</li>
-  <li>Keine Datenänderung – sicher auf bestehenden Systemen.</li>
+  <li>Keine Datenänderung – sicher auf bestehenden Systemen. Eingehängte Laufwerke
+      bleiben auswählbar. Es gibt keine Zeitvorgabe: Der Lauf endet, wenn alle Blöcke
+      gelesen sind (mehrere TB = Stunden); Fortschritt und Durchsatz werden angezeigt.</li>
 </ul>
 
 <h3>Destruktiver Test <span class="bad">(⚠ DATENVERLUST!)</span></h3>
 <ul>
-  <li>Überschreibt <b>alle Daten</b> auf den gewählten Geräten und verifiziert
-      anschließend per CRC32c-Rücklesen.</li>
+  <li>„DESTRUKTIVEN Test starten“ überschreibt <b>alle Daten</b> auf den gewählten
+      Geräten und verifiziert anschließend per CRC32c-Rücklesen.</li>
   <li><code>verify_backlog=16384</code> / <code>verify_backlog_batch=4096</code> –
       optimiert für große RAID-Volumes (mehrere TB).</li>
-  <li>Mehrere Durchläufe einstellbar (1–10) für intensiven Dauertest.</li>
-  <li><span class="bad">Nur für leere/neue Datenträger verwenden!</span></li>
+  <li>„Schreib-/Lesedurchläufe“ 1–10 für intensiven Dauertest.</li>
+  <li><span class="bad">Nur für leere/neue Datenträger verwenden!</span> Partitionstabelle
+      und Dateisysteme sind danach weg. Sinnvoll bei Neuware, vor Inbetriebnahme von
+      RAID-Mitgliedern und zum Nachweis bei Reklamationen; bei SSDs kostet jeder
+      Durchlauf Schreibvolumen (TBW).</li>
 </ul>
 
 <h3>Datenträgerauswahl &amp; Aushängen</h3>
@@ -433,6 +513,37 @@ SCSI-Errors oder HPE RAID-Fehlern.
 
 <hr>
 
+<h2>Tab: NVMe</h2>
+<p>
+Diagnose und nicht-destruktive Tests für NVMe-Laufwerke mit <code>nvme-cli</code>
+(Root-Rechte, einmalige Passwortabfrage) und <code>fio</code>.
+</p>
+<ul>
+  <li><b>NVMe-Laufwerke suchen</b> listet alle Namespaces; das Laufwerk für
+      Diagnose/Selbsttest wird in der Auswahlliste gewählt.</li>
+  <li><b>SMART-/Gesundheitsdaten lesen:</b> kritische Warnungen, Temperatur, verbrauchte
+      Lebensdauer (%), Medien- und Fehlerprotokoll-Einträge, gelesene/geschriebene Daten,
+      Einschaltzyklen und unerwartete Stromausfälle. <span class="warn">Achten auf:</span>
+      <i>critical warning</i> ≠ 0, <i>percentage used</i> ≥ 90 %, steigende
+      <i>media errors</i> oder <i>unsafe shutdowns</i>.</li>
+  <li><b>Selbsttest:</b> „Kurzer NVMe-Selbsttest“ (wenige Minuten) oder „Erweiterter
+      NVMe-Selbsttest“ (je nach Laufwerk bis zu Stunden) laufen in der Firmware des
+      Laufwerks; der Fortschritt wird angezeigt. „Selbsttest-Protokoll lesen“ zeigt die
+      letzten Ergebnisse. Während eines Selbsttests ist kein Lesetest möglich.</li>
+  <li><b>NVMe-Lesetests</b> (nur lesend, ein oder mehrere Ziellaufwerke): der
+      <b>Lese-Benchmark</b> misst Durchsatz sequenziell oder zufällig über die eingestellte
+      Dauer (Standard 30 s); der <b>vollständige Lese-Test</b> liest jeden Block aller
+      gewählten Namespaces parallel – findet unlesbare Blöcke, kann aber viele Stunden
+      dauern. „Lese-Test stoppen“ bricht ab.</li>
+  <li><b>Sinnvoll:</b> SMART vor und nach jedem Stresstest vergleichen; erweiterter
+      Selbsttest und vollständiger Lesetest bei Verdacht auf Lesefehler oder vor
+      Inbetriebnahme. <b>Nicht sinnvoll:</b> Benchmarks auf einem Laufwerk, das gerade
+      vom System genutzt wird – die Werte sind dann nicht vergleichbar. Hohe Temperaturen
+      (> 70 °C) während des Lesetests deuten auf fehlende Kühlung des M.2-Steckplatzes.</li>
+</ul>
+
+<hr>
+
 <h2>Tab: Netzwerk</h2>
 <p>
 Der Tab zeigt alle erkannten Netzwerkadapter mit Verbindungsstatus, Treiber,
@@ -444,7 +555,15 @@ ausgewählt, bindet Hardwaretest Ping und iperf3 gezielt an diese Schnittstelle.
   <li><b>Ping</b> misst Paketverlust, minimale/mittlere/maximale Latenz und Jitter.</li>
   <li><b>iperf3</b> misst TCP-Durchsatz und Retransmits; auf dem Ziel muss
       <code>iperf3 -s</code> laufen.</li>
-  <li>Grenzwerte bestimmen unabhängig vom Programm-Exitcode, ob der Test bestanden ist.</li>
+  <li>Grenzwerte bestimmen unabhängig vom Programm-Exitcode, ob der Test bestanden ist
+      (Vorgaben: Paketverlust 0 %, mittlere Latenz 100 ms, Jitter 20 ms, Mindestdurchsatz
+      0 = aus). Null-Grenzwerte außer dem Durchsatz sind strikt.</li>
+  <li><b>Worauf achten:</b> Das Ziel muss im selben Netz erreichbar sein und Ping
+      zulassen; ohne laufenden <code>iperf3 -s</code> schlägt der Durchsatztest fehl –
+      das ist kein Hardwarefehler. Für aussagekräftige Durchsätze ein Ziel mit gleicher
+      oder höherer Linkgeschwindigkeit wählen. „Netzwerkadapter aktualisieren“ nach dem
+      Umstecken von Kabeln. <b>Sinnvoll</b> für Linkstabilität, Kabel/Transceiver und
+      Treiberprobleme; <b>nicht sinnvoll</b> als Messung über Internet oder WLAN.</li>
 </ul>
 
 <hr>
@@ -479,6 +598,18 @@ Nicht unterstützt: Pascal/Volta (GTX 10xx, P4, P40, P100, V100) und älter.
 Die vollständige Installationsanleitung liegt unter
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
 </p>
+<p>
+<b>Bedienung:</b> „NVIDIA-GPUs suchen“ erstellt das Inventar, „Linux-Basisprüfung“
+prüft ohne Treiberzwang PCIe-Geräte, gebundene Treiber, Kernelmodule und Geräteknoten
+(sinnvoll, wenn <code>nvidia-smi</code> fehlt). GPUs für Tests per Häkchen wählen.
+<b>GPU-Lasttest:</b> Dauer (Standard 10 min) und „Anteil des freien VRAM“ (80 %) –
+bei Karten, die gleichzeitig den Desktop anzeigen, eher 50–60 % wählen.
+<b>Worauf achten:</b> Taktabfall bei steigender Temperatur deutet auf Throttling
+(Kühlung/Lüfterkurve), Fehler im VRAM-Muster auf defekten Speicher, Abbrüche mit
+Xid-Fehlern in den Kernel-Logs auf Treiber-/Stromversorgungsprobleme. Für eine
+Abnahme von Rechenzentrums-GPUs DCGM-Stufe 3 oder 4 verwenden (Stunden); Stufe 1
+ist nur ein Bereitschaftstest.
+</p>
 
 <hr>
 
@@ -508,57 +639,87 @@ Server-Grafikchips (Matrox, ASPEED) haben keinen Vulkan-Treiber und erscheinen
 nur als „ohne Vulkan“. Für NVIDIA-Karten mit proprietärem Treiber bietet der Tab
 „NVIDIA GPU“ zusätzlich den CUDA-Lasttest und DCGM-Diagnosen.
 </p>
+<p>
+<b>Bedienung:</b> „GPUs suchen“, gewünschte Karten ankreuzen, Dauer (Standard 10 min)
+und „Anteil des freien Grafikspeichers“ (80 %) einstellen, „GPU-Lasttest starten“.
+<b>Worauf achten:</b> Der Desktop kann während des Tests ruckeln – das ist normal.
+Bleibt die Anzeige länger stehen oder setzt der Treiber zurück (amdgpu/i915-Meldungen
+in den Kernel-Logs), gilt der Test als nicht bestanden, auch ohne Fehlerzähler.
+<b>Sinnvoll</b> für jede AMD-/Intel-GPU und als Treiber-unabhängiger Gegencheck bei
+NVIDIA; für 10 Minuten als Schnelltest, 1 Stunde für Stabilität. <b>Nicht sinnvoll</b>
+für Server-Grafikchips (Matrox/ASPEED) – dort gibt es nichts zu belasten.
+</p>
 
 <hr>
 
 <h2>Tab: Gesamttest</h2>
-<p><b>Netzwerk-Grenzwerte:</b> Maximalen Paketverlust, mittlere Latenz, Jitter und
-minimalen Durchsatz vor dem Start einstellen. Die Bewertung gilt für jeden
-Durchlauf. Mindestdurchsatz 0 = ausgeschaltet, andere Null-Grenzwerte sind strikt.
-Fehlende oder ungültige Messwerte sind kein bestandener Test. Ein Grenzwertfehler
-kann auch bei Exit-Code 0 auftreten und bleibt im Gesamtbericht erhalten.</p>
-<p><b>Langzeitläufe:</b> Unter „Durchläufe“ 1–10.000 Wiederholungen des gesamten
-Plans wählen. Für NVMe zuerst „NVMe-Auswahl aktualisieren“ und Laufwerke per
-Checkbox auswählen. „Vollständiger NVMe-Lesetest“ liest jeden ausgewählten
-Namespace parallel und ohne Schreibzugriffe; SMART wird vorher/nachher geprüft.
-Keine Dateisystemreparatur und kein ZFS-Import im Plan. Ein kompletter Lesetest
-kann Stunden dauern. Administratorabfragen sind pro privilegiertem Schritt möglich;
-dies ist keine Zusicherung eines völlig unbeaufsichtigten Laufs.</p>
-<p>Die CSV enthält eine Zeile je Teiltest/Durchlauf; Text und HTML bleiben kompakt
-mit Ergebniszählern, letztem Ergebnis und erstem Fehler. „Durchläufe vollständig“
-zählt auch vollständig ausgeführte fehlerhafte Durchläufe, nicht nur bestandene.
-Begleitmonitoring gilt über alle Durchläufe. Der Lesetest erkennt Lesefehler, prüft
-aber keine Dateiinhalte oder Dateisystem-Prüfsummen. Ausreichend freien Speicher
-und Kühlung vorsehen. Der Plan läuft nur, solange die App geöffnet bleibt.</p>
 <p>
-Der Gesamttest führt die markierten, nicht-destruktiven Prüfungen nacheinander aus.
-Benötigt der Plan Root-Rechte (NVMe-Gesundheit, NVMe-Lesetest, DCGM), wird das
-Passwort <b>nur einmal direkt beim Start</b> abgefragt; danach läuft der Plan
-unbeaufsichtigt. Wird die Abfrage abgebrochen, startet der Plan nicht.
-CPU- und RAM-Dauer, verwendeter RAM-Anteil, Netzwerkziel sowie optionale NVIDIA-
-und DCGM-Prüfungen lassen sich vor dem Start festlegen. Optional läuft nach
-den NVIDIA-Schritten der <b>GPU-Lasttest (Vulkan)</b> mit einstellbarer Dauer
-auf allen Vulkan-GPUs (80 % des freien Grafikspeichers, bei integrierten GPUs
-höchstens 25 % des gemeinsamen Speichers); ohne Vulkan-Loader ist die Option
-deaktiviert, ohne Vulkan-GPU wird der Schritt übersprungen. „Bei erstem Fehler
-abbrechen“ beendet den Ablauf nach einem fehlgeschlagenen Schritt. Ein manueller
-Abbruch stoppt den aktuell laufenden Prozess und speichert die bis dahin
-vorliegenden Ergebnisse.
+Der Gesamttest führt die markierten, nicht-destruktiven Prüfungen nacheinander aus
+und erstellt ein Klartext- und ein eigenständiges HTML-Protokoll. <b>Kein Teiltest ist
+vorausgewählt</b> – nur „Begleitendes Monitoring mit Sicherheitsabbruch“ ist aktiv.
+Vor dem Start also bewusst zusammenstellen, was geprüft werden soll.
 </p>
-<p>
-Nach jedem Lauf entstehen ein Klartext- und ein eigenständiges HTML-Protokoll mit
-Zeitstempeln, Zusammenfassungen und Detailausgaben. Das HTML-Protokoll kann im
-Browser geöffnet und über die Druckfunktion als PDF gespeichert werden.
-Ping und iperf3 werden darin ausschließlich als Summenwerte protokolliert;
-Einzelpakete und sekündliche iperf3-Intervalle werden nicht übernommen.
-Am Anfang beider Berichte steht der Abschnitt <b>System</b> (CPU, Mainboard/BIOS,
-Speichermodule wie im Tab „System“).
-</p>
-<p><b>CPU-Lastart:</b> „Volllast (maximale Hitze)“ belastet mit allen cpu-Methoden und
-Matrixrechnung. „Mischlast mit Ergebnisprüfung“ verteilt die Worker auf viele
+<p><b>CPU und Arbeitsspeicher:</b> CPU-Stresstest (stress-ng) mit Dauer und
+<b>CPU-Lastart</b>: „Volllast (maximale Hitze)“ belastet mit allen cpu-Methoden und
+Matrixrechnung, „Mischlast mit Ergebnisprüfung“ verteilt die Worker auf viele
 Rechenwerke (Ganzzahl, Matrix, FMA, Gleitkomma, Vektor, Trigonometrie, L1-Cache,
-zlib). Beide Lastarten prüfen die Rechenergebnisse (<code>--verify</code>); jedes falsche
-Ergebnis lässt den Schritt fehlschlagen und wird mit der Lastart benannt.</p>
+zlib). Beide prüfen die Rechenergebnisse (<code>--verify</code>); jedes falsche
+Ergebnis lässt den Schritt fehlschlagen. „OpenDCDiag – stille Datenfehler je Kern“
+(nur wenn installiert, Standard 5 min) und „RAM-Verifikation (stress-ng)“ mit
+„RAM-Anteil des verfügbaren Speichers“ (Standard 70 %; bei knappem RAM oder
+laufenden Diensten niedriger wählen).</p>
+<p><b>Datenträger und GPU:</b> „NVMe-Inventar und SMART-Gesundheit“, „Vollständiger
+NVMe-Lesetest“, „Vollständiger SATA/SAS/USB-Lesetest“ (liest gewählte
+<code>/dev/sd*</code> komplett, nur lesend, SMART vorher/nachher) und – falls
+<code>zpool</code> vorhanden – „ZFS-Scrub aller importierten Pools“. Zuerst
+„Laufwerke aktualisieren“ und die Laufwerke per Häkchen wählen („Alle auswählen“);
+ohne Auswahl prüft SMART alle NVMe, Lesetests brauchen eine Auswahl. Ein kompletter
+Lesetest kann Stunden dauern. „NVIDIA-Treiber und GPU-Inventar“, „NVIDIA-DCGM-Diagnose“
+mit Stufe 1–4 (nur mit installiertem DCGM) und „GPU-Lasttest (Vulkan) auf allen GPUs“
+mit einstellbarer Dauer (80 % des freien Grafikspeichers, bei integrierten GPUs
+höchstens 25 % des gemeinsamen Speichers; ohne Vulkan-Loader deaktiviert, ohne
+Vulkan-GPU übersprungen).</p>
+<p><b>Netzwerk:</b> Zielhost, Ping-Test (Paketanzahl) und iperf3-Durchsatztest (Dauer;
+auf dem Ziel muss <code>iperf3 -s</code> laufen). <b>Grenzwerte</b> für maximalen
+Paketverlust, mittlere Latenz, Jitter und minimalen Durchsatz gelten für jeden
+Durchlauf. Mindestdurchsatz 0 = ausgeschaltet, andere Null-Grenzwerte sind strikt.
+Fehlende oder ungültige Messwerte sind kein bestandener Test; ein Grenzwertfehler
+kann auch bei Exit-Code 0 auftreten und bleibt im Gesamtbericht erhalten.</p>
+<p><b>Ablauf und Protokoll:</b> Protokollordner (Standard „Hardwaretest-Berichte“ in
+Dokumente), „Bei erstem Fehler abbrechen“, <b>Durchläufe</b> 1–10.000 des gesamten
+Plans und optional eine <b>Endzeit</b>: Danach startet kein Teiltest mehr, ein
+laufender wird zu Ende geführt – praktisch für Nachtläufe bis zum Arbeitsbeginn.
+<b>Begleitendes Monitoring mit Sicherheitsabbruch</b> (Standard an) zeichnet
+Temperaturen, Lüfter, ECC und Kernel-Fehler über alle Durchläufe auf und bricht bei
+Überschreiten der Temperaturgrenze (Standard 100 °C, Messintervall 10 s) oder neuen
+unkorrigierbaren ECC-Fehlern ab; „Individuelle Temperaturgrenzen …“ setzt
+Grenzen je Sensor (geteilt mit dem Tab Langzeitmonitoring). Die 100 °C sind ein
+Startwert – für SSDs und viele Chipsätze deutlich niedriger ansetzen.</p>
+<p>
+Benötigt der Plan Root-Rechte (NVMe, Lesetests, OpenDCDiag, DCGM, ZFS), wird das
+Passwort <b>nur einmal direkt beim Start</b> abgefragt; danach läuft der Plan
+unbeaufsichtigt. Wird die Abfrage abgebrochen, startet der Plan nicht. Ein
+manueller Abbruch („Gesamttest abbrechen“) stoppt den aktuell laufenden Prozess und
+speichert die bis dahin vorliegenden Ergebnisse. Der Plan läuft nur, solange die App
+geöffnet bleibt. Keine Dateisystemreparatur und kein ZFS-Import im Plan.
+</p>
+<p>
+Nach jedem Lauf entstehen Klartext-, HTML- und CSV-Protokoll mit Zeitstempeln,
+Zusammenfassungen und Detailausgaben („HTML-Protokoll öffnen“; im Browser über die
+Druckfunktion als PDF speicherbar). Die CSV enthält eine Zeile je Teiltest/Durchlauf;
+Text und HTML bleiben kompakt mit Ergebniszählern, letztem Ergebnis und erstem Fehler.
+„Durchläufe vollständig“ zählt auch vollständig ausgeführte fehlerhafte Durchläufe.
+Ping und iperf3 werden nur als Summenwerte protokolliert. Am Anfang beider Berichte
+steht der Abschnitt <b>System</b> (CPU, Mainboard/BIOS, Speichermodule wie im Tab
+„System“); auf ProLiant-Servern kommt der Schritt <i>ProLiant / RAID-Controller</i>
+hinzu (siehe „ProLiant Info“).
+</p>
+<p><b>Sinnvoll:</b> Abnahme neuer oder reparierter Systeme mit Bericht, Nacht- und
+Wochenendläufe über mehrere Durchläufe, Reproduktion sporadischer Fehler.
+<b>Nicht sinnvoll:</b> gezielte Fehlersuche an einer einzelnen Komponente – dafür
+die Einzeltabs mit mehr Optionen verwenden. Der Lesetest erkennt Lesefehler, prüft
+aber keine Dateiinhalte oder Dateisystem-Prüfsummen. Ausreichend freien Speicher
+und Kühlung vorsehen.</p>
 
 <hr>
 
@@ -595,29 +756,39 @@ im System-Abschnitt des Gesamttest-Berichts.
 
 <h2>Tab: Informationen</h2>
 <p>
-Zeigt Systeminformationen an: CPU, RAM, Mainboard, installierte Hardware.
-Nutzt <code>lshw</code>, <code>fastfetch</code> und <code>lspci</code>.
+Kurzüberblick („Systemstatus“, <code>fastfetch</code>) und Schaltflächen für
+Rohausgaben: <code>lshw -class cpu/memory/storage/disk/raid/scsi/display/network</code>,
+<code>lspci -vvv</code> und <code>dmesg</code> (mit sudo, falls nicht root).
+„Systemdaten aktualisieren“ liest neu ein, „Systemreport (JSON)“ speichert alles
+gesammelt für Tickets oder den Vergleich vor/nach einem Umbau. Für eine aufbereitete
+Darstellung den Tab „System“ verwenden; dieser Tab ist für die Rohdaten gedacht.
 </p>
 
 <hr>
 
 <h2>Tipps für gründliches Testen</h2>
 <ol>
-  <li>Zuerst <b>Swap deaktivieren</b>.</li>
-  <li><b>stress-ng (RAM-Test)</b> für 2+ Stunden laufen lassen.</li>
+  <li>Zuerst <b>Swap deaktivieren</b> und <b>Langzeitmonitoring</b> mit passenden
+      Temperaturgrenzen starten (oder im Gesamttest das Begleitmonitoring nutzen).</li>
+  <li><b>Tab „System“</b> und <b>SMART/NVMe-Gesundheit</b> vorher festhalten
+      (Takte, PCIe-Breite, Reallocated/Pending Sectors, Percentage Used).</li>
+  <li><b>OpenDCDiag</b> 10 Minuten als Schnelltest auf stille Rechenfehler.</li>
+  <li><b>stress-ng (RAM-Test)</b> oder <b>RAM-Fuelltest</b> für 2+ Stunden laufen lassen.</li>
   <li><b>Prime95 (Blend)</b> für 4+ Stunden – der Goldstandard.</li>
   <li><b>Speichercontroller-Test</b> mit allen Stressoren für 2+ Stunden
       (besonders bei Dual-Socket mit <code>numa</code>).</li>
-  <li><b>Disk (Geräte)</b> – alle Laufwerke einmal komplett lesen
+  <li><b>Disk (Geräte)</b> bzw. <b>NVMe-Lesetest</b> – alle Laufwerke einmal komplett lesen
       (nach RAID-Rebuild besonders wichtig).</li>
   <li><b>Disk (Destruktiv)</b> – bei neuen Laufwerken mindestens 1 Durchlauf
       mit Schreib-/Lese-Verifikation.</li>
-  <li><b>SMART-Info</b> vor und nach dem Test prüfen
-      (Reallocated Sectors, Pending Sectors).</li>
-  <li><b>HPE RAID-Info</b> auf Controller-/Drive-Warnungen prüfen.</li>
-  <li><b>Kernel-Logs</b> und <b>MCE-Logs</b> regelmäßig auf Fehler prüfen.</li>
-  <li>Bei ECC-RAM: <b>EDAC-Anzeige</b> auf Fehler beobachten.</li>
-  <li>Optional: <b>memtest86+</b> über Nacht laufen lassen (außerhalb des OS).</li>
+  <li><b>GPU-Lasttest</b> (Vulkan bzw. NVIDIA) 30+ Minuten, bei Rechenzentrums-GPUs
+      DCGM-Stufe 3.</li>
+  <li><b>SMART-Info</b> nach dem Test erneut prüfen und mit vorher vergleichen;
+      <b>HPE RAID-Info</b> auf Controller-/Drive-Warnungen prüfen.</li>
+  <li><b>Kernel-Logs</b>, <b>MCE-Logs</b> und bei ECC-RAM die <b>EDAC-Anzeige</b>
+      auf Fehler prüfen.</li>
+  <li>Für die Abnahme mit Bericht: <b>Gesamttest</b> mit Endzeit über Nacht.
+      Optional: <b>memtest86+</b> über Nacht laufen lassen (außerhalb des OS).</li>
 </ol>
 
 <hr>
@@ -663,9 +834,20 @@ _HELP_EN = """\
 
 <h2>Overview</h2>
 <p>
-This application runs various hardware stress tests to verify the stability
-of CPU, RAM, memory controllers, and storage devices. All tests run on Linux
-using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>, <b>OpenDCDiag</b>, and <b>fio</b>.
+This application checks the stability of CPU, RAM, memory controllers, storage
+devices (SATA/SAS/NVMe), graphics cards and network, reads filesystems, ZFS pools
+and HPE ProLiant data, and monitors the system over long periods. All tests run on
+Linux using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>,
+<b>OpenDCDiag</b>, <b>fio</b>, <b>nvme-cli</b>, <b>smartctl</b>, <b>ipmitool</b>
+and <b>iperf3</b>.
+</p>
+<p>
+<b>Which tab for what?</b> Individual tests (stress-ng, Prime95, OpenDCDiag, Memory
+Controller, RAM fill test, Disk, NVMe, GPU, Network) for targeted troubleshooting;
+<b>Test plan</b> for an acceptance run with report; <b>Filesystem</b>,
+<b>ProLiant Info</b>, <b>System</b> and <b>Information</b> are read-only;
+<b>Long-term monitoring</b> accompanies tests or continuous operation. All tests are
+non-destructive – except <b>Disk (Destructive)</b>.
 </p>
 
 <h2>General Usage Notes</h2>
@@ -702,6 +884,17 @@ using proven tools such as <b>stress-ng</b>, <b>Prime95 (mprime)</b>, <b>OpenDCD
       occasionally, but many of them point to a weak module or core. Note: the
       kernel may report corrected CPU errors up to 5 minutes late, so very short
       tests can miss them. All entries: <code>sudo ras-mc-ctl --errors</code>.</li>
+  <li><b>Helper buttons:</b> "Refresh system values" re-reads free RAM, swap and
+      CPU count. "Start btop" opens the system monitor, "Kernel logs" and
+      "MCE logs" show <code>dmesg</code> and machine-check entries – look at them
+      once after every test.</li>
+  <li><b>Root privileges:</b> device tests, NVMe, Filesystem, ProLiant Info and parts
+      of OpenDCDiag/System ask for the administrator password. On the live ISO the
+      prompt is usually skipped; in the .deb, sudoers rules allow individual
+      commands without a password.</li>
+  <li><b>Concurrency:</b> run only one stress test at a time – parallel tests
+      distort temperatures, throughput and error attribution. Only long-term
+      monitoring is meant as a companion.</li>
 </ul>
 
 <hr>
@@ -713,17 +906,23 @@ Flexible stress test for CPU and RAM with multiple modes:
 <table>
   <tr><th>Mode</th><th>Description</th><th>Use Case</th></tr>
   <tr>
-    <td><b>CPU Load</b></td>
+    <td><b>CPU load (maximum heat)</b></td>
     <td>Maximum CPU utilization (matrix, all methods)</td>
     <td>Test CPU stability and cooling</td>
   </tr>
   <tr>
-    <td><b>RAM Test</b></td>
+    <td><b>CPU mixed load with result verification</b></td>
+    <td>Integer, floating point, FMA, vector, matrix, L1 cache and compression
+        at the same time, each stressor with <code>--verify</code></td>
+    <td>Find compute errors of individual units</td>
+  </tr>
+  <tr>
+    <td><b>RAM test (find errors)</b></td>
     <td>Aggressive memory test with <code>--verify</code></td>
     <td>Find RAM errors</td>
   </tr>
   <tr>
-    <td><b>RAM Bandwidth</b></td>
+    <td><b>RAM bandwidth (throughput)</b></td>
     <td>memcpy + stream workloads</td>
     <td>Measure memory throughput</td>
   </tr>
@@ -739,10 +938,16 @@ Flexible stress test for CPU and RAM with multiple modes:
   </tr>
 </table>
 <p>
-<b>RAM (MB):</b> Memory per worker. For RAM tests, allocate as much free memory
-as possible.<br>
-<b>memtest86+:</b> For the most thorough RAM testing, we also recommend memtest86+,
-which runs outside the operating system.
+<b>RAM (MB):</b> Total memory for the test; it is split evenly across the workers.
+For RAM tests use as much free memory as possible, but leave a reserve for OS and
+GUI (without swap the system would otherwise freeze).<br>
+<b>CPU workers / GUI reserve:</b> see "General Usage Notes". The reserve keeps the
+UI responsive; use 1 for maximum heat, 2 for long runs.<br>
+<b>Disable / enable swap:</b> turns swap off or on system-wide (root).
+"Check memtest86+" shows whether memtest86+ is available in the boot menu.<br>
+<b>Useful:</b> quick first check (10–30 min) and cooling test; RAM test as a
+complement to the RAM fill test. <b>Not suitable</b> as the sole RAM proof – use the
+RAM fill test and memtest86+ (outside the operating system) for that.
 </p>
 
 <hr>
@@ -777,8 +982,14 @@ Uses <b>mprime</b> (the Linux version of Prime95) for torture tests:
 <b>Binary Path:</b> Default is <code>vendor/prime95/mprime</code> (bundled).
 Fallback: <code>~/Prime95/mprime</code> or <code>mprime</code> in PATH. Can be customized.<br>
 <b>Minutes per FFT:</b> How long each FFT size range is tested (default: 15 min).<br>
-<b>Direct Mode:</b> Uses the existing <code>prime.txt</code>/<code>local.txt</code>
-without overwriting them.
+<b>Worker threads:</b> default = logical CPUs minus GUI reserve.<br>
+<b>Direct mode</b> ("Only mprime -t"): uses the existing <code>prime.txt</code>/<code>local.txt</code>
+without overwriting them – only for your own hand-maintained configurations.<br>
+<b>What to watch:</b> Prime95 reports errors only after complete passes; below
+1 hour the result is weak, 4+ hours of Blend are considered reliable. Watch the
+cooling – Small FFTs push the CPU to its temperature limit.
+<b>Useful</b> for CPU, power delivery and memory timings;
+<b>not useful</b> for storage or GPU.
 </p>
 
 <hr>
@@ -793,8 +1004,11 @@ and compares them. Works on Intel and AMD.
 <ul>
   <li><b>Result:</b> Faulty cores are reported with socket, core and logical CPU,
       e.g. <code>S1 Core 3 (CPU 35)</code>. A single error means: replace the processor.</li>
-  <li><b>CPU selection:</b> empty = all CPUs; otherwise e.g. <code>0-7,16</code> or
-      <code>p1</code> (socket 1).</li>
+  <li><b>CPU selection:</b> "All CPUs" (default), "Socket N only" per detected socket
+      or "Custom …" – this enables the text field for OpenDCDiag's
+      <code>--cpuset</code> syntax: logical CPUs/threads, e.g. <code>0-7,16</code>;
+      <code>p1</code> = socket 1; <code>c3</code> = core 3. Useful to re-test a
+      suspicious socket or core specifically.</li>
   <li><b>Build:</b> On CPUs without AVX2 (e.g. ProLiant Gen8) the generic build is chosen
       automatically.</li>
   <li><b>Permissions:</b> Without root, tests needing MSR access and In-Field Scan are skipped
@@ -802,6 +1016,10 @@ and compares them. Works on Intel and AMD.
       sudo group start OpenDCDiag as root without a password
       (/etc/sudoers.d/hardwaretest-opendcdiag); the tab uses this automatically.</li>
   <li><b>Duration:</b> 10 minutes as a quick test, 1 hour or more for acceptance testing.</li>
+  <li><b>What to watch:</b> OpenDCDiag complements Prime95/stress-ng but does not
+      replace them – it finds compute errors per core, not cooling or RAM problems.
+      Is an error reproducible? Narrow it down with "Socket N only" and replace the
+      processor.</li>
 </ul>
 
 <hr>
@@ -884,6 +1102,12 @@ inter-core communication.
   <li><b>Operations:</b> Maximum number of iterations per stressor.
       "unlimited" (0) = runs until time expires.</li>
   <li><b>Duration:</b> Total runtime. For thorough tests at least 30 min, preferably 2+ hours.</li>
+  <li><b>What to watch:</b> The test produces little heat but high bus load; errors
+      usually show up as a machine check or EDAC entry, not as a crash – so check
+      "MCE logs" and the EDAC display after the run. <b>Useful</b> on multi-socket
+      systems, after RAM/CPU replacement and for sporadic crashes with no findings in
+      Prime95; <b>of little use</b> on single-socket systems as a first check – there
+      stress-ng and the RAM fill test are sufficient.</li>
 </ul>
 
 <hr>
@@ -903,7 +1127,7 @@ several cycles.</li>
 not swap, is tested.</li>
 <li><b>Verify:</b> by <i>different</i> CPUs than the writers (on multi-socket
 systems this also goes through the other memory controller).</li>
-<li><b>Moving inversion</b> (full mode only, if enough time is left): read and
+<li><b>Moving inversion</b> (if enough time is left): read and
 compare again, write the inverted pattern, verify it. Finds bits that flip over
 time and coupling faults when all bits toggle.</li>
 <li><b>Free</b> and short pause (the memory drop is visible in btop). The test memory
@@ -919,9 +1143,22 @@ the waiting time.</li>
 <li>Walking one/zero per byte – bit aliasing.</li>
 <li>Random 64-bit words and random data (change every round).</li>
 <li>Address-in-data and inverted – address decoder faults.</li>
-<li><b>Data line test</b> (full mode, once per pattern round): 64-bit walking
+<li><b>Data line test</b> (once per pattern round): 64-bit walking
 one/zero over 128 MB. Reports the affected data bits.</li>
-<li>Quick mode: only 0xAA, 0x55, address and random.</li>
+</ul>
+
+<h3>Options</h3>
+<ul>
+<li><b>Memory:</b> "automatic" (0) = all available RAM minus the reserve; a fixed
+value allocates exactly this amount per cycle.</li>
+<li><b>Reserve (OS/GUI):</b> kept free with automatic memory size
+(default 512 MB; the test enforces at least 1 % of RAM).</li>
+<li><b>Block size:</b> size of the individual blocks (default 256 MB). Smaller blocks
+help with fragmented memory, larger ones are faster.</li>
+<li><b>Pause per cycle:</b> waiting time with memory released (default 3 s) so the
+drop is visible e.g. in btop. 0 = continue immediately.</li>
+<li><b>Disable swap</b> before starting, otherwise test memory gets paged out and
+the result is diluted.</li>
 </ul>
 
 <h3>System protection</h3>
@@ -968,33 +1205,48 @@ with SmartArray RAID controllers, SAS/NVMe drives.
 
 <h3>File Test (safe)</h3>
 <ul>
-  <li>Reads/writes to a temporary file on any filesystem.</li>
+  <li>Reads/writes to a temporary file on any filesystem
+      (set the "test file" via "Choose path").</li>
   <li>No root access needed – safe on production systems.</li>
   <li>Workload selectable: <code>read</code>, <code>write</code>, <code>randread</code>,
       <code>randwrite</code>, <code>readwrite</code>, <code>randrw</code>.</li>
+  <li><b>Block size</b> (default 128k; 4k for IOPS, 1M for throughput), <b>file size</b>
+      (default 4096 MB – choose it well above RAM and drive cache, otherwise only the
+      cache is measured), <b>iodepth</b> (32) and <b>jobs</b> (parallel fio processes).</li>
   <li>Write workloads automatically enable <b>CRC32c verification</b>
       (<code>--verify=crc32c --do_verify=1 --verify_fatal=1</code>).</li>
-  <li>Suitable for: filesystem integrity tests, SSD endurance, IOPS benchmarks.</li>
+  <li><span class="warn">Live ISO:</span> If the target folder lives in RAM (overlay,
+      tmpfs, ramfs, squashfs), the test refuses to start – it would only measure RAM.
+      Choose a mounted drive under <code>/media</code> or <code>/mnt</code>.</li>
+  <li>Suitable for: filesystem integrity tests, SSD endurance, IOPS benchmarks on drives
+      holding data. <b>Not suitable</b> for finding bad sectors – use the device test,
+      which reads every block.</li>
 </ul>
 
 <h3>Device Test (read-only)</h3>
 <ul>
-  <li>Reads all blocks directly from the block device via <code>fio</code> as root (sudo password dialog).</li>
+  <li>"Start raw-device read" reads all blocks directly from the block device via
+      <code>fio</code> as root (sudo password dialog).</li>
   <li>Detects bad sectors, SCSI errors and medium errors – especially important
       after RAID rebuilds on HPE SmartArray.</li>
   <li>Uses <code>continue_on_error=read</code>: continues reading all blocks even
       if some fail → complete error picture.</li>
-  <li>No data modification – safe on existing systems.</li>
+  <li>No data modification – safe on existing systems. Mounted drives remain
+      selectable. There is no time limit: the run ends when all blocks have been read
+      (several TB = hours); progress and throughput are displayed.</li>
 </ul>
 
 <h3>Destructive Test <span class="bad">(⚠ DATA LOSS!)</span></h3>
 <ul>
-  <li>Overwrites <b>all data</b> on the selected devices and verifies
-      by re-reading with CRC32c.</li>
+  <li>"Start DESTRUCTIVE test" overwrites <b>all data</b> on the selected devices and
+      verifies by re-reading with CRC32c.</li>
   <li><code>verify_backlog=16384</code> / <code>verify_backlog_batch=4096</code> –
       optimized for large RAID volumes (multi-TB).</li>
-  <li>Multiple passes configurable (1–10) for intensive endurance testing.</li>
-  <li><span class="bad">Only use for empty/new drives!</span></li>
+  <li>"Write/read passes" 1–10 for intensive endurance testing.</li>
+  <li><span class="bad">Only use for empty/new drives!</span> Partition table and
+      filesystems are gone afterwards. Useful for new hardware, before commissioning
+      RAID members and as proof for warranty claims; on SSDs every pass consumes write
+      endurance (TBW).</li>
 </ul>
 
 <h3>Drive Selection &amp; Unmounting</h3>
@@ -1047,6 +1299,37 @@ SCSI errors, or HPE RAID errors.
 
 <hr>
 
+<h2>Tab: NVMe</h2>
+<p>
+Diagnostics and non-destructive tests for NVMe drives with <code>nvme-cli</code>
+(root privileges, password asked once) and <code>fio</code>.
+</p>
+<ul>
+  <li><b>Scan NVMe drives</b> lists all namespaces; the drive for diagnostics/self-test
+      is chosen in the drop-down list.</li>
+  <li><b>Read SMART / health data:</b> critical warnings, temperature, percentage used,
+      media and error-log entries, data read/written, power cycles and unsafe shutdowns.
+      <span class="warn">Watch for:</span> <i>critical warning</i> ≠ 0,
+      <i>percentage used</i> ≥ 90 %, rising <i>media errors</i> or
+      <i>unsafe shutdowns</i>.</li>
+  <li><b>Self-test:</b> "Short NVMe self-test" (a few minutes) or "Extended NVMe
+      self-test" (up to hours depending on the drive) run inside the drive firmware;
+      progress is displayed. "Read self-test log" shows the latest results. No read
+      test is possible while a self-test is running.</li>
+  <li><b>NVMe read tests</b> (read-only, one or more target drives): the
+      <b>read benchmark</b> measures sequential or random throughput over the set
+      duration (default 30 s); the <b>full read test</b> reads every block of all
+      selected namespaces in parallel – finds unreadable blocks but can take many
+      hours. "Stop read test" aborts.</li>
+  <li><b>Useful:</b> compare SMART before and after every stress test; extended
+      self-test and full read test when read errors are suspected or before
+      commissioning. <b>Not useful:</b> benchmarks on a drive the system is currently
+      using – the values are not comparable then. High temperatures (> 70 °C) during the
+      read test indicate missing cooling of the M.2 slot.</li>
+</ul>
+
+<hr>
+
 <h2>Tab: Network</h2>
 <p>
 This tab lists all detected network adapters with link state, driver, PCI address,
@@ -1057,7 +1340,15 @@ Linux chooses the route. Selecting an adapter binds ping and iperf3 to that inte
   <li><b>Ping</b> measures packet loss, minimum/average/maximum latency and jitter.</li>
   <li><b>iperf3</b> measures TCP throughput and retransmits; the target must run
       <code>iperf3 -s</code>.</li>
-  <li>Configurable thresholds determine pass/fail independently of the process exit code.</li>
+  <li>Thresholds determine pass/fail independently of the process exit code
+      (defaults: packet loss 0 %, average latency 100 ms, jitter 20 ms, minimum
+      throughput 0 = off). Zero thresholds other than throughput are strict.</li>
+  <li><b>What to watch:</b> The target must be reachable in the same network and allow
+      ping; without a running <code>iperf3 -s</code> the throughput test fails – that is
+      not a hardware fault. For meaningful throughput choose a target with the same or
+      higher link speed. "Refresh network adapters" after re-plugging cables.
+      <b>Useful</b> for link stability, cables/transceivers and driver problems;
+      <b>not useful</b> as a measurement over the Internet or Wi-Fi.</li>
 </ul>
 
 <hr>
@@ -1092,6 +1383,17 @@ Not supported: Pascal/Volta (GTX 10xx, P4, P40, P100, V100) and older.
 The complete installation guide is available at
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
 </p>
+<p>
+<b>Usage:</b> "Scan NVIDIA GPUs" builds the inventory, "Linux basic check" examines
+PCIe devices, bound drivers, kernel modules and device nodes without requiring the
+driver (useful when <code>nvidia-smi</code> is missing). Tick the GPUs to test.
+<b>GPU stress test:</b> duration (default 10 min) and "Share of free VRAM" (80 %) –
+for cards that also drive the desktop, choose 50–60 %.
+<b>What to watch:</b> clocks dropping as temperature rises indicate throttling
+(cooling/fan curve), VRAM pattern errors indicate defective memory, aborts with Xid
+errors in the kernel logs indicate driver/power problems. For acceptance of
+data-center GPUs use DCGM level 3 or 4 (hours); level 1 is only a readiness test.
+</p>
 
 <hr>
 
@@ -1121,54 +1423,83 @@ Server graphics chips (Matrox, ASPEED) have no Vulkan driver and are only listed
 as “without Vulkan”. For NVIDIA cards with the proprietary driver, the “NVIDIA GPU”
 tab additionally offers the CUDA stress test and DCGM diagnostics.
 </p>
+<p>
+<b>Usage:</b> "Scan GPUs", tick the desired cards, set the duration (default 10 min)
+and "Share of free graphics memory" (80 %), "Start GPU stress test".
+<b>What to watch:</b> the desktop may stutter during the test – that is normal. If
+the display freezes for longer or the driver resets (amdgpu/i915 messages in the
+kernel logs), the test counts as failed even without error counters.
+<b>Useful</b> for every AMD/Intel GPU and as a driver-independent cross-check for
+NVIDIA; 10 minutes as a quick test, 1 hour for stability. <b>Not useful</b> for
+server graphics chips (Matrox/ASPEED) – there is nothing to load there.
+</p>
 
 <hr>
 
 <h2>Tab: Test plan</h2>
-<p><b>Network thresholds:</b> Configure maximum packet loss, average latency,
-jitter and minimum throughput before starting. Each round is evaluated.
-Minimum throughput 0 = disabled; other zero limits are strict. Missing/invalid
-measurements cannot pass. A threshold failure may occur even with exit code 0
-and remains in the overall report.</p>
-<p><b>Long runs:</b> Select 1–10,000 repetitions of the entire plan under “Rounds”.
-For NVMe, refresh the selection and tick the desired drives. The optional full
-read test reads each selected namespace in parallel without writing; SMART is
-compared before/after. No filesystem repairs or ZFS imports are included.
-Full reads may take hours. Each privileged step may request authentication;
-fully unattended execution is not guaranteed.</p>
-<p>CSV contains one row per step/round. Text and HTML remain compact with status
-counts, the latest result and first failure. “Completed rounds” counts all fully
-executed rounds, including failed ones. Background monitoring covers all rounds.
-The read test detects read errors, not file-content or filesystem checksum errors.
-Provide cooling and sufficient report storage. The app must remain open.</p>
 <p>
-If the plan needs root permissions (NVMe health, NVMe read test, DCGM), the
-password is requested <b>only once right at the start</b>; the plan then runs
-unattended. Cancelling the prompt does not start the plan.
-The test plan runs the selected non-destructive checks sequentially. CPU and RAM
-duration, the memory share, network target, and optional NVIDIA/DCGM checks can
-be configured before starting. Optionally the <b>GPU stress test (Vulkan)</b>
-runs after the NVIDIA steps with a configurable duration on all Vulkan GPUs (80 %
-of free graphics memory, at most 25 % of shared memory on integrated GPUs); without
-the Vulkan loader the option is disabled, without a Vulkan GPU the step is skipped.
-“Stop on first failure” ends the plan after a
-failed step. Manual cancellation stops the current process and saves all results
-collected up to that point.
+The test plan runs the selected non-destructive checks one after another and creates
+a plain-text and a self-contained HTML report. <b>No step is preselected</b> – only
+"Background monitoring with safety stop" is active. So decide deliberately what to
+test before starting.
+</p>
+<p><b>CPU and memory:</b> CPU stress test (stress-ng) with duration and
+<b>CPU load type</b>: "Full load (maximum heat)" uses all cpu methods plus matrix
+math, "Mixed load with result verification" spreads the workers over many execution
+units (integer, matrix, FMA, floating point, vector, trigonometry, L1 cache, zlib).
+Both verify the computed results (<code>--verify</code>); any wrong result fails the
+step. "OpenDCDiag – silent data errors per core" (only if installed, default 5 min)
+and "RAM verification (stress-ng)" with "RAM share of available memory" (default
+70 %; choose less with little RAM or running services).</p>
+<p><b>Storage and GPU:</b> "NVMe inventory and SMART health", "Full NVMe read test",
+"Full SATA/SAS/USB read test" (reads the selected <code>/dev/sd*</code> completely,
+read-only, SMART before/after) and – if <code>zpool</code> exists – "ZFS scrub of all
+imported pools". First click "Refresh drives" and tick the drives ("Select all");
+without a selection SMART checks all NVMe, the read tests need a selection. A full
+read test can take hours. "NVIDIA driver and GPU inventory", "NVIDIA DCGM
+diagnostics" with level 1–4 (only with DCGM installed) and "GPU stress test (Vulkan)
+on all GPUs" with configurable duration (80 % of free graphics memory, at most 25 % of
+shared memory on integrated GPUs; disabled without a Vulkan loader, skipped without a
+Vulkan GPU).</p>
+<p><b>Network:</b> target host, ping test (packet count) and iperf3 throughput test
+(duration; the target must run <code>iperf3 -s</code>). <b>Thresholds</b> for maximum
+packet loss, average latency, jitter and minimum throughput apply to every round.
+Minimum throughput 0 = off, other zero thresholds are strict. Missing or invalid
+measurements are not a passed test; a threshold failure can occur even with exit
+code 0 and is kept in the overall report.</p>
+<p><b>Flow and report:</b> report folder (default "Hardwaretest-Berichte" in
+Documents), "Stop on first failure", <b>Rounds</b> 1–10,000 of the whole plan and an
+optional <b>End time</b>: no step starts after it, a running step is completed –
+handy for overnight runs until the start of work.
+<b>Background monitoring with safety stop</b> (default on) records temperatures,
+fans, ECC and kernel errors across all rounds and aborts when the temperature limit
+(default 100 °C, sampling interval 10 s) is exceeded or new uncorrectable ECC errors
+appear; "Individual temperature limits …" sets limits per sensor (shared with the
+Long-term monitoring tab). The 100 °C are a starting value – set it much lower for
+SSDs and many chipsets.</p>
+<p>
+If the plan needs root privileges (NVMe, read tests, OpenDCDiag, DCGM, ZFS), the
+password is asked <b>only once right at the start</b>; afterwards the plan runs
+unattended. If the prompt is cancelled, the plan does not start. A manual abort
+("Cancel test plan") stops the currently running process and saves the results
+collected so far. The plan only runs while the app stays open. No filesystem repair
+and no ZFS import in the plan.
 </p>
 <p>
-Each run creates a plain-text report and a self-contained HTML report with
-timestamps, summaries, and detailed output. Open the HTML report in a browser
-and use the print function to save it as PDF.
-Ping and iperf3 are recorded as aggregate values only; individual packets and
-per-second iperf3 intervals are not copied into the report.
-Both reports start with a <b>System</b> section (CPU, mainboard/BIOS, memory
-modules as in the System tab).
+Every run produces plain-text, HTML and CSV reports with timestamps, summaries and
+detail output ("Open HTML report"; save as PDF via the browser's print function). The
+CSV holds one row per step/round; text and HTML stay compact with result counters,
+last result and first failure. "Rounds completed" also counts fully executed failed
+rounds. Ping and iperf3 are logged as summary values only. Both reports begin with a
+<b>System</b> section (CPU, mainboard/BIOS, memory modules as in the "System" tab);
+on ProLiant servers the step <i>ProLiant / RAID controller</i> is added (see
+"ProLiant Info").
 </p>
-<p><b>CPU load type:</b> "Full load (maximum heat)" uses all cpu methods plus matrix
-math. "Mixed load with result verification" spreads the workers across many
-execution units (integer, matrix, FMA, floating point, vector, trigonometry, L1 cache,
-zlib). Both verify the computed results (<code>--verify</code>); any wrong result fails
-the step and names the stressor.</p>
+<p><b>Useful:</b> acceptance of new or repaired systems with a report, overnight and
+weekend runs over several rounds, reproducing sporadic errors. <b>Not useful:</b>
+targeted troubleshooting of a single component – use the individual tabs with more
+options for that. The read test detects read errors but does not verify file
+contents or filesystem checksums. Provide enough free memory and cooling.</p>
 
 <hr>
 
@@ -1204,29 +1535,39 @@ also part of the system section of the full test report.
 
 <h2>Tab: Information</h2>
 <p>
-Shows system information: CPU, RAM, mainboard, installed hardware.
-Uses <code>lshw</code>, <code>fastfetch</code>, and <code>lspci</code>.
+Brief overview ("system status", <code>fastfetch</code>) and buttons for raw output:
+<code>lshw -class cpu/memory/storage/disk/raid/scsi/display/network</code>,
+<code>lspci -vvv</code> and <code>dmesg</code> (via sudo if not root).
+"Refresh system data" re-reads, "System report (JSON)" saves everything in one file
+for tickets or for comparing before/after a hardware change. For a structured view
+use the "System" tab; this tab is meant for raw data.
 </p>
 
 <hr>
 
 <h2>Tips for Thorough Testing</h2>
 <ol>
-  <li>First, <b>disable swap</b>.</li>
-  <li>Run <b>stress-ng (RAM test)</b> for 2+ hours.</li>
+  <li>First <b>disable swap</b> and start <b>Long-term monitoring</b> with suitable
+      temperature limits (or use background monitoring in the test plan).</li>
+  <li>Record the <b>System</b> tab and <b>SMART/NVMe health</b> beforehand
+      (clocks, PCIe width, reallocated/pending sectors, percentage used).</li>
+  <li><b>OpenDCDiag</b> for 10 minutes as a quick test for silent compute errors.</li>
+  <li>Run <b>stress-ng (RAM test)</b> or the <b>RAM fill test</b> for 2+ hours.</li>
   <li>Run <b>Prime95 (Blend)</b> for 4+ hours – the gold standard.</li>
   <li>Run the <b>Memory Controller test</b> with all stressors for 2+ hours
       (especially on dual-socket with <code>numa</code>).</li>
-  <li><b>Disk (Device)</b> – read all drives completely once
+  <li><b>Disk (Device)</b> or <b>NVMe read test</b> – read all drives completely once
       (especially important after RAID rebuilds).</li>
   <li><b>Disk (Destructive)</b> – for new drives, at least 1 pass
       with write/read verification.</li>
-  <li>Check <b>SMART Info</b> before and after testing
-      (Reallocated Sectors, Pending Sectors).</li>
-  <li>Check <b>HPE RAID Info</b> for controller/drive warnings.</li>
-  <li>Regularly check <b>Kernel Logs</b> and <b>MCE Logs</b> for errors.</li>
-  <li>With ECC RAM: monitor the <b>EDAC display</b> for errors.</li>
-  <li>Optional: run <b>memtest86+</b> overnight (outside the OS).</li>
+  <li><b>GPU stress test</b> (Vulkan or NVIDIA) for 30+ minutes, DCGM level 3 for
+      data-center GPUs.</li>
+  <li>Check <b>SMART Info</b> again after testing and compare with before;
+      check <b>HPE RAID Info</b> for controller/drive warnings.</li>
+  <li>Check <b>Kernel Logs</b>, <b>MCE Logs</b> and, with ECC RAM, the
+      <b>EDAC display</b> for errors.</li>
+  <li>For acceptance with a report: <b>Test plan</b> with an end time overnight.
+      Optional: run <b>memtest86+</b> overnight (outside the OS).</li>
 </ol>
 
 <hr>
@@ -1292,13 +1633,24 @@ class HelpPanel(QWidget):
         lang = language_manager.language
         if lang == "en":
             self._content.setText(_HELP_EN.replace("__VERSION__", __version__) + """
-<h2>Filesystem check</h2>
-<p><b>Filesystem → ZFS pools:</b> pool health and read/write/checksum errors;
-start/resume/stop a scrub with progress and TXT/HTML/CSV reports. Scrub verifies data
+<h2>Tab: Filesystem (Partitions, ZFS pools)</h2>
+<p><b>Filesystem → Partitions:</b> "Refresh drives" lists partitions with filesystem
+and mount point. "Status diagnosis (mounted)" is meant for running systems,
+"Check structure (offline)" only for unmounted filesystems. Reports go to the
+"Log folder …" ("Open HTML log"). The tab is locked while other tests run ("Finish
+the other tests first") – checking under load distorts both. <b>Useful</b> after power
+failures, before data migrations and after read tests with errors; <b>not useful</b>
+as a substitute for a backup.</p>
+<p><b>Filesystem → ZFS pools:</b> "Search ZFS pools", "Read pool status" (health and
+read/write/checksum errors), "Start / resume scrub …", "Stop scrub …" and "Stop
+monitoring only" (the scrub keeps running in the kernel), with progress and
+TXT/HTML/CSV reports. Scrub verifies data
 checksums online and may automatically repair damage from redundant copies.
 Requires zfsutils-linux and ZFS kernel support. Only imported pools are offered.
-Stopping monitoring leaves the kernel scrub running. Scrub/resilver already in
-progress, cancelled scans and old results are not treated as successful new tests.</p>
+Scrub/resilver already in
+progress, cancelled scans and old results are not treated as successful new tests.
+A scrub reads the whole pool – plan hours for large pools, preferably outside
+working hours.</p>
 <p>The Filesystem tab provides a read-only <b>status diagnosis for mounted filesystems</b>,
 including ext2/3/4, Btrfs, XFS, FAT/exFAT and NTFS: mount state, space and available
 error indications. It is not a complete integrity check.</p>
@@ -1321,10 +1673,27 @@ if XFS reports a dirty log, mount and cleanly unmount once instead of using -L),
 fsck.fat (vfat), ntfsfix (NTFS), fsck.exfat (exFAT), zpool scrub (ZFS), gdisk and testdisk (partition tables).
 Back up first; with failing hardware, create an image before attempting any repair.
 Unsupported filesystems are listed but not changed.</p>
-<h2>ProLiant Info</h2>
+<h2>Tab: ProLiant Info</h2>
+<p><b>Usage:</b> "Read now" refreshes all pages; "Show HTML report" opens the report
+directly in the browser (like the monitoring tab), "Export as HTML …" saves it to a
+file. The sudo password is asked once.</p>
 <p>Reads directly from the HPE iLO via ipmitool: system data (model, serial number, BIOS, iLO firmware), all sensors (temperatures, fans, power supplies, voltages) and the complete event log (IPMI SEL), plus the Integrated Management Log (IML) via iLOrest with HPE plain-text messages; all with rating (red = error, orange = warning), filter, search and HTML export. The <i>Memory / ECC</i> page shows the ECC type, modules, kernel EDAC counters and memory events. On a ProLiant or Synergy compute module (e.g. Synergy 480 Gen10) the tab reads automatically at startup and every 5 minutes (administrator password asked once). If no ProLiant/Synergy is detected, a notice is shown and the iLO information is inactive; it can still be read manually (e.g. other servers with IPMI). Requires <code>ipmitool</code>, <code>dmidecode</code> and for the IML <code>ilorest</code> (iLO option “Require Host Authentication” must be off). Long-term monitoring additionally records fan speeds and ECC events via IPMI.</p>
 <p><b>RAID page:</b> HPE Smart Array controllers (<code>ssacli</code>/<code>hpssacli</code>) and Broadcom MegaRAID “MR” controllers (<code>storcli64</code>/<code>storcli2</code>) are evaluated in a structured way within the same root session: controller status, cache and battery/capacitor, temperatures, logical drives (RAID level, status, rebuild progress, OS device) and physical drives (position, type, size, status, model, serial, firmware, temperature, power-on hours, SSD life, link speed). Rating: red = controller/drive failed, predictive failure, SSD life below 10&nbsp;% or missing/failed battery with cache present; orange = rebuild/recovery, cache disabled, medium errors, temperature ≥ 60&nbsp;°C (drive) or ≥ 85&nbsp;°C (controller), SSD life below 25&nbsp;%. The raw tool output is shown below the tables; <i>Save diagnostic report (ssaducli)</i> writes the full HPE Smart Storage diagnostic ZIP for HPE support. The RAID rating is part of the overview, summary and HTML export. The RAID button in the disk tabs jumps to this page. The test plan takes a snapshot of RAID, IML and sensors before and after the tests and reports the step <i>ProLiant / RAID controller</i>: it fails only on a new RAID error; new IML entries and sensor warnings are listed as warnings.</p>
-<h2>Long-term monitoring</h2>
+<h2>Tab: Long-term monitoring</h2>
+<p><b>Options:</b> sampling interval (default 10 s), duration in hours (0 = until
+stopped), temperature limit (default 100 °C), log folder (default
+"Hardwaretest-Berichte" in the home directory) and the option "Stop running app
+stress tests on temperature limit / new uncorrectable ECC errors" (default on).
+"Start monitoring", "Stop and finalize log", "Open HTML log".
+<b>Useful</b> alongside long individual tests, for overnight/weekend runs and for
+hunting sporadic temperature/ECC problems; <b>not useful</b> without adjusted limits –
+100 °C is too high for SSDs and chipsets.</p>
+<p><b>Fans:</b> speeds come from hwmon (<code>sensors</code>) or IPMI. If neither reports
+fans, ACPI fan cooling devices (<code>/sys/class/thermal/cooling_device*</code>, type
+"Fan") are recorded as <code>fan.acpi.N.percent</code>: fan stage in percent of the
+maximum (usually 0 or 100 %), no RPM. Typical for desktop boards without a Super-I/O
+driver (e.g. Lenovo IdeaCentre). If that is missing too, no fan is monitored – check in
+the BIOS or by ear.</p>
 <p><b>Individual temperature limits:</b> Only checked sensors override the default.
 Limits are saved per user and shared with test-plan monitoring. Follow hardware
 specifications; recheck exact sensor keys after hardware changes. Missing sensors
@@ -1337,7 +1706,7 @@ All recorded metrics remain in CSV; no external chart library or internet needed
 SMART time-series acquisition is not included yet.</p>
 <p>Records available sensors, EDAC/ext4 counters, NVIDIA data and new kernel errors.
 CSV is written continuously; stopping creates compact text/HTML summaries.
-The default 90 °C limit applies unless individually overridden: adjust it for the hardware,
+The default 100 °C limit applies unless individually overridden: adjust it for the hardware,
 especially SSDs. Missing sensors/journal access leave gaps in coverage.
 This does not replace hardware thermal protection.</p>
 <p>The optional safety guard stops this app's stress tests on the temperature limit,
@@ -1351,14 +1720,23 @@ and power supply redundancy checks are not included yet.</p>
 """)
         else:
             self._content.setText(_HELP_DE.replace("__VERSION__", __version__) + """
-<h2>Dateisystemprüfung</h2>
-<p><b>Dateisystem → ZFS-Pools:</b> Poolzustand und Lese-/Schreib-/Prüfsummenfehler;
-Scrub starten/fortsetzen/stoppen mit Fortschritt und Text-/HTML-/CSV-Bericht.
+<h2>Tab: Dateisystem (Partitionen, ZFS-Pools)</h2>
+<p><b>Dateisystem → Partitionen:</b> „Laufwerke aktualisieren“ listet Partitionen mit
+Dateisystem und Einhängepunkt. „Statusdiagnose (eingehängt)“ ist für laufende Systeme
+gedacht, „Struktur prüfen (offline)“ nur für ausgehängte Dateisysteme. Berichte landen
+im „Protokollordner …“ („HTML-Protokoll öffnen“). Der Tab ist gesperrt, solange andere
+Tests laufen („Zuerst die anderen Tests beenden“) – Prüfung und Last gleichzeitig
+verfälschen beides. <b>Sinnvoll</b> nach Stromausfällen, vor Datenmigrationen und
+nach Lesetests mit Fehlern; <b>nicht sinnvoll</b> als Ersatz für ein Backup.</p>
+<p><b>Dateisystem → ZFS-Pools:</b> „ZFS-Pools suchen“, „Pool-Status lesen“ (Zustand und
+Lese-/Schreib-/Prüfsummenfehler), „Scrub starten / fortsetzen …“, „Scrub stoppen …“ und
+„Nur Überwachung beenden“ (der Scrub läuft im Kernel weiter), dazu Fortschritt und
+Text-/HTML-/CSV-Bericht.
 Ein Scrub prüft Datenprüfsummen online und kann Schäden mit redundanten Kopien
 automatisch korrigieren. Benötigt zfsutils-linux und ZFS-Kernelunterstützung.
-Nur importierte Pools werden angeboten. Das Beenden der Überwachung lässt den
-Scrub im Kernel weiterlaufen. Vorhandene Scrubs/Resilver, abgebrochene Läufe und
-alte Ergebnisse werden nicht als erfolgreicher neuer Test gewertet.</p>
+Nur importierte Pools werden angeboten. Vorhandene Scrubs/Resilver, abgebrochene Läufe und
+alte Ergebnisse werden nicht als erfolgreicher neuer Test gewertet. Ein Scrub liest den
+ganzen Pool – bei großen Pools Stunden einplanen und möglichst außerhalb der Nutzungszeit.</p>
 <p>Der Dateisystem-Tab bietet eine lesende <b>Statusdiagnose für eingehängte Dateisysteme</b>,
 auch ext2/3/4, Btrfs, XFS, FAT/exFAT und NTFS: Einhängezustand, Speicherplatz und verfügbare
 Fehlerhinweise. Dies ist keine vollständige Strukturprüfung.</p>
@@ -1383,10 +1761,27 @@ xfs_repair (XFS; bei nicht leerem Journal einmal einhängen und sauber aushänge
 fsck.fat (vfat), ntfsfix (NTFS), fsck.exfat (exFAT), zpool scrub (ZFS), gdisk und testdisk (Partitionstabellen).
 Vorher sichern; bei Hardwaredefekten zuerst ein Abbild anlegen.
 Andere Dateisysteme werden angezeigt, aber nicht verändert.</p>
-<h2>ProLiant Info</h2>
+<h2>Tab: ProLiant Info</h2>
+<p><b>Bedienung:</b> „Jetzt auslesen“ aktualisiert alle Seiten; „HTML-Bericht anzeigen“
+öffnet den Bericht direkt im Browser (wie beim Monitoring), „Als HTML exportieren …“
+speichert ihn als Datei. Sudo-Passwort wird einmal abgefragt.</p>
 <p>Liest per ipmitool direkt vom HPE iLO: Systemdaten (Modell, Seriennummer, BIOS, iLO-Firmware), alle Sensoren (Temperaturen, Lüfter, Netzteile, Spannungen) und das komplette Ereignisprotokoll (IPMI SEL), außerdem über iLOrest das Integrated Management Log (IML) mit HPE-Klartextmeldungen; alles mit Bewertung (rot = Fehler, orange = Warnung), Filter, Suche und HTML-Export. Die Seite <i>Speicher / ECC</i> zeigt ECC-Typ, Module, Kernel-EDAC-Zähler und Speicherereignisse. Auf einem ProLiant oder Synergy-Compute-Modul (z. B. Synergy 480 Gen10) liest der Tab beim Start automatisch und danach alle 5 Minuten aus (einmalige Passwortabfrage). Wird kein ProLiant/Synergy erkannt, erscheint ein Hinweis und die iLO-Informationen sind nicht aktiv; manuelles Auslesen bleibt möglich (z. B. andere Server mit IPMI). Benötigt <code>ipmitool</code>, <code>dmidecode</code> und für das IML <code>ilorest</code> (iLO-Option „Host-Authentifizierung erforderlich“ muss aus sein). Das Langzeitmonitoring zeichnet zusätzlich Lüfterdrehzahlen und ECC-Ereignisse über IPMI auf.</p>
 <p><b>Seite RAID:</b> HPE-Smart-Array-Controller (<code>ssacli</code>/<code>hpssacli</code>) und Broadcom-MegaRAID-„MR“-Controller (<code>storcli64</code>/<code>storcli2</code>) werden in derselben Root-Sitzung strukturiert ausgewertet: Controller-Status, Cache und Akku/Kondensator, Temperaturen, logische Laufwerke (RAID-Level, Status, Rebuild-Fortschritt, OS-Gerät) und physische Laufwerke (Position, Typ, Größe, Status, Modell, Seriennummer, Firmware, Temperatur, Betriebsstunden, SSD-Restlebensdauer, Link-Geschwindigkeit). Bewertung: rot = Controller/Laufwerk ausgefallen, Predictive Failure, SSD-Rest unter 10&nbsp;% oder fehlender/defekter Akku bei vorhandenem Cache; orange = Rebuild/Recovery, Cache deaktiviert, Medium-Fehler, Temperatur ≥ 60&nbsp;°C (Laufwerk) bzw. ≥ 85&nbsp;°C (Controller), SSD-Rest unter 25&nbsp;%. Die Rohausgabe der Werkzeuge steht unter den Tabellen; <i>Diagnosebericht (ssaducli) speichern</i> erzeugt das vollständige HPE-Smart-Storage-Diagnose-ZIP für den HPE-Support. Die RAID-Ampel fließt in Übersicht, Zusammenfassung und HTML-Export ein. Der RAID-Button in den Disk-Tabs springt auf diese Seite. Der Gesamttest nimmt vor und nach den Tests eine Momentaufnahme von RAID, IML und Sensoren und berichtet den Schritt <i>ProLiant / RAID-Controller</i>: Er schlägt nur bei einem neuen RAID-Fehler fehl; neue IML-Einträge und Sensorwarnungen werden als Warnung aufgeführt.</p>
-<h2>Langzeitmonitoring</h2>
+<h2>Tab: Langzeitmonitoring</h2>
+<p><b>Optionen:</b> Messintervall (Standard 10 s), Dauer in Stunden (0 = bis zum
+Stoppen), Temperaturgrenze (Standard 100 °C), Protokollordner (Standard
+„Hardwaretest-Berichte“ im Home) und die Option „Bei Temperaturgrenze/neuen
+unkorrigierbaren ECC-Fehlern laufende App-Stresstests stoppen“ (Standard an).
+„Monitoring starten“, „Stoppen und Protokoll abschließen“, „HTML-Protokoll öffnen“.
+<b>Sinnvoll</b> parallel zu langen Einzeltests, für Nacht-/Wochenendläufe und zur
+Suche nach sporadischen Temperatur-/ECC-Problemen; <b>nicht sinnvoll</b> ohne
+angepasste Grenzen – 100 °C ist für SSDs und Chipsätze zu hoch.</p>
+<p><b>Lüfter:</b> Drehzahlen kommen aus hwmon (<code>sensors</code>) oder IPMI. Melden
+beide keine Lüfter, werden ACPI-Lüfter-Kühlgeräte (<code>/sys/class/thermal/
+cooling_device*</code>, Typ „Fan“) als <code>fan.acpi.N.percent</code> erfasst:
+Lüfterstufe in Prozent des Maximums (meist 0 oder 100 %), keine Drehzahl. Typisch
+für Desktop-Boards ohne Super-I/O-Treiber (z. B. Lenovo IdeaCentre). Fehlt auch
+das, ist kein Lüfter überwacht – dann im BIOS oder per Gehör kontrollieren.</p>
 <p><b>Individuelle Temperaturgrenzen:</b> Nur aktivierte Sensorzeilen überschreiben
 den Standardwert. Grenzen werden pro Benutzer gespeichert und auch im Gesamttest
 genutzt. Herstellerangaben beachten; nach Hardwarewechsel exakte Sensorschlüssel
@@ -1401,7 +1796,7 @@ Messwerte. Keine externe Chart-Bibliothek oder Internet nötig. SMART-Verläufe
 sind noch nicht enthalten.</p>
 <p>Erfasst verfügbare Sensoren, EDAC-/ext4-Zähler, NVIDIA-Werte und neue Kernel-Fehler.
 CSV wird fortlaufend geschrieben; beim Stoppen entstehen kompakte Text-/HTML-Berichte.
-Die vorbelegte Grenze von 90 °C gilt ohne individuelle Überschreibung und muss an die Hardware angepasst
+Die vorbelegte Grenze von 100 °C gilt ohne individuelle Überschreibung und muss an die Hardware angepasst
 werden, insbesondere bei SSDs. Fehlende Sensoren/Journalrechte bedeuten Überwachungslücken.
 Kein Ersatz für den thermischen Schutz der Hardware.</p>
 <p>Der optionale Wächter stoppt App-Stresstests bei Temperaturgrenze, neuen unkorrigierbaren

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 
 from datetime import datetime
 from html import escape
@@ -21,6 +22,7 @@ from hardwaretest.core import hpe_raid, ipmi, privilege
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.system_info import read_edac_info
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.report_browser import open_html_report
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 _CSS = {"ok": "color: #2e7d32; font-weight: bold;", "warn": "color: #e65100; font-weight: bold;",
@@ -240,10 +242,14 @@ class ProliantPanel(QWidget):
         buttons = QHBoxLayout()
         self.read_btn = QPushButton()
         self.read_btn.clicked.connect(self.start)
+        self.view_btn = QPushButton()
+        self.view_btn.clicked.connect(self.view_report)
+        self.view_btn.setEnabled(False)
         self.export_btn = QPushButton()
         self.export_btn.clicked.connect(self.export)
         self.export_btn.setEnabled(False)
         buttons.addWidget(self.read_btn, 1)
+        buttons.addWidget(self.view_btn)
         buttons.addWidget(self.export_btn)
         layout.addLayout(buttons)
         self.summary = QLabel()
@@ -398,6 +404,7 @@ class ProliantPanel(QWidget):
             "voltages) and the complete event log (IPMI SEL), the Integrated Management Log (IML) via iLOrest, plus memory/ECC. On a ProLiant it reads automatically "
             "at startup and every 5 minutes (password asked once)."))
         self.read_btn.setText(_t("Jetzt auslesen", "Read now"))
+        self.view_btn.setText(_t("HTML-Bericht anzeigen", "Show HTML report"))
         self.export_btn.setText(_t("Als HTML exportieren …", "Export as HTML …"))
         self.ssaducli_btn.setText(_t("Diagnosebericht (ssaducli) speichern …", "Save diagnostic report (ssaducli) …"))
         self.ssaducli_btn.setToolTip(_t(
@@ -472,6 +479,7 @@ class ProliantPanel(QWidget):
             self.summary.setText(data["exception"])
             return
         self._data = data
+        self.view_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         self.overview.setPlainText("\n".join(self._overview_lines(data)))
         sensors = data["sensors"] or []
@@ -716,6 +724,19 @@ class ProliantPanel(QWidget):
         self.iml_error.setVisible(bool(error))
         self.iml_count.setText(_t(f"{len(entries)} von {len(data.get('iml') or [])}",
                                   f"{len(entries)} of {len(data.get('iml') or [])}"))
+
+    def view_report(self):
+        if not self._data:
+            return
+        report_dir = Path(tempfile.gettempdir()) / "hardwaretest-proliant"
+        try:
+            report_dir.mkdir(parents=True, exist_ok=True)
+            path = report_dir / f"proliant-info-{datetime.now():%Y%m%d-%H%M%S}.html"
+            path.write_text(self.html_report(), encoding="utf-8")
+        except OSError as exc:
+            self.summary.setText(str(exc))
+            return
+        open_html_report(str(path), self)
 
     def export(self):
         if not self._data:

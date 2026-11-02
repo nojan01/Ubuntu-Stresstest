@@ -2,6 +2,19 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.63
+
+- **Gesamttest:** Kein Teiltest ist mehr vorausgewählt (nur das Monitoring bleibt aktiv) – bisher waren CPU, RAM, NVMe und NVIDIA vorgewählt, obwohl viele Rechner keine NVIDIA-Karte haben.
+- **Temperaturgrenze Standard 100 °C** (statt 90 °C) im Langzeitmonitoring und Gesamttest; 90 °C führten auf ProLiants und aktuellen Desktop-CPUs regelmäßig zu Fehlalarmen.
+- **Langzeitmonitoring: Lüfter per ACPI.** Rechner ohne hwmon-Lüftersensor (z. B. Lenovo IdeaCentre) liefern jetzt den ACPI-Lüfterzustand (`fan.acpi.N.percent`) als Fallback.
+- **ProLiant Info:** Neuer Button **„HTML-Bericht anzeigen“** (wie im Langzeitmonitoring) – bisher ließ sich der Bericht nur exportieren.
+- **Disk (Datei):** Auf dem Live-ISO wird der Schreib-/Lesetest auf RAM-Dateisystemen (tmpfs, overlay, squashfs …) abgelehnt, damit nicht versehentlich der Arbeitsspeicher statt eines Datenträgers getestet wird. Hinweistext klargestellt.
+- **Disk (Destruktiv):** Zweite Sicherheitsabfrage („Wollen Sie das wirklich?“) vor dem Überschreiben; Standard ist Abbrechen.
+- **OpenDCDiag:** Die CPU-Auswahl ist jetzt ein Auswahlmenü (Alle CPUs / Nur Sockel N / Benutzerdefiniert) statt eines freien cpuset-Feldes.
+- **Tableiste:** Breitere Scroll-Pfeile bei kleinen Auflösungen (iLO-Konsole).
+- **Hilfe** vollständig überprüft und aktualisiert (NVMe- und Gesamttest-Abschnitt ergänzt, veraltete Angaben korrigiert, alle Änderungen dieser Version eingearbeitet, DE/EN).
+- Tests lesen und ändern die Spracheinstellung des Benutzers nicht mehr.
+
 ### Neu in 0.2.62
 
 - **Einheitlicher Passwortdialog.** Alle Root-Aktionen (Swap aus/ein, fio-Lesetest und destruktiver Test, NVMe/SMART, Root-Sitzung des Gesamttests, DCGM, Dateisystem- und ZFS-Prüfung, Speichermodule per dmidecode, Aushängen, IPMI, ProLiant/RAID) nutzen jetzt `sudo -A` mit dem eigenen Dialog der App („sudo-Passwort eingeben:“, dunkles Design, `hardwaretest --askpass`). Der große Polkit-Dialog erscheint nur noch als Fallback, wenn `sudo` fehlt. sudo merkt sich die Freigabe (Standard 15 Minuten), daher wird innerhalb einer Sitzung meist nur einmal gefragt; mit NOPASSWD-Regel (Live-ISO) oder als root entfällt die Abfrage ganz. Die Tabs fragen das Passwort nicht mehr selbst ab.

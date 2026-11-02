@@ -101,7 +101,6 @@ class TestPlanPanel(QWidget):
         self.hint.setStyleSheet("color: #bbbbbb; font-style: italic;")
 
         self.cpu_check = QCheckBox("CPU-Stresstest (stress-ng)")
-        self.cpu_check.setChecked(True)
         self.cpu_duration = self._seconds_spin(60)
         self.cpu_mode = QComboBox()
         self.cpu_mode.addItem("Volllast (maximale Hitze)", userData="cpu")
@@ -117,7 +116,6 @@ class TestPlanPanel(QWidget):
         if not opendcdiag_available():
             self.opendcdiag_check.setToolTip("OpenDCDiag ist nicht installiert; der Schritt wird nicht angeboten.")
         self.ram_check = QCheckBox("RAM-Verifikation (stress-ng)")
-        self.ram_check.setChecked(True)
         self.ram_duration = self._seconds_spin(60)
         self.ram_percent = QSpinBox()
         self.ram_percent.setRange(10, 90)
@@ -134,7 +132,6 @@ class TestPlanPanel(QWidget):
         stress_group.setLayout(stress_form)
 
         self.nvme_check = QCheckBox("NVMe-Inventar und SMART-Gesundheit")
-        self.nvme_check.setChecked(True)
         self.nvme_read_check = QCheckBox("Vollständiger NVMe-Lesetest (optional)")
         self.disk_read_check = QCheckBox("Vollständiger SATA/SAS/USB-Lesetest (optional)")
         self.disk_read_check.setToolTip(language_manager.tr(
@@ -150,7 +147,6 @@ class TestPlanPanel(QWidget):
         self.drives.setMinimumWidth(180)
         self.drives.setToolTip(language_manager.tr("Auswahl gilt für SMART und Lesetests; ohne Auswahl prüft SMART alle NVMe."))
         self.nvidia_check = QCheckBox("NVIDIA-Treiber und GPU-Inventar")
-        self.nvidia_check.setChecked(True)
         self.dcgm_check = QCheckBox("NVIDIA-DCGM-Diagnose auf allen GPUs")
         self.dcgm_check.setEnabled(dcgmi_available())
         if not dcgmi_available():
@@ -241,7 +237,7 @@ class TestPlanPanel(QWidget):
         self.monitor_check.setChecked(True)
         self.monitor_limit = QSpinBox()
         self.monitor_limit.setRange(30, 120)
-        self.monitor_limit.setValue(90)
+        self.monitor_limit.setValue(100)
         self.monitor_limit.setSuffix(" °C")
         self.monitor_interval = QSpinBox()
         self.monitor_interval.setRange(5, 3600)

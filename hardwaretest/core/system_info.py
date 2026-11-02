@@ -31,6 +31,15 @@ class CpuTemperature:
     socket: int = -1  # Sockel aus "Package id N" (coretemp), -1 = unbekannt
 
 
+def cpu_sockets(cpu_root: Path = Path("/sys/devices/system/cpu")) -> List[int]:
+    """Sortierte Sockel-IDs (physical_package_id) aller Online-CPUs."""
+    sockets = set()
+    for path in cpu_root.glob("cpu[0-9]*/topology/physical_package_id"):
+        with contextlib.suppress(OSError, ValueError):
+            sockets.add(int(path.read_text().strip()))
+    return sorted(sockets)
+
+
 def read_cpu_temperatures() -> List[CpuTemperature]:
     """Read CPU temperatures via psutil or fallback to sysfs."""
     results: List[CpuTemperature] = []

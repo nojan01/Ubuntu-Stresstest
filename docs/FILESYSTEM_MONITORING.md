@@ -188,7 +188,7 @@ Pool-Diagnose (siehe oben). Automatische Unmounts und Partitionsänderungen sind
   höchstens 100 Ereignisdetails; vollständige erfasste Messungen stehen in CSV.
   Bei Logfluten werden pro Abfrage höchstens 500 Journalzeilen ausgewertet;
   eine Begrenzung wird als Ereignis vermerkt. Ausreichend freien Platz einplanen.
-- Standardgrenze **90 °C für Sensoren ohne individuellen Grenzwert** ist ein
+- Standardgrenze **100 °C für Sensoren ohne individuellen Grenzwert** ist ein
   editierbarer Startwert, keine Herstellerempfehlung für jedes Bauteil. Besonders
   SSDs benötigen häufig eine niedrigere Grenze. Individuelle Temperaturgrenzen
   lassen sich separat einstellen (siehe oben). Fehlende Sensoren gelten nicht als Hardwarefehler, bedeuten aber fehlende
@@ -243,7 +243,7 @@ revalidated by the privileged worker. Unsupported filesystems are not modified.
 Monitoring records CSV incrementally and generates bounded TXT/HTML summaries.
 Available temperatures, fans, EDAC, ext4 counters, kernel messages and NVIDIA data
 are sampled. Missing sensors/journal access mean incomplete coverage, not hardware
-failure. Default 90 °C is an adjustable threshold for **all sensors**, not a
+failure. Default 100 °C is an adjustable threshold for **all sensors**, not a
 universal safe hardware limit. The optional guard stops this app's stress tests
 on temperature limits, new uncorrectable ECC errors or monitoring failure. It
 cannot stop firmware self-tests or external programs, and never interrupts a

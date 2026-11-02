@@ -8,6 +8,7 @@ from typing import Optional
 
 from PySide6.QtCore import QTimer, Signal, Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardwaretest.core.system_info import cpu_sockets
 from hardwaretest.core.test_runner import TestParameters
 from hardwaretest.tests.opendcdiag import OpenDcDiagRunner, default_opendcdiag_path, runs_as_root
 from hardwaretest.ui.i18n import language_manager
@@ -53,8 +55,22 @@ class OpenDcDiagPanel(QWidget):
 
         self.binary_path = QLineEdit(default_binary)
         self.binary_path.setClearButtonEnabled(True)
+        self.cpu_scope = QComboBox()
+        self.cpu_scope.addItem(language_manager.tr("Alle CPUs"), "")
+        for socket in cpu_sockets():
+            self.cpu_scope.addItem(language_manager.tr("Nur Sockel {n}").format(n=socket), f"p{socket}")
+        self.cpu_scope.addItem(language_manager.tr("Benutzerdefiniert …"), None)
+        self.cpu_scope.currentIndexChanged.connect(self._cpu_scope_changed)
         self.cpuset = QLineEdit()
-        self.cpuset.setPlaceholderText("leer = alle CPUs, z. B. 0-7,16 oder p1 für Sockel 1")
+        self.cpuset.setPlaceholderText(language_manager.tr(
+            "logische CPUs (Threads), z. B. 0-7,16; p1 = Sockel 1, c3 = Kern 3"))
+        self.cpuset.setEnabled(False)
+        cpu_row = QHBoxLayout()
+        cpu_row.setContentsMargins(0, 0, 0, 0)
+        cpu_row.addWidget(self.cpu_scope)
+        cpu_row.addWidget(self.cpuset, 1)
+        cpu_widget = QWidget()
+        cpu_widget.setLayout(cpu_row)
 
         self.duration_hours = QSpinBox()
         self.duration_hours.setRange(0, 240)
@@ -92,7 +108,7 @@ class OpenDcDiagPanel(QWidget):
 
         form = QFormLayout()
         form.addRow("Binary", self.binary_path)
-        form.addRow("CPU-Auswahl", self.cpuset)
+        form.addRow("CPU-Auswahl", cpu_widget)
         form.addRow("Dauer", duration)
 
         buttons = QHBoxLayout()
@@ -123,6 +139,16 @@ class OpenDcDiagPanel(QWidget):
         return (self.duration_hours.value() * 3600 + self.duration_minutes.value() * 60
                 + self.duration_seconds.value())
 
+
+    def _cpu_scope_changed(self, *_) -> None:
+        custom = self.cpu_scope.currentData() is None
+        self.cpuset.setEnabled(custom)
+        if not custom:
+            self.cpuset.setText(self.cpu_scope.currentData())
+
+    def selected_cpuset(self) -> str:
+        data = self.cpu_scope.currentData()
+        return self.cpuset.text() if data is None else data
     def start_test(self) -> None:
         if self.runner and self.runner.is_running():
             return
@@ -137,7 +163,7 @@ class OpenDcDiagPanel(QWidget):
         self.runner = OpenDcDiagRunner(
             TestParameters(duration_seconds=duration),
             binary_path=str(binary),
-            cpuset=self.cpuset.text(),
+            cpuset=self.selected_cpuset(),
             log_fn=self.log_signal.emit,
         )
         try:

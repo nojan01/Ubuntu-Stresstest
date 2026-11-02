@@ -25,6 +25,24 @@ def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def acpi_fan_metrics(thermal_root: Path = Path("/sys/class/thermal")) -> dict[str, float]:
+    """ACPI-Lüfter (``cooling_device*/type == Fan``) als Stufe in Prozent der Maximalstufe."""
+    metrics: dict[str, float] = {}
+    for device in sorted(thermal_root.glob("cooling_device*")):
+        try:
+            if (device / "type").read_text().strip() != "Fan":
+                continue
+            current = int((device / "cur_state").read_text())
+            maximum = int((device / "max_state").read_text())
+        except (OSError, ValueError):
+            continue
+        if maximum <= 0:
+            continue
+        index = device.name.removeprefix("cooling_device")
+        metrics[f"fan.acpi.{index}.percent"] = round(current / maximum * 100)
+    return metrics
+
+
 def collect_metrics(root_run=None) -> tuple[dict[str, float], list[str]]:
     """``root_run``: subprocess.run-kompatibler Root-Aufruf für IPMI (Lüfter/BMC-ECC)."""
     metrics: dict[str, float] = {"memory.percent": psutil.virtual_memory().percent}
@@ -51,6 +69,10 @@ def collect_metrics(root_run=None) -> tuple[dict[str, float], list[str]]:
         fans, missing_fans = ipmi.fan_metrics(ipmi_run)
         metrics.update(fans)
         unavailable.extend(missing_fans)
+    if not any(key.startswith("fan.") for key in metrics):
+        # Desktop-Boards ohne Super-I/O-Treiber (z. B. Lenovo IdeaCentre) melden nur
+        # ACPI-Kühlgeräte: kein RPM, aber die Stufe (cur_state/max_state) in Prozent.
+        metrics.update(acpi_fan_metrics())
     if not any(key.startswith("fan.") for key in metrics) and "fan" not in unavailable:
         unavailable.append("fan")
     for controller in Path("/sys/devices/system/edac/mc").glob("mc[0-9]*"):
@@ -195,7 +217,7 @@ class KernelEvents:
 class MonitorSession:
     """CSV on disk, bounded aggregates in memory. Reports do not expand with duration."""
 
-    def __init__(self, directory: Path, temperature_limit: float = 90, language: str = "de",
+    def __init__(self, directory: Path, temperature_limit: float = 100, language: str = "de",
                  collect=collect_metrics, journal=None) -> None:
         self.language = language
         self.limit = temperature_limit

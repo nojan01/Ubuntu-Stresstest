@@ -325,7 +325,7 @@ class SystemPanel(QWidget):
         headers = [""] + [f"{_t('Sockel', 'Socket')} {p.socket}" for p in self._packages]
         rows = [[label] + [getter(p) for p in self._packages] for label, getter in fields]
         rows = [row for row in rows if any(value not in (None, "") for value in row[1:])]
-        _fill(self.cpu_table, headers, rows)
+        _fill(self.cpu_table, headers, rows, max_height=None)
         flags = sorted({flag for p in self._packages for flag in p.flags})
         self.flags_label.setText(_t("Alle CPU-Flags: ", "All CPU flags: ") + (" ".join(flags) or "–"))
 
@@ -341,7 +341,7 @@ class SystemPanel(QWidget):
         headers = ["Cache", _t("Art", "Type"), _t("Je Kern/Cluster", "Per instance"), _t("Gesamt", "Total"),
                    _t("Assoziativität", "Ways"), "Sets"]
         rows = [[c.name, c.kind, c.one_size, c.all_size, c.ways, c.sets] for c in self._caches]
-        _fill(self.cache_table, headers, rows)
+        _fill(self.cache_table, headers, rows, max_height=None)
 
     def _show_board(self) -> None:
         board = self._board
@@ -360,7 +360,7 @@ class SystemPanel(QWidget):
         rows = [[label, board.get(key)] for label, key in fields if board.get(key)]
         if not board.get("product_serial") and self._memory and self._memory.system_serial:
             rows.append([_t("Seriennummer", "Serial number"), self._memory.system_serial])
-        _fill(self.board_table, [_t("Eigenschaft", "Property"), _t("Wert", "Value")], rows)
+        _fill(self.board_table, [_t("Eigenschaft", "Property"), _t("Wert", "Value")], rows, max_height=None)
 
     def _show_memory(self) -> None:
         headers = [_t("Steckplatz", "Slot"), "Bank", _t("Größe", "Size"), _t("Typ", "Type"),

@@ -10,11 +10,11 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-    QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QScrollArea, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from hardwaretest.core import hpe_raid, ipmi
@@ -193,6 +193,14 @@ def _table(headers: int) -> QTableWidget:
     return table
 
 
+def _fit_height(table: QTableWidget, max_rows: int = 25) -> None:
+    """Tabelle so hoch wie ihr Inhalt (bis max_rows), damit der Reiter als Ganzes scrollt."""
+    header = table.horizontalHeader().height()
+    rows = min(table.rowCount(), max_rows)
+    row_height = table.verticalHeader().defaultSectionSize()
+    table.setMinimumHeight(max(120, header + rows * row_height + 2 * table.frameWidth() + 4))
+
+
 def _fill(table: QTableWidget, rows: list[tuple[list[str], str]]) -> None:
     table.setSortingEnabled(False)
     table.setRowCount(len(rows))
@@ -302,7 +310,13 @@ class ProliantPanel(QWidget):
             self._timer.start()
 
     def _build_raid_page(self) -> QWidget:
+        # Scrollbar wie im System-Tab: Tabellen und Rohausgabe erhalten ihre volle Hoehe,
+        # der Reiter scrollt als Ganzes.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         page = QWidget()
+        scroll.setWidget(page)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         header = QHBoxLayout()
@@ -316,20 +330,21 @@ class ProliantPanel(QWidget):
         layout.addLayout(header)
         self.raid_findings = QPlainTextEdit()
         self.raid_findings.setReadOnly(True)
-        self.raid_findings.setMaximumHeight(110)
+        self.raid_findings.setMinimumHeight(110)
+        self.raid_findings.setMaximumHeight(220)
         layout.addWidget(self.raid_findings)
-        splitter = QSplitter(Qt.Orientation.Vertical)
         self.raid_controllers = _table(9)
         self.raid_lds = _table(8)
         self.raid_pds = _table(13)
+        for table in (self.raid_controllers, self.raid_lds, self.raid_pds):
+            table.setMinimumHeight(120)
+            layout.addWidget(table)
         self.raid_raw = QPlainTextEdit()
         self.raid_raw.setReadOnly(True)
         self.raid_raw.setPlaceholderText("ssacli / storcli …")
-        for widget in (self.raid_controllers, self.raid_lds, self.raid_pds, self.raid_raw):
-            splitter.addWidget(widget)
-        splitter.setSizes([120, 120, 260, 160])
-        layout.addWidget(splitter, 1)
-        return page
+        self.raid_raw.setMinimumHeight(600)
+        layout.addWidget(self.raid_raw, 1)
+        return scroll
 
     def show_raid_tab(self) -> None:
         """Zeigt den Reiter „RAID“ und liest aus, falls noch keine Daten vorliegen."""
@@ -515,9 +530,9 @@ class ProliantPanel(QWidget):
         findings.extend(_t("Fehler: ", "Error: ") + e for e in report.errors)
         self.raid_findings.setPlainText("\n".join(findings) or _t("Keine Befunde.", "No findings."))
         ctrl_rows, ld_rows, pd_rows = self._raid_rows(report)
-        _fill(self.raid_controllers, ctrl_rows)
-        _fill(self.raid_lds, ld_rows)
-        _fill(self.raid_pds, pd_rows)
+        for table, rows in ((self.raid_controllers, ctrl_rows), (self.raid_lds, ld_rows), (self.raid_pds, pd_rows)):
+            _fill(table, rows)
+            _fit_height(table)
         self.raid_raw.setPlainText(report.raw_text() or report.hint)
 
     def save_ssaducli(self):

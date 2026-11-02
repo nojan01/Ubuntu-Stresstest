@@ -166,3 +166,30 @@ def test_dcgm_report_handles_legacy_schema():
     runner.output_lines = json.dumps(payload).splitlines()
     text = "\n".join(runner.report_lines("de"))
     assert "✓ PCIe – GPU 0,1: bestanden" in text and "Warnung: Low bandwidth" in text
+
+
+def test_dcgm_report_handles_dcgm4_schema_and_extra_top_level_keys():
+    import json
+
+    payload = {
+        "DCGM Diagnostic": {
+            "Metadata": {"DCGM Version": "4.2.3", "Driver Version Detected": "580.65"},
+            "test_categories": [
+                {"category": "Integration", "tests": [
+                    {"name": "pcie", "test_summary": {"status": "Pass"}, "results": [
+                        {"entity_group": "GPU", "entity_group_id": 1, "entity_id": 0,
+                         "status": "Pass", "info": ["GPU to Host bandwidth:\t13.53 GB/s"]}]},
+                    {"name": "memory", "test_summary": {"status": "Skip"}, "results": []},
+                ]},
+            ],
+        },
+        "Other": {"ignored": True},
+    }
+    runner = DcgmDiagnosticRunner(TestParameters(0), [0], 2)
+    runner.output_lines = json.dumps(payload, indent=1).splitlines()
+    text = "\n".join(runner.report_lines("de"))
+    assert "DCGM-Diagnose (DCGM 4.2.3)" in text and "Treiber: 580.65" in text
+    assert "✓ pcie – GPU 0: bestanden" in text
+    assert "Info: GPU to Host bandwidth: 13.53 GB/s" in text
+    assert "– memory: übersprungen" in text
+    assert "{" not in text

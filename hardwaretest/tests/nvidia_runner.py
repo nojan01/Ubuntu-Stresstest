@@ -163,43 +163,94 @@ def _messages(value: object) -> list[str]:
     return [str(value)]
 
 
+def _find_categories(value: object) -> tuple[Optional[dict], list]:
+    """Sucht rekursiv den Block mit ``test_categories`` (DCGM 2.x–4.x) bzw. eine Testliste."""
+    if isinstance(value, dict):
+        categories = value.get("test_categories")
+        if isinstance(categories, list):
+            return value, categories
+        tests = value.get("tests")
+        if isinstance(tests, list) and tests and all(isinstance(t, dict) and "results" in t for t in tests):
+            return value, [{"category": value.get("category", ""), "tests": tests}]
+        for nested in value.values():
+            root, found = _find_categories(nested)
+            if found:
+                return root, found
+    elif isinstance(value, list):
+        for nested in value:
+            root, found = _find_categories(nested)
+            if found:
+                return root, found
+    return None, []
+
+
+def _lookup(payload: object, keys: Sequence[str]) -> object:
+    """Erster Treffer eines Schluessels im Kopfbereich (nicht innerhalb der Testergebnisse)."""
+    if isinstance(payload, dict):
+        for key in keys:
+            if payload.get(key) not in (None, "", [], {}):
+                return payload[key]
+        for name, nested in payload.items():
+            if name == "test_categories":
+                continue
+            found = _lookup(nested, keys)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for nested in payload:
+            found = _lookup(nested, keys)
+            if found is not None:
+                return found
+    return None
+
+
+def _entity_label(result: dict) -> str:
+    gpu = result.get("gpu_id", result.get("gpu_ids"))
+    if gpu not in (None, ""):
+        return f"GPU {gpu}"
+    entity = result.get("entity_id")
+    if entity in (None, ""):
+        entity = (result.get("entity") or {}).get("entity_id") if isinstance(result.get("entity"), dict) else None
+    if entity in (None, ""):
+        return ""
+    group = str(result.get("entity_group") or "GPU")
+    return f"{group} {entity}"
+
+
 def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
     words = _STATUS_WORDS.get(language, _STATUS_WORDS["de"])
     de = language != "en"
-    root = payload
-    if isinstance(root, dict) and len(root) == 1 and isinstance(next(iter(root.values())), dict):
-        root = next(iter(root.values()))
-    if not isinstance(root, dict):
-        return [json.dumps(payload, indent=2, ensure_ascii=False)]
+    _root, categories = _find_categories(payload)
 
     lines: list[str] = []
     label = "DCGM-Diagnose" if de else "DCGM diagnostic"
-    version = root.get("version")
+    version = _lookup(payload, ("version", "DCGM Version", "dcgm_version"))
     lines.append(f"{label}" + (f" (DCGM {version})" if version else ""))
-    driver = root.get("Driver Version Detected") or root.get("driver_version")
+    driver = _lookup(payload, ("Driver Version Detected", "driver_version", "Driver Version"))
     if driver:
         lines.append(("Treiber: " if de else "Driver: ") + str(driver))
-    serials = root.get("GPU Device Serials")
-    if isinstance(serials, dict) and serials:
-        pairs = ", ".join(f"GPU {gpu}: {sn}" if sn else f"GPU {gpu}: ?" for gpu, sn in serials.items())
+    serials = _lookup(payload, ("GPU Device Serials", "gpu_serials"))
+    if isinstance(serials, dict):
+        pairs = ", ".join(f"GPU {gpu}: {sn or '?'}" for gpu, sn in serials.items())
         lines.append(("Seriennummern: " if de else "Serial numbers: ") + pairs)
-    dev_ids = root.get("GPU Device IDs")
-    if isinstance(dev_ids, list) and dev_ids:
+    dev_ids = _lookup(payload, ("GPU Device IDs", "gpu_device_ids"))
+    if isinstance(dev_ids, list):
         lines.append(("Geräte-IDs: " if de else "Device IDs: ") + ", ".join(str(d) for d in dev_ids))
 
-    categories = root.get("test_categories")
-    if not isinstance(categories, list):
-        categories = []
     for category in categories:
         if not isinstance(category, dict):
             continue
         lines.append("")
-        lines.append(f"[{category.get('category', '?')}]")
+        name_cat = category.get("category") or category.get("name") or "?"
+        lines.append(f"[{name_cat}]")
         for test in category.get("tests") or []:
             if not isinstance(test, dict):
                 continue
             name = str(test.get("name", "?"))
-            results = test.get("results") or []
+            results = test.get("results")
+            if results in (None, "", []):
+                summary = test.get("test_summary") if isinstance(test.get("test_summary"), dict) else {}
+                results = [{"status": summary.get("status", test.get("status", "?"))}]
             if not isinstance(results, list):
                 results = [results]
             for result in results:
@@ -208,9 +259,8 @@ def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
                 key = _status_key(result.get("status"))
                 symbol = _STATUS_SYMBOLS.get(key, "?") if key else "?"
                 status_text = words[key] if key else str(result.get("status", "?"))
-                gpu = result.get("gpu_id", result.get("gpu_ids", result.get("entity_id")))
-                target = f" – GPU {gpu}" if gpu not in (None, "") else ""
-                lines.append(f"  {symbol} {name}{target}: {status_text}")
+                target = _entity_label(result)
+                lines.append(f"  {symbol} {name}{' – ' + target if target else ''}: {status_text}")
                 for text in _messages(result.get("warnings")):
                     lines.append(("      Warnung: " if de else "      Warning: ") + text)
                 for text in _messages(result.get("errors")):
@@ -219,7 +269,7 @@ def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
                     lines.append("      Info: " + text)
 
     for key_name in ("errors", "warnings"):
-        texts = _messages(root.get(key_name))
+        texts = _messages(_lookup(payload, (key_name,)))
         if texts:
             lines.append("")
             lines.append(("Fehler:" if key_name == "errors" else "Warnungen:") if de else key_name.capitalize() + ":")
@@ -227,6 +277,7 @@ def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
 
     if not categories:
         lines.append("")
+        lines.append("Unbekanntes Ergebnisformat – Rohdaten:" if de else "Unknown result format – raw data:")
         lines.append(json.dumps(payload, indent=2, ensure_ascii=False))
     return lines
 

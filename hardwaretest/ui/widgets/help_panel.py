@@ -1303,7 +1303,7 @@ progress, cancelled scans and old results are not treated as successful new test
 including ext2/3/4, Btrfs, XFS, FAT/exFAT and NTFS: mount state, space and available
 error indications. It is not a complete integrity check.</p>
 <p>Full integrity checking for <b>offline</b> filesystems: e2fsck -f -n (ext2/3/4),
-xfs_repair -n (XFS), btrfs check --readonly --check-data-csum (Btrfs, incl. data checksums), fsck.fat -n (vfat)
+xfs_repair -n (XFS), btrfs check --readonly --check-data-csum (Btrfs, incl. data checksums), fsck.fat -n (vfat), fsck.exfat -n (exFAT)
 and unsquashfs -pf /dev/null (squashfs, reads all data blocks). Every check is strictly read-only.
 <b>NTFS</b>: ntfsfix -n performs a read-only <i>basic</i> check only (boot sector, MFT/MFT mirror, dirty flag,
 volume start-up); Linux has no full NTFS structure check – for that run <code>chkdsk /f</code> under Windows.
@@ -1363,7 +1363,7 @@ alte Ergebnisse werden nicht als erfolgreicher neuer Test gewertet.</p>
 auch ext2/3/4, Btrfs, XFS, FAT/exFAT und NTFS: Einhängezustand, Speicherplatz und verfügbare
 Fehlerhinweise. Dies ist keine vollständige Strukturprüfung.</p>
 <p>Vollständige Strukturprüfung für <b>ausgehängte</b> Dateisysteme: e2fsck -f -n (ext2/3/4),
-xfs_repair -n (XFS), btrfs check --readonly --check-data-csum (Btrfs, inkl. Datenprüfsummen), fsck.fat -n (vfat)
+xfs_repair -n (XFS), btrfs check --readonly --check-data-csum (Btrfs, inkl. Datenprüfsummen), fsck.fat -n (vfat), fsck.exfat -n (exFAT)
 und unsquashfs -pf /dev/null (squashfs, liest alle Datenblöcke). Jede Prüfung ist strikt lesend.
 <b>NTFS</b>: ntfsfix -n führt nur eine lesende <i>Basisprüfung</i> durch (Bootsektor, MFT/MFT-Spiegel, Dirty-Flag,
 Volume-Start); eine vollständige NTFS-Strukturprüfung gibt es unter Linux nicht – dafür unter Windows

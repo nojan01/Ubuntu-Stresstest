@@ -18,7 +18,7 @@ from hardwaretest.core.paths import self_command_for_root
 # VMware ESXi-Datenspeicher; blkid meldet je nach Lage VMFS oder VMFS_volume_member.
 VMFS_TYPES = {"VMFS", "VMFS_volume_member"}
 NTFS_TYPES = {"ntfs", "ntfs3"}
-CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs", "btrfs", *NTFS_TYPES, *VMFS_TYPES}
+CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "exfat", "squashfs", "btrfs", *NTFS_TYPES, *VMFS_TYPES}
 # Das Programm prüft Dateisysteme ausschließlich lesend. Reparaturen (e2fsck -p,
 # xfs_repair, fsck.fat -a, btrfs check --repair …) verändern Metadaten und können
 # Daten entfernen – sie bleiben bewusst dem Administrator auf der Kommandozeile
@@ -33,6 +33,7 @@ _TOOLS = {
     "fsck.vmfs": ("/usr/sbin/fsck.vmfs", "/sbin/fsck.vmfs", "vmfs-tools"),
     "btrfs": ("/usr/bin/btrfs", "/usr/sbin/btrfs", "btrfs-progs"),
     "ntfsfix": ("/usr/bin/ntfsfix", "/usr/sbin/ntfsfix", "ntfs-3g"),
+    "fsck.exfat": ("/usr/sbin/fsck.exfat", "/sbin/fsck.exfat", "exfatprogs"),
 }
 
 # Ausgabe von fsck.fat, die bei ESXi-Bootbanks (BOOTBANK1/2) immer auftritt: ESXi
@@ -124,7 +125,7 @@ def validate_device(expected: FilesystemDevice, action: str = "check") -> Filesy
     """Fail closed on identity changes, mounts, active layers or unreadable state."""
     current = validate_identity(expected)
     if not current.supported or current.kind not in {"part", "disk", "lvm", "crypt", "loop", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10", "md"}:
-        raise ValueError("Only offline ext2/3/4, xfs, btrfs, vfat, ntfs, squashfs, VMFS / Nur ext2/3/4, xfs, btrfs, vfat, ntfs, squashfs, VMFS offline unterstützt.")
+        raise ValueError("Only offline ext2/3/4, xfs, btrfs, vfat, exfat, ntfs, squashfs, VMFS / Nur ext2/3/4, xfs, btrfs, vfat, exfat, ntfs, squashfs, VMFS offline unterstützt.")
     if action == "check" and current.checkable_while_mounted:
         return current
     numbers = mounted_numbers(Path("/proc/self/mountinfo").read_text())
@@ -148,6 +149,9 @@ def checker_command(action: str, device: str, fstype: str = "ext4") -> list[str]
         return [_tool("xfs_repair"), "-n", device]
     if fstype == "vfat":
         return [_tool("fsck.fat"), "-n", device]
+    if fstype == "exfat":
+        # exfatprogs: -n prüft vollständig, schreibt nie.
+        return [_tool("fsck.exfat"), "-n", device]
     if fstype == "squashfs":
         if _unsquashfs_full_read():
             # -pf liest alle Metadaten UND alle Datenblöcke (inkl. Dekomprimierung).
@@ -249,6 +253,9 @@ def read_online_status(device: FilesystemDevice, language: str = "de") -> tuple[
     elif device.fstype in NTFS_TYPES:
         lines.append(t("NTFS: kein Fehlerzähler im Kernel. Offline-Basisprüfung mit ntfsfix -n möglich; vollständige Prüfung nur unter Windows (chkdsk).",
                        "NTFS: no kernel error counter. Offline basic check via ntfsfix -n; full check only under Windows (chkdsk)."))
+    elif device.fstype == "exfat":
+        lines.append(t("exFAT: kein Fehlerzähler im Kernel. Offline-Strukturprüfung mit fsck.exfat -n möglich.",
+                       "exFAT: no kernel error counter. Offline structure check via fsck.exfat -n available."))
     else:
         lines.append(t("Für diesen Typ ist kein ext4-Fehlerzähler verfügbar.", "No ext4 error counter for this filesystem type."))
     try:
@@ -329,6 +336,11 @@ def normalize_exit(fstype: str, action: str, code: int, output: str = "") -> int
         if code == 0:
             return 0
         return 4 if code == 1 else 8
+    if fstype == "exfat":
+        # exfatprogs: 0 = sauber, 4 = Fehler verbleiben; 2/8/16/32 = nicht prüfbar.
+        if code == 0:
+            return 0
+        return 4 if code in (1, 4) else 8
     if fstype == "squashfs":
         return 0 if code == 0 else 4
     if fstype == "btrfs":

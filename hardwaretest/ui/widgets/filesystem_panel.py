@@ -47,9 +47,9 @@ class FilesystemPanel(QWidget):
         hint.setWordWrap(True)
         self.bind(hint,
                   "Eingehängte Dateisysteme: Statusdiagnose mit Einhängezustand, Speicherplatz und verfügbaren Fehlerhinweisen. "
-                  "Vollständige Strukturprüfung (nur lesend) für ext2/3/4, xfs, btrfs, vfat, squashfs und VMFS sowie eine NTFS-Basisprüfung (ntfsfix -n) nur ausgehängt; für die Systempartition ein Live-USB verwenden. Das Programm repariert nicht – Reparaturwerkzeuge (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) liegen dem Live-Image bei.",
+                  "Vollständige Strukturprüfung (nur lesend) für ext2/3/4, xfs, btrfs, vfat, exfat, squashfs und VMFS sowie eine NTFS-Basisprüfung (ntfsfix -n) nur ausgehängt; für die Systempartition ein Live-USB verwenden. Das Programm repariert nicht – Reparaturwerkzeuge (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) liegen dem Live-Image bei.",
                   "Mounted filesystems: status diagnosis with mount state, free space and available error indications. "
-                  "Full read-only integrity check for ext2/3/4, xfs, btrfs, vfat, squashfs and VMFS plus an NTFS basic check (ntfsfix -n) requires an unmounted filesystem; use a live USB for the system partition. The program never repairs – repair tools (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) ship with the live image.")
+                  "Full read-only integrity check for ext2/3/4, xfs, btrfs, vfat, exfat, squashfs and VMFS plus an NTFS basic check (ntfsfix -n) requires an unmounted filesystem; use a live USB for the system partition. The program never repairs – repair tools (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) ship with the live image.")
         layout.addWidget(hint)
         self.devices = QComboBox()
         self.devices.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)

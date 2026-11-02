@@ -88,7 +88,7 @@ entspricht der derzeitigen Priorität.
   liegen dem Live-ISO bei.
 - NTFS: lesende Basisprüfung mit `ntfsfix -n` (Bootsektor, MFT, Dirty-Flag) – umgesetzt in 0.2.61;
   eine vollständige Strukturprüfung existiert unter Linux nicht (Windows `chkdsk`).
-- Noch offen: exFAT (Statusdiagnose vorhanden, keine Struktur-Prüfung; `fsck.exfat -n` wäre möglich).
+- exFAT: lesende Strukturprüfung mit `fsck.exfat -n` – umgesetzt in 0.2.61.
 - ZFS-Poolstatus, geführter Scrub mit Fortschritt/Stop und Text-/HTML-/CSV-Protokoll – umgesetzt in 0.2.28.
 - ZFS-Scrub im Gesamttestplan – umgesetzt in 0.2.61.
 - Noch offen: echte ZFS-Pool-Validierung auf Ubuntu 24.04/26.04.

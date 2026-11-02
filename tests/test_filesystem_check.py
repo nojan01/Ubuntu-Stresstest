@@ -84,7 +84,7 @@ def test_commands_and_exit_codes_are_conservative():
 def test_inventory_includes_mounted_and_unsupported_for_explanation(monkeypatch):
     rows = {"blockdevices": [{"name": "/dev/test", "children": [
         {"name": "/dev/test0", "type": "part", "fstype": "ext4", "uuid": "abc", "maj:min": "8:1", "mountpoints": ["/"]},
-        {"name": "/dev/test1", "type": "part", "fstype": "exfat", "uuid": "xyz", "maj:min": "8:2", "mountpoints": [None]},
+        {"name": "/dev/test1", "type": "part", "fstype": "hfsplus", "uuid": "xyz", "maj:min": "8:2", "mountpoints": [None]},
     ]}]}
     monkeypatch.setattr(fs.subprocess, "run", lambda *_a, **_kw: SimpleNamespace(stdout=json.dumps(rows)))
     devices = fs.list_filesystems()
@@ -389,4 +389,31 @@ def test_ntfs_check_real_temporary_image(tmp_path):
         file.write(b"\0" * 100)
     damaged = image.read_bytes()
     assert fs.run_checker("check", str(image), "ntfs") == 4
+    assert image.read_bytes() == damaged
+
+
+def test_exfat_is_checkable_read_only():
+    device = fs.FilesystemDevice("/dev/x", "exfat", "u", "8:1", (), "part")
+    assert device.supported
+    command = fs.checker_command("check", "/dev/x", "exfat")
+    assert command[0].endswith("fsck.exfat") and command[1:] == ["-n", "/dev/x"]
+    assert fs.normalize_exit("exfat", "check", 0) == 0
+    assert fs.normalize_exit("exfat", "check", 4) == 4
+    assert fs.normalize_exit("exfat", "check", 8) == 8
+    assert fs.normalize_exit("exfat", "check", 16) == 8
+
+
+@pytest.mark.skipif(shutil.which("mkfs.exfat") is None or shutil.which("fsck.exfat") is None, reason="exfatprogs fehlen")
+def test_exfat_check_real_temporary_image(tmp_path):
+    image = tmp_path / "disposable-exfat.img"
+    with image.open("wb") as file:
+        file.truncate(64 * 1024 * 1024)
+    subprocess.run(["mkfs.exfat", str(image)], check=True, capture_output=True)
+    before = image.read_bytes()
+    assert fs.run_checker("check", str(image), "exfat") == 0
+    assert image.read_bytes() == before
+    with image.open("r+b") as file:
+        file.write(b"\0" * 100)
+    damaged = image.read_bytes()
+    assert fs.run_checker("check", str(image), "exfat") == 8
     assert image.read_bytes() == damaged

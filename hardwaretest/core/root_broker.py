@@ -118,6 +118,10 @@ while IFS= read -r line; do
     case "${1:-}" in
       dcgmi) ;;
       nvme) case "${2:-}" in smart-log|self-test-log|device-self-test) ;; *) ok=0;; esac ;;
+      smartctl|/usr/sbin/smartctl)
+        # Nur lesende SMART-Abfrage ganzer Datentraeger im JSON-Format.
+        [ $# -eq 4 ] && [ "$2" = "-a" ] && [ "$3" = "-j" ] || ok=0
+        case "${4:-}" in /dev/sd[a-z]|/dev/sd[a-z][a-z]|/dev/sd[a-z][a-z][a-z]|/dev/nvme[0-9]|/dev/nvme[0-9][0-9]) ;; *) ok=0;; esac ;;
       ipmitool) case "${2:-} ${3:-}" in "sdr type"|"sdr elist"|"sel list"|"sel elist"|"sel info"|"mc info") ;; *) ok=0;; esac ;;
       dmidecode) [ $# -eq 3 ] && [ "$2" = "-t" ] && case "$3" in memory|system) true;; *) false;; esac || ok=0 ;;
       ilorest) [ "$*" = "ilorest --nologo serverlogs --selectlog=IML --json" ] || ok=0 ;;

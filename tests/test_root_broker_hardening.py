@@ -410,3 +410,19 @@ def test_script_uses_restrictive_umask_and_fixed_path_under_pkexec():
     assert "umask 077" in script
     assert "PATH=/usr/sbin:/usr/bin:/sbin:/bin" in script
     assert subprocess.run(["sh", "-n", "-c", script]).returncode == 0
+
+
+# ----------------------------------------------------------------- smartctl für SATA/SAS/USB
+
+
+def test_smartctl_is_only_allowed_read_only_for_disk_and_nvme_paths(tmp_path):
+    _install(tmp_path, "smartctl", 'echo "smart $*"; exit 0')
+    broker = _broker(tmp_path)
+    broker.start()
+    assert broker.run(["smartctl", "-a", "-j", "/dev/sda"], timeout=10).stdout.strip() == "smart -a -j /dev/sda"
+    assert broker.run(["smartctl", "-a", "-j", "/dev/nvme0"], timeout=10).returncode == 0
+    for bad in (["smartctl", "-t", "long", "/dev/sda"], ["smartctl", "-a", "-j", "/dev/sda1"],
+                ["smartctl", "-a", "-j", "/etc/passwd"], ["smartctl", "-s", "off", "/dev/sda"]):
+        with pytest.raises(RuntimeError):
+            broker.run(bad, timeout=10)
+    broker.close()

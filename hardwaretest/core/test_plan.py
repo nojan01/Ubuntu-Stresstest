@@ -23,12 +23,15 @@ from hardwaretest.core import device_inventory, hardware_inventory, ipmi, prolia
 from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
+from hardwaretest.core.block_disks import (
+    BlockDisk, list_block_disks, read_disk_smart, smart_lines, smart_regressions, smartctl_available,
+)
 from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices, read_nvme_smart
 from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.system_info import read_system_info
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.network import NetworkRunner, invalid_measurements, threshold_failures
-from hardwaretest.tests.fio_runner import FioNvmeFullReadRunner
+from hardwaretest.tests.fio_runner import FioDiskFullReadRunner, FioNvmeFullReadRunner
 from hardwaretest.tests.opendcdiag import (
     OpenDcDiagRunner,
     default_opendcdiag_path,
@@ -62,7 +65,12 @@ class TestPlanConfig:
     nvme_enabled: bool = True
     nvme_read_enabled: bool = False
     nvme_devices: tuple[NvmeDevice, ...] = ()
+    disk_read_enabled: bool = False
+    disk_devices: tuple[BlockDisk, ...] = ()
     rounds: int = 1
+    # Optionale Endzeit: Der Plan wiederholt sich (bis ``rounds``), startet aber keinen
+    # weiteren Teiltest mehr, sobald diese Zeit erreicht ist.
+    end_time: Optional[datetime] = None
     ping_enabled: bool = False
     network_target: str = ""
     ping_count: int = 20
@@ -108,6 +116,8 @@ class TestPlanResult:
     csv_report: Optional[Path] = None
     completed_rounds: int = 1
     requested_rounds: int = 1
+    end_time: Optional[datetime] = None
+    end_time_reached: bool = False
     system_info: list[str] = field(default_factory=list)
 
 
@@ -188,6 +198,8 @@ class TestPlanExecutor:
             steps.append("nvme")
         if config.nvme_read_enabled:
             steps.append("nvme_read")
+        if config.disk_read_enabled:
+            steps.append("disk_read")
         if config.ping_enabled:
             steps.append("ping")
         if config.iperf_enabled:
@@ -223,6 +235,10 @@ class TestPlanExecutor:
         rounds = int(self.config.rounds)
         if not 1 <= rounds <= 10_000:
             raise ValueError("Durchläufe / Rounds: 1–10000")
+        end_time = self.config.end_time
+        if end_time is not None and end_time <= datetime.now():
+            raise ValueError("Endzeit liegt in der Vergangenheit / End time is in the past")
+        end_time_reached = False
         validated_sensor_limits(dict(self.config.sensor_temperature_limits))
         for value, maximum in ((self.config.max_packet_loss_percent, 100),
                                (self.config.max_latency_avg_ms, 60_000),
@@ -241,6 +257,7 @@ class TestPlanExecutor:
             "ram": self._run_ram,
             "nvme": self._run_nvme,
             "nvme_read": self._run_nvme_read,
+            "disk_read": self._run_disk_read,
             "ping": self._run_ping,
             "iperf3": self._run_iperf,
             "nvidia": self._run_nvidia,
@@ -279,6 +296,11 @@ class TestPlanExecutor:
                     if self._cancel.is_set() or self._safety_triggered():
                         round_complete = False
                         break
+                    if end_time is not None and datetime.now() >= end_time:
+                        end_time_reached = True
+                        round_complete = index == 0 and round_index > 0
+                        self._log(_text("Endzeit erreicht – keine weiteren Teiltests.", self.config.language))
+                        break
                     name = _step_name(key, self.config.language)
                     label = (f"Durchlauf {round_index + 1}/{rounds}: {name}" if self.config.language == "de"
                              else f"Round {round_index + 1}/{rounds}: {name}")
@@ -304,9 +326,9 @@ class TestPlanExecutor:
                         round_complete = index == len(step_keys) - 1 and result.status != STATUS_CANCELLED
                         stop = True
                         break
-                if round_complete:
+                if round_complete and not end_time_reached:
                     completed_rounds += 1
-                if stop or not round_complete or not step_keys:
+                if stop or not round_complete or not step_keys or end_time_reached:
                     break
         results = [item.result(self.config.language, rounds > 1) for item in aggregates.values()]
 
@@ -346,6 +368,8 @@ class TestPlanExecutor:
             csv_report=csv_path,
             completed_rounds=completed_rounds,
             requested_rounds=rounds,
+            end_time=end_time,
+            end_time_reached=end_time_reached,
             system_info=system_info,
         )
         text_path, html_path = write_test_plan_reports(
@@ -355,6 +379,74 @@ class TestPlanExecutor:
         plan_result.html_report = html_path
         self._progress(completed_rounds * len(step_keys), rounds * len(step_keys), "")
         return plan_result
+
+    def _validated_disks(self, detected: list[BlockDisk]) -> list[BlockDisk]:
+        by_path = {disk.path: disk for disk in detected}
+        selected = []
+        for expected in self.config.disk_devices:
+            actual = by_path.get(expected.path)
+            if (actual is None or actual.serial != expected.serial or actual.model != expected.model
+                    or actual.size_bytes != expected.size_bytes):
+                message = ("Datenträger fehlt oder Identität hat sich geändert: " if self.config.language == "de"
+                           else "Disk missing or identity changed: ")
+                raise RuntimeError(message + expected.path)
+            selected.append(actual)
+        return selected
+
+    def _run_disk_read(self) -> TestPlanStepResult:
+        if not shutil.which("fio"):
+            return self._skipped("disk_read", "fio ist nicht installiert.")
+        if not self.config.disk_devices:
+            return self._instant_result("disk_read", STATUS_FAILED,
+                                        _text("Kein Datenträger für den Lesetest ausgewählt.", self.config.language))
+        disks = self._validated_disks(list_block_disks())
+        details = [f"{d.path} | {d.kind} | {d.model} | SN {d.serial} | {d.size_bytes} B" for d in disks]
+        before = {}
+        smart_missing: list[str] = []
+        for disk in disks:
+            if self._cancel.is_set() or self._safety_triggered():
+                return self._instant_result("disk_read", STATUS_CANCELLED if self._cancel.is_set()
+                                            else STATUS_FAILED, "Lesetest abgebrochen.", details)
+            smart = read_disk_smart(disk.path, self._nvme_run) if smartctl_available() else None
+            if smart is None or not smart.available:
+                # Hinter RAID-Controllern liefern logische Laufwerke kein SMART; der
+                # Lesetest läuft trotzdem, der Vergleich entfällt.
+                smart_missing.append(disk.path + (f" ({smart.error})" if smart and smart.error else ""))
+            else:
+                before[disk.path] = smart
+        if smart_missing:
+            details.append(_text("SMART nicht verfügbar (kein Vorher/Nachher-Vergleich): ", self.config.language)
+                           + ", ".join(smart_missing))
+        self._validated_disks(list_block_disks())
+        total = sum(d.size_bytes for d in disks)
+        runner = FioDiskFullReadRunner(
+            TestParameters(0), [d.path for d in disks], total_bytes=total,
+            use_pkexec=False, log_fn=lambda _line: None,
+        )
+        self._attach_root(runner)
+        result = self._run_process_step("disk_read", runner,
+            summary_extra=f"{len(disks)} {_text('Datenträger', self.config.language)}; {total / 1024**3:.1f} GiB")
+        details.extend(result.details)
+        if result.status != STATUS_CANCELLED and not self._safety_triggered():
+            for path, initial in before.items():
+                try:
+                    final = read_disk_smart(path, self._nvme_run)
+                    if not final.available:
+                        raise RuntimeError(final.error or "SMART")
+                    details.extend(smart_lines(path, initial, final))
+                    problems = smart_regressions(initial, final)
+                    if problems:
+                        result.status = STATUS_FAILED
+                        details.append(_text("SMART-Warnung nach Lesetest.", self.config.language)
+                                       + " " + "; ".join(problems))
+                except Exception as exc:
+                    result.status = STATUS_FAILED
+                    details.append(f"SMART {path}: {exc}")
+        result.summary = _status_label(result.status, self.config.language) + " | " + (
+            "Vollständiger Lesetest, keine Schreibzugriffe" if self.config.language == "de"
+            else "Full read test, no writes") + f" | {len(disks)} {_text('Datenträger', self.config.language)}"
+        result.details = _bounded_details(details, language=self.config.language)
+        return result
 
     def _safety_triggered(self) -> bool:
         return self._monitor is not None and self._monitor.tripped.is_set()
@@ -783,7 +875,7 @@ class TestPlanExecutor:
         if os.geteuid() == 0 or not shutil.which("pkexec"):
             return False
         keys = set(self.selected_step_keys())
-        return (bool(keys & {"nvme", "nvme_read"}) or ("dcgm" in keys and dcgmi_available())
+        return (bool(keys & {"nvme", "nvme_read", "disk_read"}) or ("dcgm" in keys and dcgmi_available())
                 or ("opendcdiag" in keys and opendcdiag_available()
                     and not runs_as_root(default_opendcdiag_path()))
                 or (self.config.monitoring_enabled and ipmi.ipmi_available())
@@ -921,7 +1013,8 @@ def render_text_report(result: TestPlanResult, language: str = "de") -> str:
         f"{_text('Beginn', language)}: {result.started_at}",
         f"{_text('Ende', language)}: {result.finished_at}",
         f"{_text('Gesamtergebnis', language)}: {_status_label(result.status, language)}",
-        f"{_text('Durchläufe vollständig', language)}: {result.completed_rounds}/{result.requested_rounds}",
+        f"{_text('Durchläufe vollständig', language)}: {result.completed_rounds}/{result.requested_rounds}"
+        + _end_time_note(result, language),
         f"CSV: {result.csv_report or '–'}",
         "",
     ]
@@ -974,7 +1067,7 @@ pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#111318;padding:12px
 </style></head><body><main><header><h1>{escape(title)}</h1>
 <div>{escape(result.hostname)} · Hardwaretest {escape(__version__)} · Kernel {escape(platform.release())}</div>
 <div class="meta">{escape(result.started_at)} – {escape(result.finished_at)}</div>
-<div>{escape(_text('Durchläufe vollständig', language))}: {result.completed_rounds}/{result.requested_rounds}</div>
+<div>{escape(_text('Durchläufe vollständig', language))}: {result.completed_rounds}/{result.requested_rounds}{escape(_end_time_note(result, language))}</div>
 <div>CSV: {escape(str(result.csv_report or '–'))}</div>
 <div class="summary">{escape(_text('Gesamtergebnis', language))}: {escape(_status_label(result.status, language))}</div>
 </header>{''.join(cards)}</main></body></html>"""
@@ -990,6 +1083,15 @@ def _overall_status(results: list[TestPlanStepResult], cancelled: bool) -> str:
     return STATUS_SKIPPED
 
 
+def _end_time_note(result: TestPlanResult, language: str) -> str:
+    if result.end_time is None:
+        return ""
+    stamp = result.end_time.strftime("%Y-%m-%d %H:%M")
+    if result.end_time_reached:
+        return f" ({_text('Endzeit erreicht', language)}: {stamp})"
+    return f" ({_text('Endzeit', language)}: {stamp})"
+
+
 def _step_name(key: str, language: str) -> str:
     names = {
         "monitoring": ("Langzeitmonitoring", "Long-term monitoring"),
@@ -999,6 +1101,7 @@ def _step_name(key: str, language: str) -> str:
         "ram": ("RAM-Verifikation", "RAM verification"),
         "nvme": ("NVMe-/Laufwerksgesundheit", "NVMe / drive health"),
         "nvme_read": ("NVMe – vollständiger Lesetest", "NVMe – full read test"),
+        "disk_read": ("SATA/SAS/USB – vollständiger Lesetest", "SATA/SAS/USB – full read test"),
         "ping": ("Netzwerk-Ping", "Network ping"),
         "iperf3": ("Netzwerk-Durchsatz (iperf3)", "Network throughput (iperf3)"),
         "nvidia": ("NVIDIA-Treiber und GPU-Inventar", "NVIDIA driver and GPU inventory"),
@@ -1094,6 +1197,12 @@ def _bounded_details(
 def _text(source: str, language: str) -> str:
     translations = {
         "Durchläufe vollständig": "Completed rounds",
+        "Endzeit": "End time",
+        "Endzeit erreicht": "End time reached",
+        "Endzeit erreicht – keine weiteren Teiltests.": "End time reached – no further steps.",
+        "Kein Datenträger für den Lesetest ausgewählt.": "No disk selected for the read test.",
+        "SMART nicht verfügbar (kein Vorher/Nachher-Vergleich): ": "SMART unavailable (no before/after comparison): ",
+        "Datenträger": "disks",
         "Letztes Ergebnis": "Latest result",
         "Erster Fehler": "First failure",
         "fio oder nvme-cli ist nicht installiert.": "fio or nvme-cli is not installed.",

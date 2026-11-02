@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QStandardPaths, QThread, Signal, Qt
+from PySide6.QtCore import QDateTime, QStandardPaths, QThread, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDateTimeEdit,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -43,7 +45,8 @@ from hardwaretest.core.test_plan import (
 )
 from hardwaretest.tests.nvidia_runner import dcgmi_available
 from hardwaretest.tests.vulkan_runner import vulkan_loader_available
-from hardwaretest.core.nvme import list_nvme_devices
+from hardwaretest.core.block_disks import BlockDisk, list_block_disks
+from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 from hardwaretest.ui.report_browser import open_html_report
@@ -77,7 +80,7 @@ class _DriveScanWorker(QThread):
 
     def run(self) -> None:
         try:
-            self.completed.emit(list_nvme_devices())
+            self.completed.emit((list_nvme_devices(), list_block_disks()))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -132,12 +135,15 @@ class TestPlanPanel(QWidget):
         self.nvme_check = QCheckBox("NVMe-Inventar und SMART-Gesundheit")
         self.nvme_check.setChecked(True)
         self.nvme_read_check = QCheckBox("Vollständiger NVMe-Lesetest (optional)")
-        self.drive_scan_btn = QPushButton("NVMe-Auswahl aktualisieren")
+        self.disk_read_check = QCheckBox("Vollständiger SATA/SAS/USB-Lesetest (optional)")
+        self.disk_read_check.setToolTip(language_manager.tr(
+            "Liest ausgewählte /dev/sd*-Datenträger komplett (fio, nur lesend) und vergleicht SMART-Zähler vorher/nachher."))
+        self.drive_scan_btn = QPushButton("Laufwerke aktualisieren")
         self.select_all_btn = QPushButton("Alle auswählen")
         self.drives = QListWidget()
         self.drives.setMaximumHeight(95)
         self.drives.setMinimumWidth(180)
-        self.drives.setToolTip(language_manager.tr("Auswahl gilt für SMART und Lesetest; ohne Auswahl prüft SMART alle NVMe."))
+        self.drives.setToolTip(language_manager.tr("Auswahl gilt für SMART und Lesetests; ohne Auswahl prüft SMART alle NVMe."))
         self.nvidia_check = QCheckBox("NVIDIA-Treiber und GPU-Inventar")
         self.nvidia_check.setChecked(True)
         self.dcgm_check = QCheckBox("NVIDIA-DCGM-Diagnose auf allen GPUs")
@@ -159,6 +165,7 @@ class TestPlanPanel(QWidget):
         hardware_form = QFormLayout()
         hardware_form.addRow(self.nvme_check)
         hardware_form.addRow(self.nvme_read_check)
+        hardware_form.addRow(self.disk_read_check)
         drive_buttons = QHBoxLayout()
         drive_buttons.addWidget(self.drive_scan_btn)
         drive_buttons.addWidget(self.select_all_btn)
@@ -213,6 +220,17 @@ class TestPlanPanel(QWidget):
         self.rounds.setRange(1, 10_000)
         self.rounds.setValue(1)
         output_form.addRow("Durchläufe (gesamter Testplan)", self.rounds)
+        self.end_time_check = QCheckBox("Endzeit (keine weiteren Teiltests danach)")
+        self.end_time_check.setToolTip(language_manager.tr(
+            "Der Plan wiederholt sich bis zur Anzahl der Durchläufe, startet nach der Endzeit aber keinen "
+            "Teiltest mehr. Ein laufender Teiltest wird zu Ende geführt."))
+        self.end_time = QDateTimeEdit()
+        self.end_time.setCalendarPopup(True)
+        self.end_time.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.end_time.setDateTime(QDateTime.currentDateTime().addSecs(8 * 3600))
+        self.end_time.setEnabled(False)
+        self.end_time_check.toggled.connect(self.end_time.setEnabled)
+        output_form.addRow(self.end_time_check, self.end_time)
         self.monitor_check = QCheckBox("Begleitendes Monitoring mit Sicherheitsabbruch")
         self.monitor_check.setChecked(True)
         self.monitor_limit = QSpinBox()
@@ -311,7 +329,7 @@ class TestPlanPanel(QWidget):
         self._scan_worker = worker
         self.start_btn.setEnabled(False)
         self.drive_scan_btn.setEnabled(False)
-        self._set_runtime_text(self.current_step, "NVMe-Laufwerke werden gesucht …")
+        self._set_runtime_text(self.current_step, "Laufwerke werden gesucht …")
         worker.completed.connect(self._scanned_drives)
         worker.failed.connect(lambda message: self._set_raw_text(self.current_step, message))
         connect_finished(worker, self._scan_finished)
@@ -323,21 +341,39 @@ class TestPlanPanel(QWidget):
         self.start_btn.setEnabled(self._worker is None)
         self.drive_scan_btn.setEnabled(self._worker is None)
 
-    def _scanned_drives(self, devices) -> None:
+    def _scanned_drives(self, payload) -> None:
+        nvme_devices, disks = payload if isinstance(payload, tuple) else (payload, [])
         selected = {device for device in self._selected_drives()}
         self.drives.clear()
-        for device in devices:
-            label = f"{device.namespace_path} · {device.model} · SN {device.serial} · {device.size_bytes / 1024**3:.1f} GiB"
+        for device in (*nvme_devices, *disks):
+            if isinstance(device, BlockDisk):
+                label = f"{device.path} · {device.kind} · {device.model} · SN {device.serial} · {device.size_bytes / 1024**3:.1f} GiB"
+                if device.mounted:
+                    label += " · " + language_manager.tr("eingehängt")
+            else:
+                label = f"{device.namespace_path} · NVMe · {device.model} · SN {device.serial} · {device.size_bytes / 1024**3:.1f} GiB"
             item = QListWidgetItem(label, self.drives)
             item.setToolTip(label)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setData(Qt.ItemDataRole.UserRole, device)
             item.setCheckState(Qt.CheckState.Checked if device in selected else Qt.CheckState.Unchecked)
-        self._set_runtime_text(self.current_step, "{count} NVMe-Laufwerk(e) gefunden.", count=len(devices))
+        self._set_runtime_text(self.current_step, "{count} NVMe-Laufwerk(e) und {disks} SATA/SAS/USB-Datenträger gefunden.",
+                               count=len(nvme_devices), disks=len(disks))
 
     def _selected_drives(self) -> tuple:
         return tuple(self.drives.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.drives.count())
                      if self.drives.item(i).checkState() == Qt.CheckState.Checked)
+
+    def _selected_nvme(self) -> tuple:
+        return tuple(d for d in self._selected_drives() if isinstance(d, NvmeDevice))
+
+    def _selected_disks(self) -> tuple:
+        return tuple(d for d in self._selected_drives() if isinstance(d, BlockDisk))
+
+    def _end_time(self) -> Optional[datetime]:
+        if not self.end_time_check.isChecked():
+            return None
+        return self.end_time.dateTime().toPython().replace(second=0, microsecond=0)
 
     def _select_all_drives(self) -> None:
         for index in range(self.drives.count()):
@@ -372,19 +408,28 @@ class TestPlanPanel(QWidget):
     def _start(self) -> None:
         if self._worker is not None or self._scan_worker is not None:
             return
-        if self.nvme_read_check.isChecked():
-            if not self._selected_drives():
-                QMessageBox.warning(self, language_manager.tr("Kein NVMe-Laufwerk ausgewählt"),
-                                    language_manager.tr("Bitte mindestens ein NVMe-Ziellaufwerk auswählen."))
-                return
+        if self.nvme_read_check.isChecked() and not self._selected_nvme():
+            QMessageBox.warning(self, language_manager.tr("Kein NVMe-Laufwerk ausgewählt"),
+                                language_manager.tr("Bitte mindestens ein NVMe-Ziellaufwerk auswählen."))
+            return
+        if self.disk_read_check.isChecked() and not self._selected_disks():
+            QMessageBox.warning(self, language_manager.tr("Kein Datenträger ausgewählt"),
+                                language_manager.tr("Bitte mindestens einen SATA-/SAS-/USB-Datenträger auswählen."))
+            return
+        if self.nvme_read_check.isChecked() or self.disk_read_check.isChecked():
             answer = QMessageBox.question(
-                self, language_manager.tr("Vollständigen NVMe-Lese-Test starten"),
-                language_manager.tr("Alle ausgewählten NVMe werden pro Durchlauf vollständig gelesen. Keine Schreibzugriffe; hohe Last und mehrstündige Laufzeit möglich. Vor jedem privilegierten Schritt kann eine Passwortabfrage erscheinen. Fortfahren?"),
+                self, language_manager.tr("Vollständigen Lesetest starten"),
+                language_manager.tr("Alle ausgewählten Laufwerke werden pro Durchlauf vollständig gelesen. Keine Schreibzugriffe; hohe Last und mehrstündige Laufzeit möglich. Vor jedem privilegierten Schritt kann eine Passwortabfrage erscheinen. Fortfahren?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
+        end_time = self._end_time()
+        if end_time is not None and end_time <= datetime.now() + timedelta(minutes=1):
+            QMessageBox.warning(self, language_manager.tr("Endzeit ungültig"),
+                                language_manager.tr("Die Endzeit muss in der Zukunft liegen."))
+            return
         if not self._any_test_selected():
             QMessageBox.warning(
                 self,
@@ -533,8 +578,11 @@ class TestPlanPanel(QWidget):
             ram_percent=self.ram_percent.value(),
             nvme_enabled=self.nvme_check.isChecked(),
             nvme_read_enabled=self.nvme_read_check.isChecked(),
-            nvme_devices=self._selected_drives(),
+            nvme_devices=self._selected_nvme(),
+            disk_read_enabled=self.disk_read_check.isChecked(),
+            disk_devices=self._selected_disks(),
             rounds=self.rounds.value(),
+            end_time=self._end_time(),
             ping_enabled=self.ping_check.isChecked(),
             network_target=self.network_target.text().strip(),
             ping_count=self.ping_count.value(),
@@ -562,6 +610,7 @@ class TestPlanPanel(QWidget):
             self.ram_check,
             self.nvme_check,
             self.nvme_read_check,
+            self.disk_read_check,
             self.ping_check,
             self.iperf_check,
             self.nvidia_check,
@@ -576,7 +625,8 @@ class TestPlanPanel(QWidget):
         for widget in (
             self.cpu_check, self.cpu_duration, self.cpu_mode, self.opendcdiag_check, self.opendcdiag_duration, self.ram_check, self.ram_duration,
             self.ram_percent, self.nvme_check, self.ping_check, self.ping_count,
-            self.nvme_read_check, self.drives, self.drive_scan_btn, self.select_all_btn, self.rounds,
+            self.nvme_read_check, self.disk_read_check, self.drives, self.drive_scan_btn, self.select_all_btn,
+            self.rounds, self.end_time_check,
             self.iperf_check, self.iperf_duration, self.network_target,
             self.max_loss, self.max_latency, self.max_jitter, self.min_throughput,
             self.nvidia_check, self.dcgm_check, self.dcgm_level, self.vulkan_check, self.vulkan_duration,
@@ -585,6 +635,7 @@ class TestPlanPanel(QWidget):
             self.sensor_limits_btn,
         ):
             widget.setEnabled(not running)
+        self.end_time.setEnabled(not running and self.end_time_check.isChecked())
         if not running and not opendcdiag_available():
             self.opendcdiag_check.setEnabled(False)
             self.opendcdiag_duration.setEnabled(False)

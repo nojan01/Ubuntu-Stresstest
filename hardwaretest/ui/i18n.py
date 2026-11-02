@@ -291,7 +291,25 @@ _EN: dict[str, str] = {
     "Gesamttest": "Test plan",
     "– Gesamttest ÜBERSPRUNGEN – keine Prüfung ausgeführt": "– Test plan SKIPPED – no checks executed",
     "Vollständiger NVMe-Lesetest (optional)": "Full NVMe read test (optional)",
-    "NVMe-Auswahl aktualisieren": "Refresh NVMe selection",
+    "Vollständiger SATA/SAS/USB-Lesetest (optional)": "Full SATA/SAS/USB read test (optional)",
+    "Liest ausgewählte /dev/sd*-Datenträger komplett (fio, nur lesend) und vergleicht SMART-Zähler vorher/nachher.":
+        "Reads the selected /dev/sd* disks completely (fio, read-only) and compares SMART counters before/after.",
+    "Laufwerke aktualisieren": "Refresh drives",
+    "Laufwerke werden gesucht …": "Scanning drives …",
+    "{count} NVMe-Laufwerk(e) und {disks} SATA/SAS/USB-Datenträger gefunden.":
+        "{count} NVMe drive(s) and {disks} SATA/SAS/USB disk(s) found.",
+    "eingehängt": "mounted",
+    "Kein Datenträger ausgewählt": "No disk selected",
+    "Bitte mindestens einen SATA-/SAS-/USB-Datenträger auswählen.": "Please select at least one SATA/SAS/USB disk.",
+    "Vollständigen Lesetest starten": "Start full read test",
+    "Alle ausgewählten Laufwerke werden pro Durchlauf vollständig gelesen. Keine Schreibzugriffe; hohe Last und mehrstündige Laufzeit möglich. Vor jedem privilegierten Schritt kann eine Passwortabfrage erscheinen. Fortfahren?":
+        "All selected drives are read completely in every round. No writes; heavy load and a runtime of several hours are possible. A password prompt may appear before each privileged step. Continue?",
+    "Endzeit (keine weiteren Teiltests danach)": "End time (no further steps afterwards)",
+    "Der Plan wiederholt sich bis zur Anzahl der Durchläufe, startet nach der Endzeit aber keinen Teiltest mehr. Ein laufender Teiltest wird zu Ende geführt.":
+        "The plan repeats up to the number of rounds but starts no further step after the end time. A running step is completed.",
+    "Endzeit ungültig": "Invalid end time",
+    "Die Endzeit muss in der Zukunft liegen.": "The end time must be in the future.",
+    "Auswahl gilt für SMART und Lesetests; ohne Auswahl prüft SMART alle NVMe.": "Selection applies to SMART and the read tests; with no selection SMART checks all NVMe drives.",
     "Alle auswählen": "Select all",
     "Auswahl gilt für SMART und Lesetest; ohne Auswahl prüft SMART alle NVMe.": "Selection applies to SMART and the read test; with no selection SMART checks all NVMe drives.",
     "Durchläufe (gesamter Testplan)": "Rounds (entire test plan)",

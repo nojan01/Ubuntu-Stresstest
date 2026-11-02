@@ -33,11 +33,15 @@ entspricht der derzeitigen Priorität.
 - Taktraten sowie aktuelle/maximale PCIe-Generation und Linkbreite – umgesetzt
 - Auslastungs-, Temperatur-, Leistungs-, VRAM- und Taktmonitor während des
   Tests mit konfigurierbarem Messintervall – umgesetzt
-- CUDA-Prüfung: verfügbare CUDA-Version, erkannte GPUs und einfacher
-  Rechentest, sofern CUDA installiert ist
-- VRAM-Stresstest und Fehlerprüfung mit einem etablierten, optionalen Tool
-- Optionaler GPU-Lasttest für KI-/VDI-Szenarien mit frei wählbarer Dauer
-- Protokollierung von GPU-Fehlern, Xid-Meldungen und relevanten Kernel-Logs
+- CUDA-Prüfung (Treiber-/CUDA-Version, GPUs, Rechentest) – umgesetzt
+- VRAM-Stresstest mit Fehlerprüfung (Vulkan für alle Hersteller, CUDA für NVIDIA,
+  Muster und Zähler über 32 Bit hinaus) – umgesetzt in 0.2.5x/0.2.60
+- GPU-Lasttest für KI-/VDI-Szenarien mit frei wählbarer Dauer (Vulkan/CUDA, auch
+  im Gesamttestplan) – umgesetzt
+- Protokollierung von Xid-Meldungen und Kernel-Logs sowie Telemetrie während des
+  Tests – umgesetzt
+- DCGM-Diagnose als lesbarer Textbericht (DCGM 3.x und 4.x) – umgesetzt in 0.2.61
+- Noch offen: Lasttest auf AMD-/Intel-GPUs über ROCm/oneAPI (derzeit nur Vulkan).
 
 ### Gesamttestplan
 
@@ -51,7 +55,14 @@ entspricht der derzeitigen Priorität.
 - Begleitmonitoring mit Temperatur-/ECC-Sicherheitsabbruch und CSV-/Text-/HTML-Bericht – umgesetzt in 0.2.26
 - Vollständige NVMe-Lesetests sowie 1–10.000 Wiederholungen des gesamten Plans mit
   kompaktem Bericht und fortlaufender CSV – umgesetzt in 0.2.29.
-- Noch offen: SATA/SAS-/USB-Lesetests im Gesamttestplan und zeitgesteuerte Endzeit.
+- OpenDCDiag, GPU-Lasttest (Vulkan/CUDA), ProLiant-/RAID-Momentaufnahme – umgesetzt
+  in 0.2.5x–0.2.61.
+- Vollständige SATA/SAS/USB-Lesetests (`/dev/sd*`, nur lesend) mit
+  SMART-Vergleich vorher/nachher – umgesetzt in 0.2.61.
+- Zeitgesteuerte Endzeit: nach Erreichen wird kein weiterer Teiltest gestartet –
+  umgesetzt in 0.2.61.
+- Noch offen: SMART hinter RAID-Controllern (`smartctl -d cciss,N`/`megaraid,N`)
+  für den Vorher/Nachher-Vergleich; ZFS-Scrub im Gesamttestplan.
 
 ### Langzeitmonitoring
 
@@ -90,8 +101,9 @@ entspricht der derzeitigen Priorität.
 ### USB-Test
 
 - Übersicht erkannter USB-Geräte und USB-Geschwindigkeiten
-- Nicht-destruktiver Lese-/Schreibtest auf ausdrücklich ausgewählten
-  Testmedien
+- Vollständiger Lesetest von USB-Datenträgern im Gesamttestplan – umgesetzt in 0.2.61
+  (gemeinsam mit SATA/SAS).
+- Nicht-destruktiver Schreibtest auf ausdrücklich ausgewählten Testmedien
 - Optionaler Test von Kamera, Audio und weiteren angeschlossenen Geräten
 
 ## Grundsätze

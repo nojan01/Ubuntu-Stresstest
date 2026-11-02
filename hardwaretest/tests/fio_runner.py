@@ -698,6 +698,11 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
     so a UI change cannot accidentally turn this into a write operation.
     """
 
+    device_pattern = r"/dev/nvme\d+n\d+"
+    job_prefix = "nvme_full_read"
+    no_device_error = "Keine NVMe-Laufwerke ausgewählt"
+    wrong_device_error = "Nur NVMe-Namespace-Geräte sind erlaubt"
+
     def __init__(
         self,
         params: TestParameters,
@@ -711,10 +716,10 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
     ) -> None:
         raw_devices = [device] if isinstance(device, str) else list(device)
         if not raw_devices:
-            raise TestExecutionError("Keine NVMe-Laufwerke ausgewählt")
+            raise TestExecutionError(self.no_device_error)
         self.devices = [str(Path(item).expanduser()) for item in raw_devices]
-        if any(not re.fullmatch(r"/dev/nvme\d+n\d+", path) for path in self.devices):
-            raise TestExecutionError("Nur NVMe-Namespace-Geräte sind erlaubt")
+        if any(not re.fullmatch(self.device_pattern, path) for path in self.devices):
+            raise TestExecutionError(self.wrong_device_error)
         self.output_lines = deque(maxlen=80)
         self.device = self.devices[0]
         self.block_size = block_size or "1m"
@@ -808,10 +813,19 @@ class FioNvmeFullReadRunner(_FioJobFileRunner):
         for index, device in enumerate(self.devices):
             lines.extend([
                 "",
-                f"[nvme_full_read_{index + 1}_{Path(device).name}]",
+                f"[{self.job_prefix}_{index + 1}_{Path(device).name}]",
                 f"filename={device}",
             ])
         return lines
+
+
+class FioDiskFullReadRunner(FioNvmeFullReadRunner):
+    """Vollständiger Lesetest für SATA-/SAS-/USB-Datenträger (``/dev/sd*``), ohne Schreibzugriffe."""
+
+    device_pattern = r"/dev/sd[a-z]+"
+    job_prefix = "disk_full_read"
+    no_device_error = "Keine Datenträger ausgewählt"
+    wrong_device_error = "Nur ganze /dev/sd*-Datenträger sind erlaubt"
 
 
 def _fio_size_to_bytes(value: float, unit: str) -> int:

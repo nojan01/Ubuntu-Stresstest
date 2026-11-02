@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from hardwaretest.core import hpe_raid, ipmi
+from hardwaretest.core import hpe_raid, ipmi, privilege
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.system_info import read_edac_info
 from hardwaretest.ui.i18n import language_manager
@@ -360,9 +360,9 @@ class ProliantPanel(QWidget):
             return subprocess.run
         if self._broker is not None:
             return self._broker.run
-        if self._broker_failed or not shutil.which("pkexec"):
+        if self._broker_failed or privilege.tool() is None:
             return None
-        broker = RootBroker(shutil.which("pkexec"))
+        broker = RootBroker(reason=language_manager.tr("ProLiant / RAID-Controller abfragen"))
         try:
             broker.start()
         except RootAuthorizationError:

@@ -8,11 +8,13 @@ import sys
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
+from hardwaretest.core.privilege import ensure_askpass_env
 from hardwaretest.ui.main_window import MainWindow
 
 
 def run() -> int:
     _sanitize_qt_environment()
+    ensure_askpass_env()
     app = QApplication(sys.argv)
     _apply_dark_theme(app)
     window = MainWindow()

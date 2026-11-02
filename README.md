@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.62
+
+- **Einheitlicher Passwortdialog.** Alle Root-Aktionen (Swap aus/ein, fio-Lesetest und destruktiver Test, NVMe/SMART, Root-Sitzung des Gesamttests, DCGM, Dateisystem- und ZFS-Prüfung, Speichermodule per dmidecode, Aushängen, IPMI, ProLiant/RAID) nutzen jetzt `sudo -A` mit dem eigenen Dialog der App („sudo-Passwort eingeben:“, dunkles Design, `hardwaretest --askpass`). Der große Polkit-Dialog erscheint nur noch als Fallback, wenn `sudo` fehlt. sudo merkt sich die Freigabe (Standard 15 Minuten), daher wird innerhalb einer Sitzung meist nur einmal gefragt; mit NOPASSWD-Regel (Live-ISO) oder als root entfällt die Abfrage ganz. Die Tabs fragen das Passwort nicht mehr selbst ab.
+
 ### Neu in 0.2.61
 
 > **Stand 0.2.61:** Der Funktionsumfang ist vorläufig eingefroren – weitere Releases enthalten nur Fehlerbehebungen und Optimierungen.

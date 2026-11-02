@@ -4,9 +4,7 @@ import csv
 from contextlib import suppress
 from datetime import datetime
 from html import escape
-import os
 from pathlib import Path
-import shutil
 import uuid
 
 from PySide6.QtCore import QObject, QProcess, QThread, QTimer, Signal
@@ -15,6 +13,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
+from hardwaretest.core import privilege
 from hardwaretest.core.zfs import list_pools, read_status, worker_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
@@ -286,11 +285,11 @@ class ZfsPanel(QWidget):
                                 QMessageBox.StandardButton.Cancel) != QMessageBox.StandardButton.Yes:
             return
         command = worker_command(action, pool.guid)
-        if os.geteuid() != 0:
-            if not shutil.which("pkexec"):
-                self.failed("pkexec missing / pkexec fehlt.")
+        if not privilege.is_root():
+            if privilege.tool() is None:
+                self.failed(privilege.missing_text(language_manager.language))
                 return
-            command.insert(0, "pkexec")
+            command[:0] = privilege.command_prefix("ZFS-Scrub")
         self._pool = pool
         if action == "start" and not self.begin_monitoring(self._last.raw if self._last else ""):
             return

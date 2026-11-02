@@ -229,7 +229,6 @@ class _InstantSwapWorker(QThread):
 def _memory_fill_panel(monkeypatch, swap_enabled: bool):
     info = SystemInfo(16 << 30, 12 << 30, swap_enabled, 8, 4, swap_used_bytes=1 << 20, swap_total_bytes=1 << 30)
     monkeypatch.setattr(memory_fill_panel, "check_swapoff_safe", lambda _info: (True, ""))
-    monkeypatch.setattr(memory_fill_panel, "needs_password_for_swap", lambda: False)
     monkeypatch.setattr(memory_fill_panel, "_SwapWorker", _InstantSwapWorker)
     blocking = mock.Mock(side_effect=AssertionError("disable_swap darf nicht im GUI-Thread laufen"))
     monkeypatch.setattr(memory_fill_panel, "disable_swap", blocking)
@@ -369,7 +368,8 @@ def test_nvme_worker_cleanup_happens_only_on_finished(monkeypatch):
 
 
 def test_system_panel_recovers_from_failed_to_start(monkeypatch, keep):
-    monkeypatch.setattr(system_panel.shutil, "which", lambda name: "/nonexistent/pkexec-xyz")
+    monkeypatch.setattr(system_panel.privilege, "tool", lambda: "/nonexistent/sudo-xyz")
+    monkeypatch.setattr(system_panel.privilege, "command_prefix", lambda reason="": ["/nonexistent/sudo-xyz"])
     monkeypatch.setattr(system_panel.inv, "dmidecode_command", lambda: ["--version"])
     panel = system_panel.SystemPanel()
     keep(panel)
@@ -383,7 +383,8 @@ def test_system_panel_recovers_from_failed_to_start(monkeypatch, keep):
 
 
 def test_system_panel_close_kills_running_prompt(monkeypatch, keep):
-    monkeypatch.setattr(system_panel.shutil, "which", lambda name: "/bin/sleep")
+    monkeypatch.setattr(system_panel.privilege, "tool", lambda: "/bin/sleep")
+    monkeypatch.setattr(system_panel.privilege, "command_prefix", lambda reason="": ["/bin/sleep"])
     monkeypatch.setattr(system_panel.inv, "dmidecode_command", lambda: ["30"])
     panel = system_panel.SystemPanel()
     keep(panel)
@@ -442,6 +443,7 @@ def test_unmount_runs_asynchronously_and_reenables_controls(monkeypatch, keep):
     monkeypatch.setattr(disk_panel.subprocess, "run", lambda *a, **k: mock.Mock(stdout=lsblk_json, returncode=0))
     monkeypatch.setattr(disk_panel.QInputDialog, "getItem", staticmethod(lambda parent, title, label, items, *a, **k: (items[0], True)))
     monkeypatch.setattr(disk_panel.shutil, "which", lambda name: None)
+    monkeypatch.setattr(disk_panel.privilege, "command_prefix", lambda reason="": ["pkexec"])
     calls = []
     real_start = QProcess.start
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-import os
 import shutil
 import subprocess
 from typing import Callable, Optional
@@ -36,6 +35,7 @@ from hardwaretest.core.nvme import (
     read_nvme_self_test_status,
     start_nvme_self_test,
 )
+from hardwaretest.core import privilege
 from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.fio_runner import FioNvmeFullReadRunner, FioNvmeReadBenchmarkRunner
@@ -782,11 +782,11 @@ class NvmePanel(QWidget):
             self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
 
     def _nvme_run(self, command, **kwargs):
-        """nvme-cli direkt als root oder über eine gemeinsame pkexec-Sitzung."""
-        if os.geteuid() == 0 or not shutil.which("pkexec"):
+        """nvme-cli direkt als root oder über eine gemeinsame Root-Sitzung."""
+        if privilege.is_root() or privilege.tool() is None:
             return subprocess.run(command, **kwargs)
         if self._nvme_session is None:
-            self._nvme_session = RootBroker(shutil.which("pkexec") or "pkexec")
+            self._nvme_session = RootBroker(reason=language_manager.tr("NVMe-Informationen lesen"))
         return self._nvme_session.run(command, **kwargs)
 
     def close_privileged_session(self) -> None:

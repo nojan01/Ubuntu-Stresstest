@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Tuple
 
 import psutil
 
+from hardwaretest.core import privilege
+
 
 # ---------------------------------------------------------------------------
 # Temperature helpers
@@ -496,44 +498,15 @@ def check_swapoff_safe(info: "SystemInfo") -> Tuple[bool, str]:
 
 
 def needs_password_for_swap() -> bool:
-    """Return ``True`` when the user must supply a password for swapoff.
+    """Return ``True`` when the UI must ask for a password itself before swapoff.
 
-    A password is NOT needed when:
-    * the process already runs as root (e.g. Puppy Linux), **or**
-    * a polkit authentication agent is running (pkexec will show its own
-      graphical dialog), **or**
-    * the user has a NOPASSWD sudo rule for swapoff.
-
-    In all other cases (typical Ubuntu Server 24.04 + XFCE4 without a
-    polkit agent) the application must ask the user for a password and
-    pipe it to ``sudo -S``.
+    Seit dem einheitlichen Passwortdialog fragt ``sudo -A`` über den eigenen
+    Askpass-Helfer (:mod:`hardwaretest.core.privilege`) nach – nur wenn nötig
+    (kein gültiges sudo-Ticket, keine NOPASSWD-Regel).  Die UI muss daher nie
+    selbst ein Passwort einsammeln; ohne sudo greift pkexec oder der Aufruf
+    läuft direkt (root).
     """
-    # Already root – no escalation needed (e.g. Puppy Linux / TrixiePup64)
-    if is_running_as_root():
-        return False
-
-    pkexec_path: Optional[str] = shutil.which("pkexec")
-    if pkexec_path and _is_polkit_agent_running():
-        return False
-
-    # Passwortfrei nur, wenn sudo ohne Passwort tatsaechlich etwas ausfuehren darf
-    # (gueltiger Zeitstempel oder NOPASSWD). ``sudo -n -l befehl`` reicht dafuer
-    # nicht: Neuere sudo-Versionen beantworten das Auflisten eigener Rechte ohne
-    # Passwort mit Exit 0, obwohl das Ausfuehren eines verlangt.
-    sudo_path: Optional[str] = shutil.which("sudo")
-    swapoff_path: Optional[str] = shutil.which("swapoff")
-    if sudo_path and swapoff_path:
-        try:
-            result = subprocess.run([sudo_path, "-n", "true"], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                return False  # Zeitstempel gueltig oder NOPASSWD fuer ALL
-            listing = subprocess.run([sudo_path, "-n", "-l"], capture_output=True, text=True, timeout=5)
-            if listing.returncode == 0 and sudo_nopasswd_covers(listing.stdout, swapoff_path):
-                return False  # NOPASSWD-Regel speziell fuer swapoff
-        except Exception:
-            pass
-
-    return True
+    return False
 
 
 def sudo_nopasswd_covers(listing: str, command_path: str) -> bool:
@@ -571,22 +544,15 @@ def _build_swapoff_cmd(*, password: Optional[str] = None
             raise FileNotFoundError("sudo nicht gefunden.")
         return [sudo_path, "-S", swapoff_path, "-a"], password + "\n"
 
-    pkexec_path: Optional[str] = shutil.which("pkexec")
-    if pkexec_path and _is_polkit_agent_running():
-        return [pkexec_path, swapoff_path, "-a"], None
-
-    sudo_path = shutil.which("sudo")
-    # -n: nie auf eine (unsichtbare) Passworteingabe warten.
-    cmd = [sudo_path, "-n", swapoff_path, "-a"] if sudo_path else [swapoff_path, "-a"]
-    return cmd, None
+    return [*privilege.command_prefix("Swap deaktivieren"), swapoff_path, "-a"], None
 
 
 def disable_swap(*, password: Optional[str] = None) -> None:
     """Disable swap – runs **synchronously** (call from a worker thread!).
 
     When *password* is given it is piped to ``sudo -S``.  Otherwise the
-    function tries ``pkexec`` (if a polkit agent is running) or plain
-    ``sudo`` as a fallback.
+    unified privilege prefix (``sudo -A`` with the app's own dialog, or
+    ``pkexec``) is used.
 
     .. warning::
        This blocks until ``swapoff -a`` finishes which can take a very
@@ -607,7 +573,7 @@ def disable_swap(*, password: Optional[str] = None) -> None:
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             "Swap-Deaktivierung: Zeitlimit ueberschritten. "
-            "Kein Polkit-Agent aktiv? Bitte manuell ausfuehren: sudo swapoff -a"
+            "Bitte manuell ausfuehren: sudo swapoff -a"
         ) from exc
 
     if proc.returncode != 0:
@@ -643,13 +609,7 @@ def _build_swapon_cmd(*, password: Optional[str] = None
             raise FileNotFoundError("sudo nicht gefunden.")
         return [sudo_path, "-S", swapon_path, "-a"], password + "\n"
 
-    pkexec_path: Optional[str] = shutil.which("pkexec")
-    if pkexec_path and _is_polkit_agent_running():
-        return [pkexec_path, swapon_path, "-a"], None
-
-    sudo_path = shutil.which("sudo")
-    cmd = [sudo_path, swapon_path, "-a"] if sudo_path else [swapon_path, "-a"]
-    return cmd, None
+    return [*privilege.command_prefix("Swap aktivieren"), swapon_path, "-a"], None
 
 
 def enable_swap(*, password: Optional[str] = None) -> None:
@@ -657,8 +617,7 @@ def enable_swap(*, password: Optional[str] = None) -> None:
 
     Reactivates all swap devices defined in ``/etc/fstab`` via
     ``swapon -a``.  When *password* is given it is piped to ``sudo -S``.
-    Otherwise the function tries ``pkexec`` (if a polkit agent is running)
-    or plain ``sudo`` as a fallback.
+    Otherwise the unified privilege prefix (``sudo -A``/``pkexec``) is used.
 
     .. warning::
        Call this from a worker thread, never on the main / GUI thread.
@@ -693,7 +652,7 @@ def enable_swap(*, password: Optional[str] = None) -> None:
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             "Swap-Aktivierung: Zeitlimit ueberschritten. "
-            "Kein Polkit-Agent aktiv? Bitte manuell ausfuehren: sudo swapon -a"
+            "Bitte manuell ausfuehren: sudo swapon -a"
         ) from exc
 
     if proc.returncode != 0:
@@ -819,14 +778,7 @@ def read_smart_info(device: str) -> SmartInfo:
     if not smartctl:
         return SmartInfo(device=device, healthy=None,
                          error="smartctl nicht gefunden (sudo apt install smartmontools)")
-    # Versuche mit pkexec oder sudo
-    prefix: List[str] = []
-    pkexec = shutil.which("pkexec")
-    sudo = shutil.which("sudo")
-    if pkexec:
-        prefix = [pkexec]
-    elif sudo:
-        prefix = [sudo]
+    prefix: List[str] = privilege.command_prefix("SMART-Daten lesen")
 
     try:
         result = subprocess.run(

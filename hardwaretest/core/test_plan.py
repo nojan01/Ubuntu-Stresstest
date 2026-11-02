@@ -19,7 +19,7 @@ import uuid
 from typing import Callable, Optional
 
 from hardwaretest import __version__
-from hardwaretest.core import device_inventory, hardware_inventory, ipmi, proliant_check, zfs
+from hardwaretest.core import device_inventory, hardware_inventory, ipmi, privilege, proliant_check, zfs
 from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
@@ -962,7 +962,7 @@ class TestPlanExecutor:
         )
 
     def _needs_root(self) -> bool:
-        if os.geteuid() == 0 or not shutil.which("pkexec"):
+        if privilege.is_root() or privilege.tool() is None:
             return False
         keys = set(self.selected_step_keys())
         return (bool(keys & {"nvme", "nvme_read", "disk_read"}) or ("dcgm" in keys and dcgmi_available())
@@ -978,7 +978,7 @@ class TestPlanExecutor:
             return
         self._log(_text("Root-Berechtigung für den gesamten Testplan wird angefordert …",
                         self.config.language))
-        broker = RootBroker(shutil.which("pkexec") or "pkexec")
+        broker = RootBroker(reason=_text("Gesamttest: Root-Berechtigung", self.config.language))
         broker.start()
         self._root = broker
 
@@ -1041,9 +1041,7 @@ class TestPlanExecutor:
         return runner
 
     def _privilege_prefix(self) -> tuple[str, ...]:
-        if os.geteuid() == 0:
-            return ()
-        return ("pkexec",) if shutil.which("pkexec") else ()
+        return tuple(privilege.command_prefix(_text("Gesamttest: Root-Berechtigung", self.config.language)))
 
     def _skipped(self, key: str, summary: str) -> TestPlanStepResult:
         return self._instant_result(key, STATUS_SKIPPED, summary)
@@ -1339,6 +1337,7 @@ def _text(source: str, language: str) -> str:
         "Testplan wurde manuell abgebrochen.": "The test plan was cancelled manually.",
         "Root-Berechtigung für den gesamten Testplan wird angefordert …":
             "Requesting root permission for the whole test plan …",
+        "Gesamttest: Root-Berechtigung": "Full test: root permission",
         "Teiltest wurde abgebrochen.": "The test step was cancelled.",
         "stress-ng ist nicht installiert.": "stress-ng is not installed.",
         "nvme-cli ist nicht installiert.": "nvme-cli is not installed.",

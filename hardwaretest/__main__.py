@@ -53,6 +53,10 @@ def main() -> int:
         from hardwaretest.tests.vulkan_stress_script import main as vulkan_stress_main
 
         return vulkan_stress_main(sys.argv[2:])
+    if sys.argv[1:2] == ["--askpass"]:
+        from hardwaretest.core.privilege import askpass_main
+
+        return askpass_main(sys.argv[2:])
     if "--version" in sys.argv[1:]:
         print(f"Hardwaretest {__version__}")
         return 0

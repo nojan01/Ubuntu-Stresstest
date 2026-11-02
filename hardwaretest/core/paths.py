@@ -26,7 +26,7 @@ def resource_path(*parts: str) -> Path:
 
 
 def self_command_for_root() -> list[str]:
-    """Programmaufruf für Worker, die per pkexec als root laufen.
+    """Programmaufruf für Worker, die per sudo/pkexec als root laufen.
 
     Ein AppImage ist per FUSE nur für den startenden Benutzer eingehängt; root
     kann darin nichts lesen.  Deshalb startet root das AppImage selbst über
@@ -35,6 +35,16 @@ def self_command_for_root() -> list[str]:
     appimage = os.environ.get("APPIMAGE")
     if getattr(sys, "frozen", False) and appimage and os.path.isfile(appimage):
         return [appimage, "--appimage-extract-and-run"]
+    if getattr(sys, "frozen", False):
+        return [sys.executable]
+    return [sys.executable, "-m", "hardwaretest"]
+
+
+def self_command_for_user() -> list[str]:
+    """Programmaufruf für Hilfsprozesse desselben Benutzers (z. B. den sudo-Askpass-Dialog).
+
+    Im AppImage genügt die eingehängte Binärdatei; ein erneutes Entpacken ist unnötig.
+    """
     if getattr(sys, "frozen", False):
         return [sys.executable]
     return [sys.executable, "-m", "hardwaretest"]

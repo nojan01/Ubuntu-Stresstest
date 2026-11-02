@@ -3,7 +3,6 @@
 import functools
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import threading
 import time
@@ -15,7 +14,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from hardwaretest.core import ipmi
+from hardwaretest.core import ipmi, privilege
 from hardwaretest.core.monitoring import MonitorSession, collect_metrics
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.monitor_history import is_temperature, render_chart
@@ -44,9 +43,9 @@ class MonitorWorker(QThread):
         if os.geteuid() == 0:
             ipmi.ensure_ipmi_driver(subprocess.run)
             return {}
-        if not shutil.which("pkexec"):
+        if privilege.tool() is None:
             return {}
-        broker = RootBroker(shutil.which("pkexec"))
+        broker = RootBroker(reason=language_manager.tr("Sensoren (IPMI) auslesen"))
         try:
             broker.start()
         except RootAuthorizationError:

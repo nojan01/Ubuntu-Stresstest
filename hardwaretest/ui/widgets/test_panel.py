@@ -13,9 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -31,7 +29,6 @@ from hardwaretest.core.system_info import (
     check_swapoff_safe,
     disable_swap,
     enable_swap,
-    needs_password_for_swap,
     read_system_info,
 )
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
@@ -402,22 +399,8 @@ class TestPanel(QWidget):
             )
             return
 
-        # 2. Determine whether we need a password.
-        #    On Ubuntu Server 24.04 + XFCE4 there is normally no polkit
-        #    agent, so pkexec would hang and plain sudo cannot prompt in
-        #    a non-interactive subprocess.  We must ask the user upfront.
+        # 2. Passwort: fragt bei Bedarf der einheitliche sudo-Askpass-Dialog ab.
         password: Optional[str] = None
-        if needs_password_for_swap():
-            pw, ok = QInputDialog.getText(
-                self,
-                "Swap deaktivieren – Passwort erforderlich",
-                "sudo-Passwort eingeben:",
-                QLineEdit.EchoMode.Password,
-            )
-            if not ok or not pw:
-                self._append_log("Swap-Deaktivierung abgebrochen (kein Passwort).")
-                return
-            password = pw
 
         # 3. Disable the button and show progress while the thread runs.
         self.swap_btn.setEnabled(False)
@@ -464,17 +447,6 @@ class TestPanel(QWidget):
         if self._swap_on_worker is not None:
             return
         password: Optional[str] = None
-        if needs_password_for_swap():
-            pw, ok = QInputDialog.getText(
-                self,
-                "Swap aktivieren – Passwort erforderlich",
-                "sudo-Passwort eingeben:",
-                QLineEdit.EchoMode.Password,
-            )
-            if not ok or not pw:
-                self._append_log("Swap-Aktivierung abgebrochen (kein Passwort).")
-                return
-            password = pw
 
         self.swap_on_btn.setEnabled(False)
         self.swap_on_btn.setText(language_manager.tr("Swap wird aktiviert …"))

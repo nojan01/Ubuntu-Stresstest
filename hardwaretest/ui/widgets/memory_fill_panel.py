@@ -8,9 +8,7 @@ from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -25,7 +23,6 @@ from hardwaretest.core.system_info import (
     check_swapoff_safe,
     disable_swap,
     enable_swap,
-    needs_password_for_swap,
     read_system_info,
 )
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
@@ -474,13 +471,8 @@ class MemoryFillPanel(QWidget):
     # --------------------------------------------------------------------- #
 
     def _ask_swap_password(self, title: str) -> tuple[Optional[str], bool]:
-        """(Passwort, ok) – ok ist False, wenn der Nutzer abgebrochen hat."""
-        if not needs_password_for_swap():
-            return None, True
-        pw, ok = QInputDialog.getText(self, title, "sudo-Passwort eingeben:", QLineEdit.EchoMode.Password)
-        if not ok or not pw:
-            return None, False
-        return pw, True
+        """(Passwort, ok) – das Passwort fragt bei Bedarf der einheitliche sudo-Askpass-Dialog ab."""
+        return None, True
 
     def _disable_swap_async(self, warn_unsafe: bool = False) -> bool:
         """Startet den Swap-Worker. False, wenn er nicht gestartet wurde (unsicher, kein Passwort, läuft schon)."""

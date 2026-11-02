@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 from typing import Optional
 
 from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Signal
@@ -24,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardwaretest.core import privilege
 from hardwaretest.core.nvidia import (
     LinuxNvidiaStatus,
     NvidiaGpu,
@@ -389,7 +388,7 @@ class NvidiaPanel(QWidget):
                 indices,
                 level,
                 log_fn=lines.append,
-                use_pkexec=os.geteuid() != 0 and shutil.which("pkexec") is not None,
+                use_pkexec=not privilege.is_root() and privilege.tool() is not None,
                 language=language_manager.language,
             )
             runner.start()

@@ -364,7 +364,7 @@ mit SmartArray RAID-Controllern, SAS-/NVMe-Laufwerken.
 
 <h3>Geräte-Test (nur lesen)</h3>
 <ul>
-  <li>Liest alle Blöcke direkt vom Blockgerät via <code>pkexec/fio</code>.</li>
+  <li>Liest alle Blöcke direkt vom Blockgerät via <code>fio</code> mit Root-Rechten (sudo-Passwortdialog).</li>
   <li>Erkennt defekte Sektoren, SCSI-Fehler und Medium-Errors – besonders wichtig
       nach RAID-Rebuilds auf HPE SmartArray.</li>
   <li>Nutzt <code>continue_on_error=read</code>: Liest alle Blöcke weiter, auch
@@ -391,7 +391,7 @@ mit SmartArray RAID-Controllern, SAS-/NVMe-Laufwerken.
       dort mit „belegt“ markiert und <b>gesperrt</b>. Im Tab „Geräte“ (nur lesen)
       bleiben sie auswählbar.</li>
   <li><b>Datenträger aushängen…</b>: hängt alle Partitionen eines gewählten Laufwerks
-      per <code>udisksctl</code> aus (Fallback <code>pkexec umount</code>) und scannt neu.
+      per <code>udisksctl</code> aus (Fallback <code>umount</code> als root) und scannt neu.
       Der Systemdatenträger (<code>/</code>, <code>/boot</code>, <code>/home</code>, Swap …)
       wird nicht angeboten.</li>
   <li>Unmittelbar vor dem Start wird erneut geprüft, ob die Laufwerke frei und
@@ -979,7 +979,7 @@ with SmartArray RAID controllers, SAS/NVMe drives.
 
 <h3>Device Test (read-only)</h3>
 <ul>
-  <li>Reads all blocks directly from the block device via <code>pkexec/fio</code>.</li>
+  <li>Reads all blocks directly from the block device via <code>fio</code> as root (sudo password dialog).</li>
   <li>Detects bad sectors, SCSI errors and medium errors – especially important
       after RAID rebuilds on HPE SmartArray.</li>
   <li>Uses <code>continue_on_error=read</code>: continues reading all blocks even
@@ -1005,7 +1005,7 @@ with SmartArray RAID controllers, SAS/NVMe drives.
   <li>Mounted or busy drives (mounts, swap, LVM/LUKS, mdraid, ZFS) are marked "belegt"
       there and <b>locked</b>. In the "Device" (read-only) tab they remain selectable.</li>
   <li><b>Unmount drive…</b>: unmounts all partitions of the chosen drive via
-      <code>udisksctl</code> (fallback <code>pkexec umount</code>) and rescans.
+      <code>udisksctl</code> (fallback <code>umount</code> as root) and rescans.
       The system drive (<code>/</code>, <code>/boot</code>, <code>/home</code>, swap …)
       is not offered.</li>
   <li>Right before starting, the drives are checked again to be free and

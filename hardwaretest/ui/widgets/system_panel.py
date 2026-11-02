@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 
 from PySide6.QtCore import QProcess, QTimer
 from PySide6.QtGui import QColor, QGuiApplication
@@ -12,6 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from hardwaretest.core import privilege
 from hardwaretest.core import device_inventory as dev
 from hardwaretest.core import hardware_inventory as inv
 from hardwaretest.ui.i18n import language_manager
@@ -183,24 +182,25 @@ class SystemPanel(QWidget):
         self.retranslate()
 
     def _read_with_password(self) -> None:
-        pkexec = shutil.which("pkexec")
-        if not pkexec or self._process is not None:
+        if privilege.tool() is None or self._process is not None:
             return
+        program, *args = [*privilege.command_prefix(_t("Speichermodule auslesen", "Read memory modules")),
+                          *inv.dmidecode_command()]
         process = QProcess(self)
         self._process = process
         process.finished.connect(lambda code, _status, p=process: self._password_done(p, code))
         process.errorOccurred.connect(lambda error, p=process: self._password_error(p, error))
         self.password_button.setEnabled(False)
-        process.start(pkexec, inv.dmidecode_command())
+        process.start(program, args)
 
     def is_busy(self) -> bool:
-        """True, solange die pkexec-Passwortabfrage bzw. dmidecode läuft."""
+        """True, solange die Passwortabfrage bzw. dmidecode läuft."""
         return self._process is not None
 
     def _password_error(self, process: QProcess, error) -> None:
         # Bei „Crashed“ folgt noch finished(); nur FailedToStart bleibt sonst ohne Abschluss.
         if error == QProcess.ProcessError.FailedToStart:
-            self._password_done(process, -1, _t("pkexec konnte nicht gestartet werden", "pkexec could not be started"))
+            self._password_done(process, -1, _t("Rechteerhöhung konnte nicht gestartet werden", "Privilege escalation could not be started"))
 
     def _password_done(self, process: QProcess, code: int, fallback_error: str = "") -> None:
         # Idempotent: finished und errorOccurred können beide eintreffen.
@@ -268,7 +268,7 @@ class SystemPanel(QWidget):
         self.password_button.setText(_t("Speichermodule mit Passwort auslesen", "Read memory modules with password"))
         self.copy_button.setText(_t("In Zwischenablage kopieren", "Copy to clipboard"))
         self.password_button.setVisible(
-            self._memory is None and os.geteuid() != 0 and shutil.which("pkexec") is not None
+            self._memory is None and not privilege.is_root() and privilege.tool() is not None
         )
         self.password_button.setEnabled(self._process is None)
         self.cpu_group.setTitle(_t("Prozessor", "Processor"))

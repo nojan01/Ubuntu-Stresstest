@@ -12,7 +12,6 @@ from collections import deque
 import errno
 import functools
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -21,6 +20,7 @@ from pathlib import Path
 import re
 from typing import List, Optional, Sequence
 
+from hardwaretest.core import privilege
 from hardwaretest.core.test_runner import BaseTestRunner, TestExecutionError, TestParameters
 
 
@@ -187,11 +187,11 @@ def _check_devices_not_mounted(devices: List[str], *, proc_root: str = "/proc", 
 
 
 # Startet fio als root und beendet es, sobald die stdin-Pipe der App schliesst
-# (Stopp ohne erneute pkexec-Autorisierung). sh leitet stdin von
+# (Stopp ohne erneute Root-Autorisierung). sh leitet stdin von
 # Hintergrundjobs nach /dev/null um; deshalb die Pipe vorher auf fd 3 sichern.
 _FIO_ETA_PERCENT = re.compile(r"^Jobs:.*?\[(\d+(?:\.\d+)?)%\]")
 
-# Wird nach erfolgreicher pkexec-Autorisierung ausgegeben, damit die App
+# Wird nach erfolgreicher Root-Autorisierung ausgegeben, damit die App
 # Laufzeit und Fortschritt erst ab dann zaehlt.
 AUTHORIZED_MARKER = "@@HARDWARETEST-AUTHORIZED@@"
 
@@ -344,7 +344,7 @@ class _FioJobFileRunner(BaseTestRunner):
     _eta_progress: bool = False
     # fio begrenzt die Laufzeit selbst (runtime/size); ein externer Watchdog
     # wuerde fio sonst vor der JSON-Ausgabe beenden – inklusive der Zeit,
-    # in der pkexec noch auf das Kennwort wartet.
+    # in der sudo/pkexec noch auf das Kennwort wartet.
     _use_watchdog = False
 
     def __init__(
@@ -359,21 +359,16 @@ class _FioJobFileRunner(BaseTestRunner):
         self._job_dir: Optional[str] = None
         self._eta_fraction = 0.0
         self._command_prefix: List[str] = []
-        self._pkexec_path: Optional[str] = None
+        # Präfix für die Rechteerhöhung (sudo -A / pkexec); leer als root oder ohne use_pkexec.
+        self._privilege_prefix: List[str] = []
         self.authorized = True
         self.ioengine = ioengine or _best_ioengine()
-        if use_pkexec:
-            # Skip pkexec when already running as root (e.g. Puppy Linux /
-            # TrixiePup64 where the entire session runs as root).
-            if os.geteuid() == 0:
-                self._command_prefix = []
-                self._pkexec_path = None
-            else:
-                pkexec_path = shutil.which("pkexec")
-                if not pkexec_path:
-                    raise TestExecutionError("pkexec nicht gefunden. Bitte polkit installieren.")
-                self._command_prefix = [pkexec_path]
-                self._pkexec_path = pkexec_path
+        if use_pkexec and not privilege.is_root():
+            # Als root (z. B. Puppy Linux) ist keine Rechteerhöhung nötig.
+            if privilege.tool() is None:
+                raise TestExecutionError(privilege.missing_text())
+            self._privilege_prefix = privilege.command_prefix("fio-Datenträgertest")
+            self._command_prefix = list(self._privilege_prefix)
 
     def build_command(self) -> List[str]:
         if self.root_broker is not None:
@@ -389,9 +384,9 @@ class _FioJobFileRunner(BaseTestRunner):
         with os.fdopen(fd, "w") as job_file:
             job_file.write("\n".join(lines))
         command = ["fio", *self._extra_fio_args(), self._job_file]
-        if self._pkexec_path:
+        if self._privilege_prefix:
             script = PKEXEC_STOP_WRAPPER
-            return [self._pkexec_path, "sh", "-c", script, "hardwaretest-fio", *command[1:]]
+            return [*self._privilege_prefix, "sh", "-c", script, "hardwaretest-fio", *command[1:]]
         return [*self._command_prefix, *command]
 
     def _submit_to_broker(self, cmd: List[str]) -> str:
@@ -401,7 +396,7 @@ class _FioJobFileRunner(BaseTestRunner):
         return self.root_broker.submit_fio_job(tokens)
 
     def start(self) -> None:
-        self.authorized = not self._pkexec_path
+        self.authorized = not self._privilege_prefix
         super().start()
 
     def _handle_auth_marker(self, line: str) -> bool:
@@ -417,8 +412,8 @@ class _FioJobFileRunner(BaseTestRunner):
     def stop(self, aborted: bool = False) -> None:
         if aborted:
             self._aborted = True
-        if self._pkexec_path:
-            self._stop_with_pkexec()
+        if self._privilege_prefix:
+            self._stop_privileged()
         else:
             super().stop(aborted=aborted)
         self._cleanup_job_file()
@@ -468,7 +463,7 @@ class _FioJobFileRunner(BaseTestRunner):
                 os.rmdir(self._job_dir)
             self._job_dir = None
 
-    def _stop_with_pkexec(self) -> None:
+    def _stop_privileged(self) -> None:
         if not self._process or self._process.poll() is not None:
             self._process = None
             self._start_time = None
@@ -487,9 +482,9 @@ class _FioJobFileRunner(BaseTestRunner):
                 return
             except subprocess.TimeoutExpired:
                 pass
-        self._log("Stoppe Test (pkexec)...")
+        self._log("Stoppe Test (Root-Berechtigung)...")
         kill_cmd = [
-            self._pkexec_path or "pkexec",
+            *self._privilege_prefix,
             "/bin/kill",
             "-TERM",
             str(self._process.pid),
@@ -497,16 +492,16 @@ class _FioJobFileRunner(BaseTestRunner):
         try:
             subprocess.run(kill_cmd, check=False, capture_output=True, text=True)
         except Exception as exc:  # pragma: no cover - system dependent
-            self._log(f"pkexec Kill-Aufruf fehlgeschlagen: {exc}")
+            self._log(f"Kill-Aufruf fehlgeschlagen: {exc}")
         try:
             self._process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            self._log("pkexec Kill-Timeout, versuche SIGKILL...")
+            self._log("Kill-Timeout, versuche SIGKILL...")
             kill_cmd[-2] = "-KILL"
             try:
                 subprocess.run(kill_cmd, check=False, capture_output=True, text=True)
             except Exception as exc:  # pragma: no cover
-                self._log(f"pkexec Kill -KILL fehlgeschlagen: {exc}")
+                self._log(f"Kill -KILL fehlgeschlagen: {exc}")
             try:
                 self._process.wait(timeout=5)
             except subprocess.TimeoutExpired:

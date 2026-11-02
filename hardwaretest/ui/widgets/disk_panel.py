@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 	QWidget,
 )
 
+from hardwaretest.core import privilege
 from hardwaretest.core import hpe_raid
 from hardwaretest.core.system_info import (
 	SystemInfo,
@@ -296,7 +297,7 @@ class DeviceSelectionMixin:
 		if shutil.which("udisksctl"):
 			program, args = "udisksctl", ["unmount", "-b", part]
 		else:
-			program, args = "pkexec", ["umount", part]
+			program, *args = [*privilege.command_prefix("Datenträger aushängen"), "umount", part]
 		process = QProcess(self)
 		self._unmount_process = process
 		process.finished.connect(lambda code, _status, p=process: self._unmount_finished(p, part, mp, code))
@@ -786,7 +787,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.raid_btn = QPushButton("RAID-Controller-Status (Tab „ProLiant Info“)")
 
 		device_hint = QLabel(
-			"Hinweis: Der Test liest alle Blöcke mit pkexec/fio, schreibt aber nichts. Passwortabfrage möglich."
+			"Hinweis: Der Test liest alle Blöcke mit fio als root, schreibt aber nichts. Passwortabfrage möglich."
 		)
 		device_hint.setWordWrap(True)
 
@@ -875,7 +876,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 			use_pkexec=True,
 		)
 		try:
-			self._append_log("pkexec wird gestartet – bitte Autorisierung bestätigen, falls angefordert.")
+			self._append_log("Root-Berechtigung wird angefordert – bitte Passwort eingeben, falls gefragt.")
 			self.runner.start()
 		except Exception as exc:  # pragma: no cover - runtime safety
 			self._append_log(f"Fehler beim Start: {exc}")
@@ -1126,7 +1127,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		ctrl_row.addWidget(self.stop_btn)
 		ctrl_row.addStretch(1)
 
-		group = QGroupBox("Destruktiver Schreib-/Lesetest (pkexec + verify)")
+		group = QGroupBox("Destruktiver Schreib-/Lesetest (root + verify)")
 		group_layout = QVBoxLayout()
 		group_layout.addWidget(self.danger_label)
 		group_layout.addWidget(self.device_status)
@@ -1222,7 +1223,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 				log_fn=self._handle_runner_log,
 				use_pkexec=True,
 			)
-			self._append_log("WARNUNG: Destruktiver Test startet jetzt über pkexec – Autorisierung bestätigen!")
+			self._append_log("WARNUNG: Destruktiver Test startet jetzt mit Root-Rechten – Passwort bestätigen!")
 			self.runner.start()
 		except Exception as exc:  # pragma: no cover - runtime safety
 			QMessageBox.critical(self, "Start fehlgeschlagen", str(exc))

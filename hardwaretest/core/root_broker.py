@@ -1,4 +1,4 @@
-"""Langlebige Root-Sitzung über eine einzige pkexec-Autorisierung.
+"""Langlebige Root-Sitzung über eine einzige Autorisierung (sudo -A, Fallback pkexec).
 
 Der Root-Prozess nimmt zeilenweise nur freigegebene Aufträge entgegen: nvme mit
 lesenden/Selbsttest-Unterbefehlen, dcgmi, mitgeliefertes OpenDCDiag, lesendes
@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from hardwaretest.core import ras
+from hardwaretest.core import privilege, ras
 from hardwaretest.core.paths import resource_path
 
 READY_MARKER = "@@HARDWARETEST-ROOT-READY@@"
@@ -281,7 +281,7 @@ _RELAY_SCRIPT = (
 
 
 class RootAuthorizationError(RuntimeError):
-    """Die pkexec-Autorisierung wurde abgebrochen oder abgelehnt."""
+    """Die Root-Autorisierung wurde abgebrochen oder abgelehnt."""
 
 
 class _LineReader:
@@ -338,13 +338,20 @@ class _LineReader:
 
 
 class RootBroker:
-    # Wartezeit auf die pkexec-Autorisierung bzw. auf eine Protokollantwort.
+    # Wartezeit auf die Autorisierung bzw. auf eine Protokollantwort.
     auth_timeout: float = 120.0
     reply_timeout: float = 30.0
 
-    def __init__(self, pkexec_path: str = "pkexec", *, auth_timeout: Optional[float] = None,
-                 reply_timeout: Optional[float] = None) -> None:
-        self._pkexec_path = pkexec_path
+    def __init__(self, prefix: str | Sequence[str] | None = None, *, reason: str = "Root-Sitzung starten",
+                 auth_timeout: Optional[float] = None, reply_timeout: Optional[float] = None) -> None:
+        """``prefix``: Programm(pfad) oder Befehlspräfix für die Rechteerhöhung;
+        ``None`` → zentral über :func:`privilege.command_prefix` (sudo -A mit eigenem Dialog)."""
+        if prefix is None:
+            self._prefix = privilege.command_prefix(reason)
+        elif isinstance(prefix, str):
+            self._prefix = [prefix]
+        else:
+            self._prefix = list(prefix)
         self._proc: Optional[subprocess.Popen[bytes]] = None
         self._reader: Optional[_LineReader] = None
         self._stderr_path: Optional[Path] = None
@@ -377,7 +384,7 @@ class RootBroker:
                 self._stderr_path = Path(name)
                 try:
                     proc = subprocess.Popen(
-                        [self._pkexec_path, "sh", "-c", ROOT_BROKER_SCRIPT, "hardwaretest-root",
+                        [*self._prefix, "sh", "-c", ROOT_BROKER_SCRIPT, "hardwaretest-root",
                          str(resource_path("vendor", "opendcdiag", "opendcdiag")),
                          str(resource_path("vendor", "opendcdiag", "opendcdiag-generic")),
                          tempfile.gettempdir(), self._runtime_parent()],
@@ -539,7 +546,7 @@ class RootBroker:
                 if proc.stdin:
                     proc.stdin.close()
             if not was_ready:
-                # Noch in der Autorisierung: pkexec sofort abbrechen statt auf EOF zu warten.
+                # Noch in der Autorisierung: sudo/pkexec sofort abbrechen statt auf EOF zu warten.
                 with contextlib.suppress(OSError):
                     proc.terminate()
             # Ein Root-Prozess ist für den Benutzer nicht per Signal erreichbar;

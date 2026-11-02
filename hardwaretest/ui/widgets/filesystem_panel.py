@@ -2,9 +2,7 @@
 
 from datetime import datetime
 from html import escape
-import os
 from pathlib import Path
-import shutil
 import uuid
 
 from PySide6.QtCore import QObject, QProcess, QThread, Signal
@@ -12,6 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
+from hardwaretest.core import privilege
 from hardwaretest.core.filesystem_check import NTFS_TYPES, VMFS_TYPES, list_filesystems, result_text, worker_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
@@ -210,11 +209,11 @@ class FilesystemPanel(QWidget):
         if action not in {"status", "check"}:
             return
         command = worker_command(action, device, language_manager.language)
-        if os.geteuid() != 0:
-            if not shutil.which("pkexec"):
-                self.status.setText(self.text("pkexec fehlt; Administratoranmeldung nicht verfügbar.", "pkexec missing; administrator authentication unavailable."))
+        if not privilege.is_root():
+            if privilege.tool() is None:
+                self.status.setText(privilege.missing_text(language_manager.language))
                 return
-            command.insert(0, "pkexec")
+            command[:0] = privilege.command_prefix(self.text("Dateisystem prüfen", "Check file system"))
         try:
             directory = Path(self.output_dir.text()).expanduser()
             directory.mkdir(parents=True, exist_ok=True)

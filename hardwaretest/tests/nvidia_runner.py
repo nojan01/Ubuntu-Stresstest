@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from typing import Optional, Sequence
 
+from hardwaretest.core import privilege
 from hardwaretest.core.test_runner import BaseTestRunner, TestExecutionError, TestParameters
 
 
@@ -34,11 +34,10 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         self.language = language
         self.output_lines: list[str] = []
         self._command_prefix: list[str] = []
-        if use_pkexec and os.geteuid() != 0:
-            pkexec = shutil.which("pkexec")
-            if not pkexec:
-                raise TestExecutionError("pkexec nicht gefunden. Bitte polkit installieren.")
-            self._command_prefix = [pkexec]
+        if use_pkexec and not privilege.is_root():
+            if privilege.tool() is None:
+                raise TestExecutionError(privilege.missing_text(language))
+            self._command_prefix = privilege.command_prefix("DCGM-Diagnose")
 
     def build_command(self) -> list[str]:
         if not dcgmi_available():

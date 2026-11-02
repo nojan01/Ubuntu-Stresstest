@@ -190,7 +190,7 @@ VERIFY_LOOP:
     add.u64 %rd7, %rd1, %rd6;
     ld.global.u32 %r8, [%rd7];
     setp.ne.u32 %p2, %r8, %r7;
-    // 64-Bit-Zaehler (Anzeige) und 32-Bit-Flag (Pass/Fail) – kein Ueberlauf moeglich
+    // 64-Bit-Zaehler (Anzeige) und 32-Bit-Flag (Pass/Fail) - kein Ueberlauf moeglich
     @%p2 atom.global.add.u64 %rd11, [%rd8], 1;
     @%p2 atom.global.or.b32 %r9, [%rd10], 1;
     add.u64 %rd3, %rd3, %rd5;
@@ -282,6 +282,23 @@ class Cuda:
             message = text.value.decode() if text.value else ""
             raise CudaError(f"{name} fehlgeschlagen ({result}) {message}".strip())
 
+    def load_ptx(self, ptx: str) -> ctypes.c_void_p:
+        """Laedt PTX per JIT; bei Fehlern wird das ptxas-Fehlerprotokoll mitgeliefert."""
+        module = ctypes.c_void_p()
+        log = ctypes.create_string_buffer(8192)
+        # CU_JIT_ERROR_LOG_BUFFER = 5, CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES = 6
+        options = (ctypes.c_int * 2)(5, 6)
+        values = (ctypes.c_void_p * 2)(
+            ctypes.cast(log, ctypes.c_void_p), ctypes.c_void_p(ctypes.sizeof(log))
+        )
+        try:
+            self.call("cuModuleLoadDataEx", ctypes.byref(module), ctypes.c_char_p(ptx.encode()),
+                      ctypes.c_uint(2), options, values)
+        except CudaError as exc:
+            detail = log.value.decode(errors="replace").strip()
+            raise CudaError(f"{exc}: {detail}" if detail else str(exc)) from None
+        return module
+
     def launch(self, function, grid: int, block: int, *args) -> None:
         pointers = (ctypes.c_void_p * len(args))(
             *[ctypes.cast(ctypes.pointer(arg), ctypes.c_void_p) for arg in args]
@@ -310,8 +327,7 @@ def run_gpu(gpu: int, duration: float, memory_percent: int, cuda: Optional[Cuda]
     cuda.call("cuDeviceGetName", name, ctypes.c_int(256), device)
     context = ctypes.c_void_p()
     cuda.call("cuCtxCreate_v2", ctypes.byref(context), ctypes.c_uint(0), device)
-    module = ctypes.c_void_p()
-    cuda.call("cuModuleLoadData", ctypes.byref(module), ctypes.c_char_p(PTX.encode()))
+    module = cuda.load_ptx(PTX)
     kernels = {}
     for kernel in ("ht_fill", "ht_verify", "ht_compute"):
         handle = ctypes.c_void_p()

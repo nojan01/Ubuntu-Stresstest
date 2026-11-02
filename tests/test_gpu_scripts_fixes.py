@@ -173,6 +173,10 @@ class _FakeCuda:
                     args[0][i] = value
         return 0
 
+    def load_ptx(self, ptx):
+        assert ptx.isascii()
+        return ctypes.c_void_p(0x2000)
+
     def launch(self, function, grid, block, *args):
         self.launches.append((grid, block, args))
 

@@ -624,6 +624,7 @@ class TestPlanExecutor:
             self.config.dcgm_level,
             log_fn=self._log,
             use_pkexec=False,
+            language=self.config.language,
         )
         self._attach_root(runner)
         result = self._run_process_step("dcgm", runner)
@@ -769,6 +770,8 @@ class TestPlanExecutor:
                 if failure and failure[1]:
                     label = "Error" if self.config.language == "en" else "Fehler"
                     details.append(f"{label}: {' '.join(failure[1].split())[:1000]}")
+        elif isinstance(runner, DcgmDiagnosticRunner):
+            details.extend(runner.report_lines(self.config.language))
         elif output_lines is not None:
             details.extend(str(line) for line in output_lines)
         return self._timed_result(

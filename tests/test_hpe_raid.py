@@ -337,7 +337,8 @@ def test_collect_raid_handles_errors_and_missing_tools():
 
 
 def test_find_tools_and_command_name(tmp_path, monkeypatch):
-    monkeypatch.setattr(hpe_raid.shutil, "which", lambda name: None)
+    monkeypatch.setattr(hpe_raid.shutil, "which", lambda name, mode=None: None)
+    monkeypatch.setattr(hpe_raid, "_PATH_FALLBACK_DIRS", (str(tmp_path / "usr-local-sbin"),))
     monkeypatch.setattr(hpe_raid, "SSACLI_DIRS", (str(tmp_path / "ssa"),))
     monkeypatch.setattr(hpe_raid, "STORCLI_DIRS", (str(tmp_path / "mr"),))
     monkeypatch.setattr(hpe_raid, "SSADUCLI_DIRS", (str(tmp_path / "du"),))
@@ -347,14 +348,39 @@ def test_find_tools_and_command_name(tmp_path, monkeypatch):
         (tmp_path / sub).mkdir()
         tool = tmp_path / sub / name
         tool.write_text("#!/bin/sh\n")
-        tool.chmod(0o755)
+        # HPE liefert ssacli/ssaducli mit 0500 aus: fuer normale Benutzer nicht ausfuehrbar,
+        # muss trotzdem gefunden werden (Ausfuehrung erfolgt als root).
+        tool.chmod(0o500 if name == "ssacli" else 0o755)
     tools = hpe_raid.find_tools()
     assert tools["ssacli"].endswith("/ssa/ssacli")
     assert tools["storcli"].endswith("/mr/storcli64")
     assert "ssaducli" not in tools
     assert hpe_raid.tools_available()
+    # Live-ISO: Symlink in /usr/local/sbin hat Vorrang vor /opt und wird als Pfad uebergeben.
+    local = tmp_path / "usr-local-sbin"
+    local.mkdir()
+    (local / "storcli64").symlink_to(tmp_path / "mr" / "storcli64")
+    assert hpe_raid.find_tools()["storcli"] == str(local / "storcli64")
     assert hpe_raid.command_name("/usr/sbin/ssacli") == "ssacli"
     assert hpe_raid.command_name("/opt/MegaRAID/storcli/storcli64") == "/opt/MegaRAID/storcli/storcli64"
+    assert hpe_raid.command_name("/usr/local/sbin/storcli64") == "/usr/local/sbin/storcli64"
+
+
+def test_ssacli_without_controllers_is_not_an_error():
+    class Run:
+        def __call__(self, cmd, **kwargs):
+            import subprocess
+            if cmd[0] == "ssacli":
+                return subprocess.CompletedProcess(cmd, 1, "", "Error: No controllers detected.\n")
+            return subprocess.CompletedProcess(
+                cmd, 0, '{"Controllers":[{"Command Status":{"Status":"Failure",'
+                '"Description":"No Controller found"}}]}', "")
+
+    report = hpe_raid.collect_raid(Run(), tools={"ssacli": "/usr/sbin/ssacli",
+                                                 "storcli": "/usr/local/sbin/storcli64"})
+    assert report.available and report.errors == [] and report.controllers == []
+    assert report.severity == "info"
+    assert "kein Controller gefunden" in hpe_raid.summary_line(report)
 
 
 def test_save_ssaducli_report_validation():

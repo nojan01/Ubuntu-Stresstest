@@ -75,6 +75,12 @@ class _FakeDcgm(_Runner):
     def evaluation_error(self):
         return None
 
+    def parsed_payload(self):
+        return None
+
+    def report_lines(self, language="de"):
+        return list(self.output_lines)
+
 
 def test_vulkan_abort_without_errors_is_green(monkeypatch, keep):
     monkeypatch.setattr(gpu_panel, "list_vulkan_gpus", lambda: [], raising=False)

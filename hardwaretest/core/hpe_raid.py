@@ -33,7 +33,10 @@ SSACLI_DIRS = ("/opt/smartstorageadmin/ssacli/bin", "/opt/smartstorageadmin/ssac
                "/opt/hp/hpssacli/bld", "/opt/compaq/hpacucli/bld")
 STORCLI_DIRS = ("/opt/MegaRAID/storcli", "/opt/MegaRAID/storcli2")
 SSADUCLI_DIRS = ("/opt/smartstorageadmin/ssaducli/bin", "/opt/smartstorageadmin/ssaducli/bld")
-_STANDARD_DIRS = ("/usr/sbin", "/usr/bin", "/sbin", "/bin", "/usr/local/sbin", "/usr/local/bin")
+# Muss dem festen PATH der Root-Sitzung entsprechen (root_broker: /usr/sbin:/usr/bin:/sbin:/bin);
+# alles andere (z. B. /usr/local/sbin/storcli64 im Live-ISO) wird als absoluter Pfad übergeben.
+_STANDARD_DIRS = ("/usr/sbin", "/usr/bin", "/sbin", "/bin")
+_PATH_FALLBACK_DIRS = ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin")
 
 # Schwellwerte der Bewertung
 SSD_LIFE_ERROR_PERCENT = 10.0
@@ -931,14 +934,16 @@ def rate_report(report: RaidReport) -> RaidReport:
 # ---------------------------------------------------------------------------
 
 def _locate(names: tuple[str, ...], extra_dirs: tuple[str, ...]) -> Optional[str]:
+    """Sucht Werkzeuge nur nach Existenz, nicht nach Ausführbarkeit: HPE installiert
+    ssacli/ssaducli mit Modus 0500 (nur root), ausgeführt wird ohnehin in der Root-Sitzung."""
     for name in names:
-        path = shutil.which(name)
+        path = shutil.which(name, mode=os.F_OK)
         if path:
             return path
-    for directory in extra_dirs:
+    for directory in (*_PATH_FALLBACK_DIRS, *extra_dirs):
         for name in names:
             candidate = Path(directory) / name
-            if candidate.is_file() and os.access(candidate, os.X_OK):
+            if candidate.is_file():
                 return str(candidate)
     return None
 
@@ -980,6 +985,8 @@ def _run_text(run: Runner, cmd: list[str], timeout: float) -> tuple[Optional[str
 
 
 _SLOT_LINE = re.compile(r"\bin Slot (\d+)")
+# ssacli ohne Smart-Array-Controller: "Error: No controllers detected." mit Exit 1 – kein Fehler.
+_NO_CONTROLLER = re.compile(r"no controllers? (detected|found)", re.IGNORECASE)
 
 
 def collect_raid(run: Optional[Runner], tools: Optional[dict[str, str]] = None) -> RaidReport:
@@ -998,7 +1005,10 @@ def collect_raid(run: Optional[Runner], tools: Optional[dict[str, str]] = None) 
         tool = command_name(report.tools["ssacli"])
         text, error = _run_text(run, [tool, "ctrl", "all", "show", "config", "detail"], SSACLI_TIMEOUT)
         if text is None:
-            report.errors.append(f"ssacli: {error}")
+            if _NO_CONTROLLER.search(error):
+                report.raw_outputs["ssacli ctrl all show config detail"] = error
+            else:
+                report.errors.append(f"ssacli: {error}")
         else:
             report.raw_outputs["ssacli ctrl all show config detail"] = text
             try:

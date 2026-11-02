@@ -199,6 +199,7 @@ _EN: dict[str, str] = {
     "? DCGM-Diagnose abgebrochen": "? DCGM diagnostics cancelled",
     "DCGM-Diagnose wurde manuell beendet.": "DCGM diagnostics were stopped manually.",
     "✓ DCGM-Diagnose BESTANDEN": "✓ DCGM diagnostics PASSED",
+    "Rohausgabe (JSON)": "Raw output (JSON)",
     "Ergebnisse: {passed} bestanden, {warned} Warnungen, {skipped} übersprungen.": "Results: {passed} passed, {warned} warnings, {skipped} skipped.",
     "✗ DCGM-Diagnose FEHLGESCHLAGEN": "✗ DCGM diagnostics FAILED",
     "DCGM meldet {failed} fehlgeschlagene Prüfung(en). Details stehen im Protokoll.": "DCGM reports {failed} failed check(s). See the log for details.",

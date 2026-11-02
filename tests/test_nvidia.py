@@ -106,3 +106,63 @@ def test_linux_driver_check_requires_complete_working_stack():
     )
     assert ready.hardware_present and ready.driver_ready
     assert missing_module.hardware_present and not missing_module.driver_ready
+
+
+_DCGM_PAYLOAD = {
+    "DCGM Diagnostic": {
+        "version": "3.3.9",
+        "Driver Version Detected": "570.86",
+        "GPU Device IDs": ["2331"],
+        "GPU Device Serials": {"0": "1234567890"},
+        "test_categories": [
+            {"category": "Deployment", "tests": [
+                {"name": "software", "results": [
+                    {"gpu_id": "0", "status": "PASS", "info": ["Driver OK"]}]},
+            ]},
+            {"category": "Hardware", "tests": [
+                {"name": "GPU Memory", "results": [
+                    {"gpu_id": "0", "status": "FAIL",
+                     "warnings": [{"warning": "ECC error detected", "error_id": 42}]}]},
+                {"name": "Diagnostic", "results": [{"gpu_id": "0", "status": "SKIP"}]},
+            ]},
+        ],
+    }
+}
+
+
+def test_dcgm_report_is_readable_text():
+    import json
+
+    runner = DcgmDiagnosticRunner(TestParameters(0), [0], 2)
+    runner.output_lines = json.dumps(_DCGM_PAYLOAD, indent=2).splitlines()
+    text = "\n".join(runner.report_lines("de"))
+    assert text.startswith("DCGM-Diagnose (DCGM 3.3.9)")
+    assert "Treiber: 570.86" in text
+    assert "Seriennummern: GPU 0: 1234567890" in text
+    assert "[Deployment]" in text and "[Hardware]" in text
+    assert "✓ software – GPU 0: bestanden" in text
+    assert "Info: Driver OK" in text
+    assert "✗ GPU Memory – GPU 0: FEHLGESCHLAGEN" in text
+    assert "Warnung: ECC error detected (ID 42)" in text
+    assert "– Diagnostic – GPU 0: übersprungen" in text
+    assert "{" not in text
+    english = "\n".join(runner.report_lines("en"))
+    assert "GPU Memory – GPU 0: FAILED" in english and "Driver: 570.86" in english
+
+
+def test_dcgm_report_falls_back_to_raw_output_without_json():
+    runner = DcgmDiagnosticRunner(TestParameters(0), [0], 1)
+    runner.output_lines = ["Error: unable to establish a connection to the host engine"]
+    assert runner.report_lines() == runner.output_lines
+
+
+def test_dcgm_report_handles_legacy_schema():
+    import json
+
+    payload = {"DCGM GPU Diagnostic": {"test_categories": [
+        {"category": "Integration", "tests": [
+            {"name": "PCIe", "results": [{"gpu_ids": "0,1", "status": "Pass", "warnings": "Low bandwidth"}]}]}]}}
+    runner = DcgmDiagnosticRunner(TestParameters(0), [0, 1], 2)
+    runner.output_lines = json.dumps(payload).splitlines()
+    text = "\n".join(runner.report_lines("de"))
+    assert "✓ PCIe – GPU 0,1: bestanden" in text and "Warnung: Low bandwidth" in text

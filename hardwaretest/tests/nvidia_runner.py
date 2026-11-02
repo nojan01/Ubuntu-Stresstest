@@ -22,6 +22,7 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         run_level: int,
         log_fn=None,
         use_pkexec: bool = False,
+        language: str = "de",
     ) -> None:
         if not gpu_indices:
             raise TestExecutionError("Keine NVIDIA-GPU ausgewählt")
@@ -30,6 +31,7 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         super().__init__(params, log_fn=log_fn)
         self.gpu_indices = sorted(set(int(index) for index in gpu_indices))
         self.run_level = run_level
+        self.language = language
         self.output_lines: list[str] = []
         self._command_prefix: list[str] = []
         if use_pkexec and os.geteuid() != 0:
@@ -59,9 +61,14 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         for line in self._process.stdout:
             stripped = line.rstrip()
             self.output_lines.append(stripped)
-            self._log(stripped)
+            # dcgmi --json liefert das Ergebnis erst am Ende als Block; Rohzeilen
+            # wuerden das Protokoll nur mit JSON fluten -> lesbarer Bericht unten.
+            if not stripped.lstrip().startswith(("{", "}", "[", "]", '"')):
+                self._log(stripped)
             self._check_line_for_errors(stripped)
         self._process.wait()
+        for text in self.report_lines(self.language):
+            self._log(text)
         self._finalize_result()
 
     def parsed_payload(self) -> Optional[object]:
@@ -105,6 +112,123 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         if payload is not None:
             visit(payload)
         return counts
+
+    def report_lines(self, language: Optional[str] = None) -> list[str]:
+        """Lesbare Textfassung des dcgmi-JSON (Kategorie -> Test -> GPU-Status).
+
+        Faellt auf die Rohausgabe zurueck, wenn kein JSON vorliegt.
+        """
+        payload = self.parsed_payload()
+        if payload is None:
+            return list(self.output_lines)
+        return format_dcgm_report(payload, language=language or self.language)
+
+
+_STATUS_SYMBOLS = {"pass": "✓", "fail": "✗", "warn": "!", "skip": "–"}
+_STATUS_WORDS = {
+    "de": {"pass": "bestanden", "fail": "FEHLGESCHLAGEN", "warn": "Warnung", "skip": "übersprungen"},
+    "en": {"pass": "passed", "fail": "FAILED", "warn": "warning", "skip": "skipped"},
+}
+
+
+def _status_key(status: object) -> Optional[str]:
+    if not isinstance(status, str):
+        return None
+    normalized = status.casefold()
+    for key in _STATUS_SYMBOLS:
+        if normalized.startswith(key):
+            return key
+    return None
+
+
+def _messages(value: object) -> list[str]:
+    """Normalisiert warnings/info/errors aus den verschiedenen DCGM-Schemaversionen."""
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [" ".join(value.split())]
+    if isinstance(value, dict):
+        for key in ("warning", "error", "info", "message", "msg"):
+            if isinstance(value.get(key), str):
+                text = " ".join(value[key].split())
+                if value.get("error_id") not in (None, 0, "0", ""):
+                    text += f" (ID {value['error_id']})"
+                return [text]
+        return [json.dumps(value, ensure_ascii=False)]
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            out.extend(_messages(item))
+        return out
+    return [str(value)]
+
+
+def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
+    words = _STATUS_WORDS.get(language, _STATUS_WORDS["de"])
+    de = language != "en"
+    root = payload
+    if isinstance(root, dict) and len(root) == 1 and isinstance(next(iter(root.values())), dict):
+        root = next(iter(root.values()))
+    if not isinstance(root, dict):
+        return [json.dumps(payload, indent=2, ensure_ascii=False)]
+
+    lines: list[str] = []
+    label = "DCGM-Diagnose" if de else "DCGM diagnostic"
+    version = root.get("version")
+    lines.append(f"{label}" + (f" (DCGM {version})" if version else ""))
+    driver = root.get("Driver Version Detected") or root.get("driver_version")
+    if driver:
+        lines.append(("Treiber: " if de else "Driver: ") + str(driver))
+    serials = root.get("GPU Device Serials")
+    if isinstance(serials, dict) and serials:
+        pairs = ", ".join(f"GPU {gpu}: {sn}" if sn else f"GPU {gpu}: ?" for gpu, sn in serials.items())
+        lines.append(("Seriennummern: " if de else "Serial numbers: ") + pairs)
+    dev_ids = root.get("GPU Device IDs")
+    if isinstance(dev_ids, list) and dev_ids:
+        lines.append(("Geräte-IDs: " if de else "Device IDs: ") + ", ".join(str(d) for d in dev_ids))
+
+    categories = root.get("test_categories")
+    if not isinstance(categories, list):
+        categories = []
+    for category in categories:
+        if not isinstance(category, dict):
+            continue
+        lines.append("")
+        lines.append(f"[{category.get('category', '?')}]")
+        for test in category.get("tests") or []:
+            if not isinstance(test, dict):
+                continue
+            name = str(test.get("name", "?"))
+            results = test.get("results") or []
+            if not isinstance(results, list):
+                results = [results]
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                key = _status_key(result.get("status"))
+                symbol = _STATUS_SYMBOLS.get(key, "?") if key else "?"
+                status_text = words[key] if key else str(result.get("status", "?"))
+                gpu = result.get("gpu_id", result.get("gpu_ids", result.get("entity_id")))
+                target = f" – GPU {gpu}" if gpu not in (None, "") else ""
+                lines.append(f"  {symbol} {name}{target}: {status_text}")
+                for text in _messages(result.get("warnings")):
+                    lines.append(("      Warnung: " if de else "      Warning: ") + text)
+                for text in _messages(result.get("errors")):
+                    lines.append(("      Fehler: " if de else "      Error: ") + text)
+                for text in _messages(result.get("info")):
+                    lines.append("      Info: " + text)
+
+    for key_name in ("errors", "warnings"):
+        texts = _messages(root.get(key_name))
+        if texts:
+            lines.append("")
+            lines.append(("Fehler:" if key_name == "errors" else "Warnungen:") if de else key_name.capitalize() + ":")
+            lines.extend("  " + t for t in texts)
+
+    if not categories:
+        lines.append("")
+        lines.append(json.dumps(payload, indent=2, ensure_ascii=False))
+    return lines
 
 
 def _extract_json(output: str) -> Optional[object]:

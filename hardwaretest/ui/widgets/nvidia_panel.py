@@ -390,6 +390,7 @@ class NvidiaPanel(QWidget):
                 level,
                 log_fn=lines.append,
                 use_pkexec=os.geteuid() != 0 and shutil.which("pkexec") is not None,
+                language=language_manager.language,
             )
             runner.start()
         except Exception as exc:  # pragma: no cover - DCGM/polkit dependent
@@ -557,7 +558,10 @@ class NvidiaPanel(QWidget):
             return
         counts = runner.status_counts()
         evaluation_error = runner.evaluation_error() if result is not None and result.passed else None
-        self.output.setPlainText("\n".join(runner.output_lines))
+        report = runner.report_lines(language_manager.language)
+        if runner.parsed_payload() is not None:
+            report += ["", "--- " + language_manager.tr("Rohausgabe (JSON)") + " ---", *runner.output_lines]
+        self.output.setPlainText("\n".join(report))
         self._runner = None
         self.progress.setVisible(False)
         self._set_running(False)

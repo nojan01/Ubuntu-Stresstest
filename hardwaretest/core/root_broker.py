@@ -160,7 +160,8 @@ while IFS= read -r line; do
         case "$report_id" in ''|*[!A-Za-z0-9_-]*) ok=0;; esac
         [ -d "$report_dir" ] && [ ! -L "$report_dir" ] && [ ! -e "$report" ] && [ ! -L "$report" ] || ok=0
         if [ $# -eq 7 ]; then case "$7" in --cpuset=?*) ;; *) ok=0;; esac; fi
-        ;;
+        # Wegen umask 077 entsteht das Protokoll als root:0600; nach Abschluss dem Aufrufer uebereignen.
+        postchown=2 ;;
       *) ok=0 ;;
     esac
     for a in "$@"; do case "$a" in *[!A-Za-z0-9/_=.,:%+-]*) ok=0;; esac; done
@@ -173,6 +174,9 @@ while IFS= read -r line; do
     if [ "$postchown" = 1 ]; then
       # ssaducli: Bericht nach Abschluss dem Aufrufer übereignen.
       set -- sh -c '"$1" -f "$2"; rc=$?; [ -e "$2" ] && chown "$3" "$2"; exit $rc' hardwaretest-ssaducli "$1" "$3" "$caller"
+    elif [ "$postchown" = 2 ]; then
+      # OpenDCDiag: YAML-Protokoll nach Abschluss dem Aufrufer uebereignen.
+      set -- sh -c 'r=$1; u=$2; shift 2; "$@"; rc=$?; [ -e "$r" ] && [ ! -L "$r" ] && chown "$u" "$r"; exit $rc' hardwaretest-opendcdiag "$report" "$caller" "$@"
     fi
     launch "$@"
     ;;

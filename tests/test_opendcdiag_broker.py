@@ -164,3 +164,23 @@ def test_broker_accepts_cpuset_and_configured_temp_root(diagnostic_broker, monke
                             "--cpuset=p1"], timeout=5)
         assert reply.returncode == 0
         assert output.read_text() == PASS_REPORT
+
+
+def test_broker_hands_report_over_to_caller(diagnostic_broker, tmp_path):
+    """Der Broker arbeitet mit umask 077: root schreibt das YAML als 0600 root:root in das
+    Benutzerverzeichnis. Nach dem Lauf muss es dem Aufrufer gehoeren, sonst ist es unlesbar."""
+    import os
+
+    broker, configure = diagnostic_broker
+    log = tmp_path / "chown.log"
+    fake_chown = tmp_path / "bin" / "chown"
+    fake_chown.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n')
+    fake_chown.chmod(0o755)
+    runner = opendcdiag.OpenDcDiagRunner(TestParameters(1), binary_path=configure())
+    runner.root_broker = broker
+    runner.start()
+    report = runner.yaml_path
+    runner._process.wait(timeout=5)
+    runner._stdout_thread.join(timeout=5)
+    assert runner.get_result().passed
+    assert f"{os.getuid()} {report}" in log.read_text().splitlines()

@@ -18,11 +18,10 @@ from hardwaretest.core.paths import self_command_for_root
 # VMware ESXi-Datenspeicher; blkid meldet je nach Lage VMFS oder VMFS_volume_member.
 VMFS_TYPES = {"VMFS", "VMFS_volume_member"}
 CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs", "btrfs", *VMFS_TYPES}
-# squashfs ist ein schreibgeschütztes Abbild; für VMFS gibt es unter Linux nur
-# eine lesende Metadatenprüfung (Reparatur nur mit VMware VOMA unter ESXi).
-# Btrfs: ``btrfs check --repair`` kann Dateisysteme zerstören und ist laut
-# btrfs-progs nur auf Anraten der Entwickler zu verwenden – daher nur Prüfung.
-REPAIRABLE_TYPES = CHECKABLE_TYPES - {"squashfs", "btrfs", *VMFS_TYPES}
+# Das Programm prüft Dateisysteme ausschließlich lesend. Reparaturen (e2fsck -p,
+# xfs_repair, fsck.fat -a, btrfs check --repair …) verändern Metadaten und können
+# Daten entfernen – sie bleiben bewusst dem Administrator auf der Kommandozeile
+# vorbehalten; die Werkzeuge dafür liegen dem Live-Image bei.
 
 _TOOLS = {
     "e2fsck": ("/usr/sbin/e2fsck", "/sbin/e2fsck", "e2fsprogs"),
@@ -76,10 +75,6 @@ class FilesystemDevice:
     def checkable_while_mounted(self) -> bool:
         # squashfs ist unveränderlich; unsquashfs liest nur – auch eingehängt sicher (z. B. Snaps, Live-System).
         return self.fstype == "squashfs" and not self.children
-
-    @property
-    def repairable(self) -> bool:
-        return self.fstype in REPAIRABLE_TYPES
 
 
 def list_filesystems() -> list[FilesystemDevice]:
@@ -141,41 +136,30 @@ def validate_device(expected: FilesystemDevice, action: str = "check") -> Filesy
 
 
 def checker_command(action: str, device: str, fstype: str = "ext4") -> list[str]:
-    if action not in {"check", "repair"}:
-        raise ValueError("Unknown filesystem action")
-    check = action == "check"
+    """Nur lesende Prüfkommandos; eine Reparatur wird nie erzeugt."""
+    if action != "check":
+        raise ValueError("Only read-only checks are supported / Nur lesende Prüfung unterstützt.")
     if fstype == "xfs":
         # -n: nur lesen. Niemals -L (verwirft das Journal und damit Daten).
-        return [_tool("xfs_repair"), *(["-n"] if check else []), device]
+        return [_tool("xfs_repair"), "-n", device]
     if fstype == "vfat":
-        # -n: nur lesen; -a: automatisch sicher reparieren, -w: sofort schreiben.
-        return [_tool("fsck.fat"), *(["-n"] if check else ["-a", "-w"]), device]
+        return [_tool("fsck.fat"), "-n", device]
     if fstype == "squashfs":
-        if not check:
-            raise ValueError("squashfs is read-only / squashfs ist schreibgeschützt – keine Reparatur möglich.")
         if _unsquashfs_full_read():
             # -pf liest alle Metadaten UND alle Datenblöcke (inkl. Dekomprimierung).
             return [_tool("unsquashfs"), "-no-progress", "-pf", "/dev/null", device]
         # Ältere squashfs-tools (< 4.6): nur Superblock, Inode- und Verzeichnistabellen.
         return [_tool("unsquashfs"), "-no-progress", "-lls", device]
     if fstype == "btrfs":
-        if not check:
-            raise ValueError("Btrfs: no automatic repair (btrfs check --repair is unsafe); use btrfs scrub on a "
-                             "mounted filesystem / Btrfs: keine automatische Reparatur (btrfs check --repair ist "
-                             "unsicher); eingehängt btrfs scrub verwenden.")
         # --readonly: nur lesen; --check-data-csum prüft zusätzlich alle Datenblöcke.
         return [_tool("btrfs"), "check", "--readonly", "--check-data-csum", device]
     if fstype in VMFS_TYPES:
-        if not check:
-            raise ValueError("VMFS: no repair on Linux, use VMware VOMA on ESXi / "
-                             "VMFS: keine Reparatur unter Linux, dafür VMware VOMA unter ESXi.")
         # fsck.vmfs(6) liest nur und schreibt nie. VMFS6 zuerst, VMFS3/5 als Rückfall.
         return [_tool("fsck.vmfs6"), device]
     if fstype not in {"ext2", "ext3", "ext4"}:
         raise ValueError(f"Unsupported filesystem / Nicht unterstützt: {fstype}")
-    # -n is strictly read-only. -p repairs only problems e2fsck considers safe;
-    # never use -y, never run the generic fsck dispatcher on mounted filesystems.
-    return [_tool("e2fsck"), "-f", "-n" if check else "-p", device]
+    # -n is strictly read-only; never run the generic fsck dispatcher on mounted filesystems.
+    return [_tool("e2fsck"), "-f", "-n", device]
 
 
 def worker_command(action: str, device: FilesystemDevice, language: str = "de") -> list[str]:
@@ -196,16 +180,11 @@ def result_text(code: int, action: str, language: str) -> str:
                  "Status diagnosis: error indications found. See log.")
     if code == 0:
         return t("Prüfung abgeschlossen: keine Fehler gemeldet.", "Check completed: no errors reported.")
-    if code in (1, 2, 3) and action == "repair":
-        message = t("Fehler korrigiert. Erneute Prüfung empfohlen.", "Errors corrected. A new check is recommended.")
-        if code & 2:
-            message += t(" Neustart erforderlich.", " Reboot required.")
-        return message
     if code >= 0 and code < 8 and code & 4:
-        return t("Dateisystemfehler vorhanden; nicht alle korrigiert. Siehe Protokoll.",
-                 "Filesystem errors remain; not all corrected. See log.")
-    return t("Prüfung/Reparatur nicht erfolgreich abgeschlossen – keine Zustandsaussage.",
-             "Check/repair did not complete successfully – health unknown.") + f" (Exit: {code})"
+        return t("Dateisystemfehler vorhanden. Siehe Protokoll; Reparatur manuell mit dem passenden Werkzeug.",
+                 "Filesystem errors found. See log; repair manually with the appropriate tool.")
+    return t("Prüfung nicht erfolgreich abgeschlossen – keine Zustandsaussage.",
+             "Check did not complete successfully – health unknown.") + f" (Exit: {code})"
 
 
 def read_online_status(device: FilesystemDevice, language: str = "de") -> tuple[str, int]:
@@ -328,21 +307,17 @@ def btrfs_device_stats(mountpoint: str, language: str = "de") -> tuple[bool, lis
 
 
 def normalize_exit(fstype: str, action: str, code: int, output: str = "") -> int:
-    """Rechnet Exit-Codes von xfs_repair/fsck.fat/unsquashfs in e2fsck-Semantik um."""
+    """Rechnet Exit-Codes von xfs_repair -n/fsck.fat -n/unsquashfs in e2fsck-Semantik um."""
     if code < 0:
         return 8
     if fstype == "xfs":
         if code == 0:
             return 0
-        if code == 1 and action == "check":
-            return 4
-        return 8  # 2 = Journal nicht leer, sonst Betriebsfehler
+        return 4 if code == 1 else 8  # 2 = Journal nicht leer, sonst Betriebsfehler
     if fstype == "vfat":
         if code == 0:
             return 0
-        if code == 1:
-            return 4 if action == "check" else 1
-        return 8
+        return 4 if code == 1 else 8
     if fstype == "squashfs":
         return 0 if code == 0 else 4
     if fstype == "btrfs":
@@ -413,16 +388,6 @@ def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
         package = next(p for n, (a, b, p) in _TOOLS.items() if command[0] in (a, b))
         print(f"{command[0]} fehlt / missing. Installation: sudo apt install {package}", flush=True)
         return 8
-    if fstype == "vfat" and action == "repair":
-        # Nur Bootsektor-Label ohne Wurzelverzeichnis-Label (ESXi-Bootbank): nichts zu
-        # reparieren; fsck.fat -a würde das Label sonst aus dem Bootsektor löschen.
-        probe = subprocess.run([command[0], "-n", device], stdin=subprocess.DEVNULL, capture_output=True,
-                               text=True, errors="replace", env=env)
-        if probe.returncode == 1 and vfat_only_boot_label_mismatch(probe.stdout + probe.stderr):
-            print(probe.stdout + probe.stderr, end="", flush=True)
-            print("Nur Bootsektor-Label (typisch für ESXi-Bootbanks) – keine Reparatur nötig, Label bleibt erhalten. / "
-                  "Boot sector label only (typical for ESXi boot banks) – no repair needed, label kept.", flush=True)
-            return 0
     print("$ " + " ".join(command), flush=True)
     declined_fix = False
     skipped_journal = False
@@ -468,7 +433,7 @@ def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
 
 def worker_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("status", "check", "repair"))
+    parser.add_argument("action", choices=("status", "check"))
     parser.add_argument("--language", choices=("de", "en"), default="de")
     for name in ("device", "uuid", "number", "fstype"):
         parser.add_argument("--" + name, required=True)

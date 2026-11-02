@@ -1,4 +1,10 @@
-# Dateisystemprüfung, Reparatur und Langzeitmonitoring (0.2.30)
+# Dateisystemprüfung und Langzeitmonitoring (Stand 0.2.61)
+
+> **Seit 0.2.61 repariert das Programm keine Dateisysteme mehr.** Alle Prüfungen sind
+> strikt lesend. Reparaturen bleiben eine bewusste Administrator-Entscheidung auf der
+> Kommandozeile; das HPE-Live-ISO bringt die Werkzeuge dafür mit (e2fsprogs, xfsprogs,
+> btrfs-progs, dosfstools, ntfs-3g, exfatprogs, zfsutils-linux, gdisk, testdisk).
+> Die nachfolgenden Abschnitte zu „Reparieren …“ beschreiben den Stand bis 0.2.60.
 
 ## Individuelle Temperaturgrenzen und Diagramme (0.2.30)
 
@@ -118,9 +124,8 @@ Datenquellen werden im Bericht ausgewiesen. Es werden keine Testdateien angelegt
 kein fsck auf dem eingehängten Gerät gestartet und nichts repariert.
 
 Das Ergebnis ist eine begrenzte Statusdiagnose, keine vollständige Prüfung der
-Dateisystemstruktur. **Struktur prüfen (offline)** und **Reparieren …** bleiben
-für eingehängte Dateisysteme gesperrt. Für nicht unterstützte Offline-Typen
-(z.B. FAT) wird weiterhin keine Strukturprüfung oder Reparatur angeboten.
+Dateisystemstruktur. **Struktur prüfen (offline)** bleibt für eingehängte
+Dateisysteme gesperrt (Ausnahme: schreibgeschütztes squashfs).
 
 Die Schaltfläche **HTML-Protokoll öffnen** verwendet einen installierten
 Webbrowser, bevorzugt den konfigurierten Standardbrowser. Die HTML-Dateizuordnung
@@ -140,18 +145,20 @@ Prüfungen sind noch nicht Bestandteil dieser Ausbaustufe.
    erstellen lassen; Reparaturen können die spätere Datenrettung erschweren.
 2. Im Tab **Dateisystem** die Laufwerke aktualisieren. Pfad, Typ, UUID und
    Einhängepunkte werden angezeigt. Unterstützt sind zunächst ext2/ext3/ext4.
-3. Eingehängte Dateisysteme bleiben für **Strukturprüfung und Reparatur gesperrt**, auch
+3. Eingehängte Dateisysteme bleiben für die **Strukturprüfung gesperrt**, auch
    bei schreibgeschützten oder Bind-Mounts. Für die Systempartition ein Live-USB
    starten. Nicht automatisch einhängen lassen. Keine parallelen Zugriffe anderer
    Programme, anderer Benutzer, Container oder eines zweiten Rechners zulassen.
 4. **Struktur prüfen (offline)** führt `e2fsck -f -n` mit Administratoranmeldung aus. Dabei wird
    nichts repariert. Bei ausstehender Journal-Wiederherstellung ist ein reiner
    Lesecheck nicht verlässlich: Das Ergebnis wird nicht als fehlerfrei bewertet.
-5. **Reparieren …** ist ein separater, bestätigungspflichtiger Schritt:
-   `e2fsck -f -p` behebt nur automatisch sicher korrigierbare Fehler. Kein `-y`.
-   Nicht automatisch lösbare Fehler bleiben im Protokoll und benötigen eine
-   fachkundige manuelle Beurteilung. Eine Reparatur ist keine Datensicherung.
-6. Anschließend erneut prüfen; einen ausdrücklich verlangten Neustart beachten.
+5. **Reparatur** erfolgt nicht in der App (seit 0.2.61). Gemeldete Fehler werden
+   manuell mit dem passenden Werkzeug behoben: `e2fsck -f -p` bzw. interaktiv
+   (ext2/3/4), `xfs_repair` ohne `-L` (XFS), `btrfs check --repair` nur nach
+   Rücksprache / `btrfs scrub` eingehängt (Btrfs), `fsck.fat -a` (vfat), `ntfsfix`
+   (NTFS), `fsck.exfat` (exFAT), `zpool scrub` (ZFS). Eine Reparatur ist keine
+   Datensicherung.
+6. Anschließend in der App erneut prüfen.
 
 Das privilegierte Hilfsprogramm kontrolliert unmittelbar vor dem Start erneut
 Geräteidentität, Mounts in eigener/Host-Mount-Namespace und aktive Blockgerät-Layer.
@@ -159,13 +166,13 @@ Unlesbare Sicherheitsinformationen führen zum Abbruch. Zusätzlich schützt die
 eigene Mount-Prüfung von e2fsck. Fremde Software darf das Gerät dennoch nicht
 währenddessen einhängen; die App kann fremde Zugriffe nicht weltweit sperren.
 Andere Tests derselben App sind während einer Dateisystemaktion gesperrt.
-Die Reparatur wird nicht durch einen Stop-Knopf oder thermischen Wächter beendet;
-das normale Schließen der App ist währenddessen gesperrt. Nicht ausschalten.
+Die Prüfung wird nicht durch einen Stop-Knopf oder thermischen Wächter beendet;
+das normale Schließen der App ist währenddessen gesperrt.
 
 Textprotokoll vollständig, HTML mit einer begrenzten Ausgabevorschau (64.000
 Zeichen) und dem Ergebnis. Es gibt keine Reparaturen im Gesamttestplan.
-XFS, Btrfs, NTFS, exFAT und weitere Typen werden in der Partitionsansicht angezeigt,
-haben dort aber keine vollständige Strukturprüfung/Reparatur. ZFS hat eine eigene
+Strukturprüfung (lesend) gibt es für ext2/3/4, XFS, Btrfs, vfat, squashfs und VMFS;
+NTFS und exFAT haben nur die Statusdiagnose. ZFS hat eine eigene
 Pool-Diagnose (siehe oben). Automatische Unmounts und Partitionsänderungen sind nicht enthalten.
 
 ## Langzeitmonitoring
@@ -221,14 +228,14 @@ Referenzen: [e2fsck](https://man7.org/linux/man-pages/man8/e2fsck.8.html),
 
 The Filesystem tab supports read-only **status diagnosis on mounted filesystems**
 (mount options, space, available ext4 counters and recent device-specific kernel
-errors). This is not a full integrity check. Offline checks and repair support
-**ext2/ext3/ext4 only**. Refresh, identify the
-device and back up first. Read-only check uses `e2fsck -f -n`; separately confirmed
-repair uses `e2fsck -f -p`, never forced yes. Mounted filesystems are blocked;
-boot a live USB for the running system partition. No automatic unmount, no repairs
-in unattended plans, no forced cancellation during repair. Device identity and
-mount state are revalidated by the privileged worker. Prevent concurrent access
-by other software. Recheck after repair. Unsupported filesystems are not modified.
+errors). This is not a full integrity check. Offline read-only integrity checks cover
+ext2/3/4 (`e2fsck -f -n`), XFS (`xfs_repair -n`), Btrfs (`btrfs check --readonly
+--check-data-csum`), vfat (`fsck.fat -n`), squashfs and VMFS. **Since 0.2.61 the program
+never repairs filesystems**; repairs are a deliberate administrator action on the command
+line, and the live image ships the tools (e2fsprogs, xfsprogs, btrfs-progs, dosfstools,
+ntfs-3g, exfatprogs, zfsutils-linux, gdisk, testdisk). Mounted filesystems are blocked;
+boot a live USB for the running system partition. Device identity and mount state are
+revalidated by the privileged worker. Unsupported filesystems are not modified.
 
 Monitoring records CSV incrementally and generates bounded TXT/HTML summaries.
 Available temperatures, fans, EDAC, ext4 counters, kernel messages and NVIDIA data

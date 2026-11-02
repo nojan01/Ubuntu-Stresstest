@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from hardwaretest.core.filesystem_check import FilesystemDevice
 from hardwaretest.ui.i18n import language_manager
@@ -16,21 +16,19 @@ def test_filesystem_controls_block_mounted_and_unsupported():
         FilesystemDevice("/dev/b", "btrfs", "b", "8:2", (), "part"),
         FilesystemDevice("/dev/c", "ext4", "c", "8:3", (), "part"),
     ])
-    assert not panel.repair.isEnabled()
     assert not panel.check.isEnabled()
     assert panel.online.isEnabled()
+    assert not hasattr(panel, "repair")
     panel.devices.setCurrentIndex(1)
-    assert not panel.repair.isEnabled()
+    assert panel.check.isEnabled()  # btrfs: nur lesende Prüfung
     panel.devices.setCurrentIndex(2)
-    assert panel.repair.isEnabled()
     assert panel.check.isEnabled()
     panel.deleteLater()
 
 
-def test_cancel_repair_confirmation_never_starts_process(monkeypatch):
+def test_repair_action_never_starts_process():
     panel = FilesystemPanel()
     panel.scanned([FilesystemDevice("/dev/c", "ext4", "c", "8:3", (), "part")])
-    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **kw: QMessageBox.StandardButton.Cancel)
     panel.start("repair")
     assert panel._process is None
     assert panel._report is None

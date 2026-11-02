@@ -68,15 +68,14 @@ def test_worker_never_runs_checker_after_rejected_validation(monkeypatch):
     monkeypatch.setattr(fs.os, "geteuid", lambda: 0)
     monkeypatch.setattr(fs, "validate_device", lambda *_: (_ for _ in ()).throw(ValueError("mounted")))
     monkeypatch.setattr(fs, "run_checker", lambda *_a, **_k: pytest.fail("must not run"))
-    assert fs.worker_main(["repair", "--device", "/dev/test0", "--uuid", "abc", "--number", "8:1", "--fstype", "ext4"]) == 8
+    assert fs.worker_main(["check", "--device", "/dev/test0", "--uuid", "abc", "--number", "8:1", "--fstype", "ext4"]) == 8
 
 
 def test_commands_and_exit_codes_are_conservative():
     assert fs.checker_command("check", DEVICE.path) == ["/usr/sbin/e2fsck", "-f", "-n", DEVICE.path]
-    assert fs.checker_command("repair", DEVICE.path)[2] == "-p"
-    assert "corrected" in fs.result_text(1, "repair", "en")
-    assert "Reboot" in fs.result_text(2, "repair", "en")
-    assert "remain" in fs.result_text(4, "check", "en")
+    with pytest.raises(ValueError):
+        fs.checker_command("repair", DEVICE.path)
+    assert "errors found" in fs.result_text(4, "check", "en")
     assert "unknown" in fs.result_text(8, "check", "en")
     assert "unknown" in fs.result_text(126, "check", "en")
     assert "unknown" in fs.result_text(1, "check", "en")
@@ -143,7 +142,7 @@ def test_status_worker_allows_mount_but_never_runs_checker(monkeypatch, capsys):
 
 
 @pytest.mark.skipif(not all(shutil.which(cmd) for cmd in ("mkfs.ext4", "debugfs", "e2fsck")), reason="ext tools missing")
-def test_check_and_repair_real_temporary_image(tmp_path):
+def test_check_real_temporary_image_never_writes(tmp_path):
     # This is a regular file in pytest's temp directory, NEVER a user block device.
     image = tmp_path / "disposable-ext4.img"
     with image.open("wb") as file:
@@ -153,13 +152,11 @@ def test_check_and_repair_real_temporary_image(tmp_path):
     before = image.read_bytes()
     assert fs.run_checker("check", str(image)) == 4
     assert image.read_bytes() == before  # -n must not change a byte.
-    assert fs.run_checker("repair", str(image)) == 1
-    assert fs.run_checker("check", str(image)) == 0
 
 
 @pytest.mark.parametrize(("fstype", "action", "expected"), [
-    ("xfs", "check", ["-n"]), ("xfs", "repair", []),
-    ("vfat", "check", ["-n"]), ("vfat", "repair", ["-a", "-w"]),
+    ("xfs", "check", ["-n"]),
+    ("vfat", "check", ["-n"]),
 ])
 def test_checker_commands_for_other_filesystems(fstype, action, expected):
     command = fs.checker_command(action, "/dev/x", fstype)
@@ -167,15 +164,17 @@ def test_checker_commands_for_other_filesystems(fstype, action, expected):
     assert "-L" not in command
 
 
-def test_squashfs_cannot_be_repaired():
+@pytest.mark.parametrize("fstype", ["ext4", "xfs", "vfat", "squashfs", "btrfs", "vmfs"])
+def test_repair_is_never_available(fstype):
     with pytest.raises(ValueError):
-        fs.checker_command("repair", "/dev/x", "squashfs")
-    assert not fs.FilesystemDevice("/dev/x", "squashfs", "", "7:0", (), "loop").repairable
+        fs.checker_command("repair", "/dev/x", fstype)
+    with pytest.raises(SystemExit):
+        fs.worker_main(["repair", "--device", "/dev/x", "--uuid", "u", "--number", "8:1", "--fstype", fstype])
 
 
 @pytest.mark.parametrize(("fstype", "action", "code", "expected"), [
-    ("xfs", "check", 1, 4), ("xfs", "repair", 2, 8), ("xfs", "check", 0, 0),
-    ("vfat", "check", 1, 4), ("vfat", "repair", 1, 1), ("squashfs", "check", 1, 4),
+    ("xfs", "check", 1, 4), ("xfs", "check", 2, 8), ("xfs", "check", 0, 0),
+    ("vfat", "check", 1, 4), ("vfat", "check", 2, 8), ("squashfs", "check", 1, 4),
 ])
 def test_normalize_exit(fstype, action, code, expected):
     assert fs.normalize_exit(fstype, action, code) == expected
@@ -191,8 +190,6 @@ def test_mounted_squashfs_check_allowed(monkeypatch):
     dev = fs.FilesystemDevice("/dev/loop0", "squashfs", "", "7:0", ("/snap/x",), "loop")
     monkeypatch.setattr(fs, "validate_identity", lambda expected: dev)
     assert fs.validate_device(dev, "check") == dev
-    with pytest.raises(ValueError):
-        fs.validate_device(dev, "repair")
 
 
 VMFS_SUMMARY = """Unallocated blocks : 0
@@ -223,12 +220,10 @@ def fake_vmfs_tools(monkeypatch, tmp_path, results):
 
 
 @pytest.mark.parametrize("fstype", sorted(fs.VMFS_TYPES))
-def test_vmfs_is_checkable_but_never_repairable(fstype):
+def test_vmfs_is_checkable_read_only(fstype):
     dev = fs.FilesystemDevice("/dev/sdb7", fstype, "", "8:23", (), "part")
-    assert dev.supported and not dev.repairable
+    assert dev.supported
     assert Path(fs.checker_command("check", "/dev/sdb7", fstype)[0]).name == "fsck.vmfs6"
-    with pytest.raises(ValueError):
-        fs.checker_command("repair", "/dev/sdb7", fstype)
 
 
 @pytest.mark.parametrize(("lost", "expected"), [(0, 0), (3, 4)])
@@ -298,20 +293,17 @@ def test_esxi_bootbank_real_image_is_clean_and_label_kept(tmp_path):
     data[entry] = 0xE5
     image.write_bytes(bytes(data))
     assert fs.run_checker("check", str(image), "vfat") == 0
-    assert fs.run_checker("repair", str(image), "vfat") == 0
-    assert image.read_bytes() == bytes(data)  # Label im Bootsektor bleibt erhalten
+    assert image.read_bytes() == bytes(data)  # -n verändert nichts
 
 
 # ----------------------------------------------------------------- Btrfs
 
 
-def test_btrfs_is_checkable_read_only_but_never_repairable():
+def test_btrfs_is_checkable_read_only():
     device = fs.FilesystemDevice("/dev/x", "btrfs", "u", "8:1", (), "part")
-    assert device.supported and not device.repairable
+    assert device.supported
     command = fs.checker_command("check", "/dev/x", "btrfs")
     assert command[1:] == ["check", "--readonly", "--check-data-csum", "/dev/x"]
-    with pytest.raises(ValueError):
-        fs.checker_command("repair", "/dev/x", "btrfs")
     assert fs.normalize_exit("btrfs", "check", 0) == 0
     assert fs.normalize_exit("btrfs", "check", 1) == 4
     assert fs.normalize_exit("btrfs", "check", 2) == 8

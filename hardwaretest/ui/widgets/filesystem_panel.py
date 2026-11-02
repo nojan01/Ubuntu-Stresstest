@@ -1,4 +1,4 @@
-"""Explicit offline checks and conservative repairs, outside unattended test plans."""
+"""Explicit read-only filesystem checks, outside unattended test plans. No repairs."""
 
 from datetime import datetime
 from html import escape
@@ -9,8 +9,7 @@ import uuid
 
 from PySide6.QtCore import QObject, QProcess, QThread, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
 from hardwaretest.core.filesystem_check import VMFS_TYPES, list_filesystems, result_text, worker_command
@@ -48,9 +47,9 @@ class FilesystemPanel(QWidget):
         hint.setWordWrap(True)
         self.bind(hint,
                   "Eingehängte Dateisysteme: Statusdiagnose mit Einhängezustand, Speicherplatz und verfügbaren Fehlerhinweisen. "
-                  "Vollständige Strukturprüfung für ext2/3/4, xfs, btrfs, vfat, squashfs und VMFS, Reparatur (außer btrfs/squashfs/VMFS) nur ausgehängt; für die Systempartition ein Live-USB verwenden.",
+                  "Vollständige Strukturprüfung (nur lesend) für ext2/3/4, xfs, btrfs, vfat, squashfs und VMFS nur ausgehängt; für die Systempartition ein Live-USB verwenden. Das Programm repariert nicht – Reparaturwerkzeuge (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) liegen dem Live-Image bei.",
                   "Mounted filesystems: status diagnosis with mount state, free space and available error indications. "
-                  "Full integrity check for ext2/3/4, xfs, btrfs, vfat, squashfs and VMFS and repair (except btrfs/squashfs/VMFS) require an unmounted filesystem; use a live USB for the system partition.")
+                  "Full read-only integrity check for ext2/3/4, xfs, btrfs, vfat, squashfs and VMFS requires an unmounted filesystem; use a live USB for the system partition. The program never repairs – repair tools (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) ship with the live image.")
         layout.addWidget(hint)
         self.devices = QComboBox()
         self.devices.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -69,13 +68,11 @@ class FilesystemPanel(QWidget):
         row = QHBoxLayout()
         self.refresh = QPushButton()
         self.check = QPushButton()
-        self.repair = QPushButton()
         self.online = QPushButton()
         for button, de, en in (
             (self.refresh, "Laufwerke aktualisieren", "Refresh drives"),
             (self.online, "Statusdiagnose (eingehängt)", "Status diagnosis (mounted)"),
             (self.check, "Struktur prüfen (offline)", "Check integrity (offline)"),
-            (self.repair, "Reparieren …", "Repair …"),
         ):
             self.bind(button, de, en)
             row.addWidget(button)
@@ -101,7 +98,6 @@ class FilesystemPanel(QWidget):
         self.choose.clicked.connect(self.choose_directory)
         self.check.clicked.connect(lambda: self.start("check"))
         self.online.clicked.connect(lambda: self.start("status"))
-        self.repair.clicked.connect(lambda: self.start("repair"))
         language_manager.language_changed.connect(self.retranslate)
         for obj in [self, *self.findChildren(QObject)]:
             obj._hardwaretest_skip_tree = True
@@ -168,33 +164,30 @@ class FilesystemPanel(QWidget):
         for widget in (self.devices, self.refresh, self.output_dir, self.choose):
             widget.setEnabled(not busy)
         self.check.setEnabled((allowed or (device is not None and device.checkable_while_mounted)) and not busy)
-        self.repair.setEnabled(allowed and device.repairable and not busy)
         self.online.setEnabled(device is not None and bool(device.mounts) and not busy)
         if device is None:
             message = self.text("Bitte Laufwerke aktualisieren und ein Dateisystem auswählen.", "Refresh drives and select a filesystem.")
         elif device.mounts and device.checkable_while_mounted:
-            message = self.text("squashfs ist schreibgeschützt: Strukturprüfung auch eingehängt möglich (nur lesend), keine Reparatur.",
-                                "squashfs is read-only: integrity check possible while mounted (read-only), no repair.")
+            message = self.text("squashfs ist schreibgeschützt: Strukturprüfung auch eingehängt möglich (nur lesend).",
+                                "squashfs is read-only: integrity check possible while mounted (read-only).")
         elif device.mounts:
-            message = self.text("Eingehängt: Statusdiagnose verfügbar. Für Strukturprüfung/Reparatur aushängen oder Live-USB verwenden.",
-                                "Mounted: status diagnosis available. Unmount or use a live USB for integrity check/repair.")
+            message = self.text("Eingehängt: Statusdiagnose verfügbar. Für die Strukturprüfung aushängen oder Live-USB verwenden.",
+                                "Mounted: status diagnosis available. Unmount or use a live USB for the integrity check.")
         elif not device.supported:
-            message = self.text("Dieses Dateisystem wird noch nicht unterstützt. Keine Reparatur verfügbar.", "This filesystem is not supported yet. Repair unavailable.")
+            message = self.text("Dieses Dateisystem wird noch nicht unterstützt.", "This filesystem is not supported yet.")
         elif not allowed:
-            message = self.text("Eingehängt/in Benutzung – Prüfung und Reparatur gesperrt. Live-USB verwenden.", "Mounted/in use – check and repair blocked. Use a live USB.")
-        elif not device.repairable and device.fstype in VMFS_TYPES:
+            message = self.text("Eingehängt/in Benutzung – Strukturprüfung gesperrt. Live-USB verwenden.", "Mounted/in use – integrity check blocked. Use a live USB.")
+        elif device.fstype in VMFS_TYPES:
             message = self.text("Offline-Kandidat. VMFS (ESXi): lesende Metadatenprüfung mit fsck.vmfs; Reparatur nur mit VMware VOMA unter ESXi.",
                                 "Offline candidate. VMFS (ESXi): read-only metadata check with fsck.vmfs; repair only with VMware VOMA on ESXi.")
-        elif not device.repairable and device.fstype == "btrfs":
+        elif device.fstype == "btrfs":
             message = self.text("Offline-Kandidat. Btrfs: lesende Struktur- und Prüfsummenprüfung (btrfs check --readonly --check-data-csum); "
-                                "keine automatische Reparatur – eingehängt stattdessen btrfs scrub verwenden.",
+                                "bei Fehlern eingehängt btrfs scrub verwenden.",
                                 "Offline candidate. Btrfs: read-only structure and checksum check (btrfs check --readonly --check-data-csum); "
-                                "no automatic repair – use btrfs scrub on the mounted filesystem instead.")
-        elif not device.repairable:
-            message = self.text("Offline-Kandidat. squashfs ist schreibgeschützt: nur Prüfung, keine Reparatur möglich.",
-                                "Offline candidate. squashfs is read-only: check only, repair impossible.")
+                                "on errors use btrfs scrub on the mounted filesystem.")
         else:
-            message = self.text("Offline-Kandidat. Identität und Einhängezustand werden vor der Aktion erneut geprüft.", "Offline candidate. Device identity and mount state will be checked again before the operation.")
+            message = self.text("Offline-Kandidat (nur lesende Prüfung). Identität und Einhängezustand werden vor dem Start erneut geprüft.",
+                                "Offline candidate (read-only check). Device identity and mount state are checked again before starting.")
         self.reason.setText(message)
 
     def start(self, action):
@@ -209,24 +202,8 @@ class FilesystemPanel(QWidget):
         mounted_ok = action == "check" and device.checkable_while_mounted
         if action != "status" and (not device.supported or (device.mounts and not mounted_ok) or device.children):
             return
-        if action == "repair" and not device.repairable:
+        if action not in {"status", "check"}:
             return
-        if action == "repair":
-            answer = QMessageBox.warning(
-                self, self.text("Reparatur bestätigen", "Confirm repair"),
-                self.text(f"{device.path} ({device.fstype}, UUID {device.uuid})\n\n"
-                          "Eine Reparatur verändert Dateisystem-Metadaten und kann beschädigte Daten entfernen. "
-                          "Vorher ein Backup anlegen; bei Hardwaredefekten zuerst ein Abbild erstellen. "
-                          "Es werden nur automatisch behebbare Fehler korrigiert (e2fsck -p, xfs_repair ohne -L, fsck.fat -a), keine erzwungene Ja-Antwort. Fortfahren?",
-                          f"{device.path} ({device.fstype}, UUID {device.uuid})\n\n"
-                          "Repair changes filesystem metadata and may remove damaged data. Back up first; "
-                          "if hardware is failing, create an image first. Only automatically fixable problems are "
-                          "repaired (e2fsck -p, xfs_repair without -L, fsck.fat -a); no forced yes. Continue?"),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
         command = worker_command(action, device, language_manager.language)
         if os.geteuid() != 0:
             if not shutil.which("pkexec"):
@@ -266,7 +243,7 @@ class FilesystemPanel(QWidget):
                 self._report.write(text)
                 self._report.flush()
             except OSError as exc:
-                # Never kill a repair just because its log disk is full.
+                # Never kill a check just because its log disk is full.
                 self._report.close()
                 self._report = None
                 self.log.appendPlainText(f"Report write error / Protokollfehler: {exc}")

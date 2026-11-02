@@ -84,6 +84,8 @@ entspricht der derzeitigen Priorität.
 - Btrfs: lesende Prüfung (`btrfs check --readonly --check-data-csum`) und
   Fehlerzähler eingehängter Dateisysteme (`btrfs device stats`); bewusst keine
   automatische Reparatur – umgesetzt in 0.2.61.
+- Reparaturfunktion in 0.2.61 bewusst entfernt (nur lesende Prüfung); Reparaturwerkzeuge
+  liegen dem Live-ISO bei.
 - Noch offen: NTFS und exFAT (Statusdiagnose vorhanden, keine Struktur-Prüfung).
 - ZFS-Poolstatus, geführter Scrub mit Fortschritt/Stop und Text-/HTML-/CSV-Protokoll – umgesetzt in 0.2.28.
 - ZFS-Scrub im Gesamttestplan – umgesetzt in 0.2.61.

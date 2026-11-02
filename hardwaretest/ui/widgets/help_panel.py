@@ -1292,7 +1292,7 @@ class HelpPanel(QWidget):
         lang = language_manager.language
         if lang == "en":
             self._content.setText(_HELP_EN.replace("__VERSION__", __version__) + """
-<h2>Filesystem check and repair</h2>
+<h2>Filesystem check</h2>
 <p><b>Filesystem → ZFS pools:</b> pool health and read/write/checksum errors;
 start/resume/stop a scrub with progress and TXT/HTML/CSV reports. Scrub verifies data
 checksums online and may automatically repair damage from redundant copies.
@@ -1303,22 +1303,22 @@ progress, cancelled scans and old results are not treated as successful new test
 including ext2/3/4, Btrfs, XFS, FAT/exFAT and NTFS: mount state, space and available
 error indications. It is not a complete integrity check.</p>
 <p>Full integrity checking for <b>offline</b> filesystems: e2fsck -f -n (ext2/3/4),
-xfs_repair -n (XFS), fsck.fat -n (vfat) and unsquashfs -pf /dev/null (squashfs, reads all data blocks).
-squashfs is a read-only image and cannot be repaired; rebuild the image instead.
+xfs_repair -n (XFS), btrfs check --readonly --check-data-csum (Btrfs, incl. data checksums), fsck.fat -n (vfat)
+and unsquashfs -pf /dev/null (squashfs, reads all data blocks). Every check is strictly read-only.
 <b>VMFS</b> (VMware ESXi datastores, VMFS3/5/6): read-only metadata check with fsck.vmfs6 or fsck.vmfs
 (packages vmfs6-tools/vmfs-tools): inodes, block allocation and directories; reports lost/unallocated blocks,
 undefined/orphaned inodes and directory errors. Data blocks are not read. Limits: the tools are not from VMware
 and not complete; VMFS-L (ESXi 7+ OSData), datastores with several extents and unknown versions may fail to open
 (result "health unknown"). Repair only with VMware VOMA on ESXi (<code>voma -m vmfs -f check|fix -d /vmfs/devices/disks/…:N</code>).
 ESXi boot banks (vfat, BOOTBANK1/2) keep their label only in the boot sector; fsck.fat reports this,
-but it is not an error. Repair does not remove that label.
-Mounted filesystems are blocked for integrity checking and repair; use a live USB for the system partition.
-Repair is a separate confirmed action (e2fsck -f -p, xfs_repair without -L, fsck.fat -a -w; never forced yes).
-If XFS reports a dirty log, mount and cleanly unmount once – xfs_repair -L is never used.
-Back up first. With failing hardware, create an image before attempting repair.
-Do not allow other programs to mount/access the device during the operation.
-Do not power off or interrupt a repair. Recheck afterward.
-Unsupported filesystems are listed but not changed. No repairs in automated plans.</p>
+but it is not an error.
+Mounted filesystems are blocked for integrity checking; use a live USB for the system partition.
+<b>The program never repairs filesystems.</b> Repairs change metadata and may remove data; they remain a deliberate
+administrator decision on the command line. The live image ships the tools for it: e2fsck (ext2/3/4), xfs_repair (XFS;
+if XFS reports a dirty log, mount and cleanly unmount once instead of using -L), btrfs check --repair / btrfs scrub (Btrfs),
+fsck.fat (vfat), ntfsfix (NTFS), fsck.exfat (exFAT), zpool scrub (ZFS), gdisk and testdisk (partition tables).
+Back up first; with failing hardware, create an image before attempting any repair.
+Unsupported filesystems are listed but not changed.</p>
 <h2>ProLiant Info</h2>
 <p>Reads directly from the HPE iLO via ipmitool: system data (model, serial number, BIOS, iLO firmware), all sensors (temperatures, fans, power supplies, voltages) and the complete event log (IPMI SEL), plus the Integrated Management Log (IML) via iLOrest with HPE plain-text messages; all with rating (red = error, orange = warning), filter, search and HTML export. The <i>Memory / ECC</i> page shows the ECC type, modules, kernel EDAC counters and memory events. On a ProLiant or Synergy compute module (e.g. Synergy 480 Gen10) the tab reads automatically at startup and every 5 minutes (administrator password asked once). If no ProLiant/Synergy is detected, a notice is shown and the iLO information is inactive; it can still be read manually (e.g. other servers with IPMI). Requires <code>ipmitool</code>, <code>dmidecode</code> and for the IML <code>ilorest</code> (iLO option “Require Host Authentication” must be off). Long-term monitoring additionally records fan speeds and ECC events via IPMI.</p>
 <p><b>RAID page:</b> HPE Smart Array controllers (<code>ssacli</code>/<code>hpssacli</code>) and Broadcom MegaRAID “MR” controllers (<code>storcli64</code>/<code>storcli2</code>) are evaluated in a structured way within the same root session: controller status, cache and battery/capacitor, temperatures, logical drives (RAID level, status, rebuild progress, OS device) and physical drives (position, type, size, status, model, serial, firmware, temperature, power-on hours, SSD life, link speed). Rating: red = controller/drive failed, predictive failure, SSD life below 10&nbsp;% or missing/failed battery with cache present; orange = rebuild/recovery, cache disabled, medium errors, temperature ≥ 60&nbsp;°C (drive) or ≥ 85&nbsp;°C (controller), SSD life below 25&nbsp;%. The raw tool output is shown below the tables; <i>Save diagnostic report (ssaducli)</i> writes the full HPE Smart Storage diagnostic ZIP for HPE support. The RAID rating is part of the overview, summary and HTML export. The RAID button in the disk tabs jumps to this page. The test plan takes a snapshot of RAID, IML and sensors before and after the tests and reports the step <i>ProLiant / RAID controller</i>: it fails only on a new RAID error; new IML entries and sensor warnings are listed as warnings.</p>
@@ -1349,7 +1349,7 @@ and power supply redundancy checks are not included yet.</p>
 """)
         else:
             self._content.setText(_HELP_DE.replace("__VERSION__", __version__) + """
-<h2>Dateisystemprüfung und Reparatur</h2>
+<h2>Dateisystemprüfung</h2>
 <p><b>Dateisystem → ZFS-Pools:</b> Poolzustand und Lese-/Schreib-/Prüfsummenfehler;
 Scrub starten/fortsetzen/stoppen mit Fortschritt und Text-/HTML-/CSV-Bericht.
 Ein Scrub prüft Datenprüfsummen online und kann Schäden mit redundanten Kopien
@@ -1361,8 +1361,8 @@ alte Ergebnisse werden nicht als erfolgreicher neuer Test gewertet.</p>
 auch ext2/3/4, Btrfs, XFS, FAT/exFAT und NTFS: Einhängezustand, Speicherplatz und verfügbare
 Fehlerhinweise. Dies ist keine vollständige Strukturprüfung.</p>
 <p>Vollständige Strukturprüfung für <b>ausgehängte</b> Dateisysteme: e2fsck -f -n (ext2/3/4),
-xfs_repair -n (XFS), fsck.fat -n (vfat) und unsquashfs -pf /dev/null (squashfs, liest alle Datenblöcke).
-squashfs ist ein schreibgeschütztes Abbild und kann nicht repariert werden; ggf. neu erstellen.
+xfs_repair -n (XFS), btrfs check --readonly --check-data-csum (Btrfs, inkl. Datenprüfsummen), fsck.fat -n (vfat)
+und unsquashfs -pf /dev/null (squashfs, liest alle Datenblöcke). Jede Prüfung ist strikt lesend.
 <b>VMFS</b> (VMware-ESXi-Datenspeicher, VMFS3/5/6): lesende Metadatenprüfung mit fsck.vmfs6 bzw. fsck.vmfs
 (Pakete vmfs6-tools/vmfs-tools): Inodes, Blockzuordnung und Verzeichnisse; gemeldet werden verlorene/nicht
 zugeordnete Blöcke, undefinierte/verwaiste Inodes und Verzeichnisfehler. Datenblöcke werden nicht gelesen.
@@ -1370,14 +1370,14 @@ Grenzen: Die Werkzeuge stammen nicht von VMware und sind unvollständig; VMFS-L 
 aus mehreren Extents und unbekannte Versionen lassen sich ggf. nicht öffnen (Ergebnis „keine Zustandsaussage“).
 Reparatur nur mit VMware VOMA unter ESXi (<code>voma -m vmfs -f check|fix -d /vmfs/devices/disks/…:N</code>).
 ESXi-Bootbanks (vfat, BOOTBANK1/2) tragen ihr Label nur im Bootsektor; fsck.fat meldet das, es ist aber
-kein Fehler. Die Reparatur entfernt dieses Label nicht.
-Für Strukturprüfung und Reparatur bleiben eingehängte Dateisysteme gesperrt; für die Systempartition ein Live-USB verwenden.
-Reparatur ist eine separat bestätigte Aktion (e2fsck -f -p, xfs_repair ohne -L, fsck.fat -a -w; keine erzwungene Ja-Antwort).
-Meldet XFS ein nicht leeres Journal, einmal einhängen und sauber aushängen – xfs_repair -L wird nie verwendet.
+kein Fehler.
+Für die Strukturprüfung bleiben eingehängte Dateisysteme gesperrt; für die Systempartition ein Live-USB verwenden.
+<b>Das Programm repariert keine Dateisysteme.</b> Reparaturen verändern Metadaten und können Daten entfernen; sie bleiben
+eine bewusste Administrator-Entscheidung auf der Kommandozeile. Das Live-Image bringt die Werkzeuge dafür mit: e2fsck (ext2/3/4),
+xfs_repair (XFS; bei nicht leerem Journal einmal einhängen und sauber aushängen statt -L), btrfs check --repair / btrfs scrub (Btrfs),
+fsck.fat (vfat), ntfsfix (NTFS), fsck.exfat (exFAT), zpool scrub (ZFS), gdisk und testdisk (Partitionstabellen).
 Vorher sichern; bei Hardwaredefekten zuerst ein Abbild anlegen.
-Währenddessen keine Zugriffe und kein Einhängen durch andere Programme zulassen.
-Nicht ausschalten oder eine Reparatur unterbrechen. Anschließend erneut prüfen.
-Andere Dateisysteme werden angezeigt, aber nicht verändert. Keine Reparatur im Gesamttestplan.</p>
+Andere Dateisysteme werden angezeigt, aber nicht verändert.</p>
 <h2>ProLiant Info</h2>
 <p>Liest per ipmitool direkt vom HPE iLO: Systemdaten (Modell, Seriennummer, BIOS, iLO-Firmware), alle Sensoren (Temperaturen, Lüfter, Netzteile, Spannungen) und das komplette Ereignisprotokoll (IPMI SEL), außerdem über iLOrest das Integrated Management Log (IML) mit HPE-Klartextmeldungen; alles mit Bewertung (rot = Fehler, orange = Warnung), Filter, Suche und HTML-Export. Die Seite <i>Speicher / ECC</i> zeigt ECC-Typ, Module, Kernel-EDAC-Zähler und Speicherereignisse. Auf einem ProLiant oder Synergy-Compute-Modul (z. B. Synergy 480 Gen10) liest der Tab beim Start automatisch und danach alle 5 Minuten aus (einmalige Passwortabfrage). Wird kein ProLiant/Synergy erkannt, erscheint ein Hinweis und die iLO-Informationen sind nicht aktiv; manuelles Auslesen bleibt möglich (z. B. andere Server mit IPMI). Benötigt <code>ipmitool</code>, <code>dmidecode</code> und für das IML <code>ilorest</code> (iLO-Option „Host-Authentifizierung erforderlich“ muss aus sein). Das Langzeitmonitoring zeichnet zusätzlich Lüfterdrehzahlen und ECC-Ereignisse über IPMI auf.</p>
 <p><b>Seite RAID:</b> HPE-Smart-Array-Controller (<code>ssacli</code>/<code>hpssacli</code>) und Broadcom-MegaRAID-„MR“-Controller (<code>storcli64</code>/<code>storcli2</code>) werden in derselben Root-Sitzung strukturiert ausgewertet: Controller-Status, Cache und Akku/Kondensator, Temperaturen, logische Laufwerke (RAID-Level, Status, Rebuild-Fortschritt, OS-Gerät) und physische Laufwerke (Position, Typ, Größe, Status, Modell, Seriennummer, Firmware, Temperatur, Betriebsstunden, SSD-Restlebensdauer, Link-Geschwindigkeit). Bewertung: rot = Controller/Laufwerk ausgefallen, Predictive Failure, SSD-Rest unter 10&nbsp;% oder fehlender/defekter Akku bei vorhandenem Cache; orange = Rebuild/Recovery, Cache deaktiviert, Medium-Fehler, Temperatur ≥ 60&nbsp;°C (Laufwerk) bzw. ≥ 85&nbsp;°C (Controller), SSD-Rest unter 25&nbsp;%. Die Rohausgabe der Werkzeuge steht unter den Tabellen; <i>Diagnosebericht (ssaducli) speichern</i> erzeugt das vollständige HPE-Smart-Storage-Diagnose-ZIP für den HPE-Support. Die RAID-Ampel fließt in Übersicht, Zusammenfassung und HTML-Export ein. Der RAID-Button in den Disk-Tabs springt auf diese Seite. Der Gesamttest nimmt vor und nach den Tests eine Momentaufnahme von RAID, IML und Sensoren und berichtet den Schritt <i>ProLiant / RAID-Controller</i>: Er schlägt nur bei einem neuen RAID-Fehler fehl; neue IML-Einträge und Sensorwarnungen werden als Warnung aufgeführt.</p>

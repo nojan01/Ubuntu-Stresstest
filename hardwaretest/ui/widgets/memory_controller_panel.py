@@ -23,6 +23,7 @@ from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.memory_controller import MC_STRESSORS, MemoryControllerRunner
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.system_events import system_events
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 
 
@@ -137,6 +138,7 @@ class MemoryControllerPanel(QWidget):
         self.klog_btn.clicked.connect(self._launch_klogs)
         self.mce_btn.clicked.connect(self._launch_mcelog)
         self.log_signal.connect(self._append_log)
+        system_events.swap_changed.connect(self._refresh_system_info)
 
         self._refresh_system_info()
 

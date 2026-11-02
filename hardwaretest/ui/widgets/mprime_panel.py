@@ -26,6 +26,7 @@ from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.mprime import MprimeRunner, _default_mprime_path
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.system_events import system_events
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 
 
@@ -155,6 +156,7 @@ class MprimePanel(QWidget):
         self.log_signal.connect(self._append_log)
 
         self._sync_custom_controls()
+        system_events.swap_changed.connect(lambda: self._refresh_system_info(update_memory_value=False))
         self._refresh_system_info(update_memory_value=False)
 
     def start_test(self) -> None:

@@ -48,6 +48,7 @@ from hardwaretest.tests.fio_runner import (
 )
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.system_events import system_events
 
 
 @dataclass
@@ -503,6 +504,7 @@ class FileDiskPanel(QWidget):
 		self.klog_btn.clicked.connect(self._launch_klogs)
 		self.mce_btn.clicked.connect(self._launch_mcelog)
 		self.log_signal.connect(self._append_log)
+		system_events.swap_changed.connect(self._refresh_system_info)
 
 		self._refresh_system_info()
 
@@ -845,6 +847,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		self.smart_btn.clicked.connect(self._show_smart_info)
 		self.raid_btn.clicked.connect(self._show_raid_info)
 		self.log_signal.connect(self._append_log)
+		system_events.swap_changed.connect(self._refresh_system_info)
 
 		self._refresh_system_info()
 		self._refresh_device_list()
@@ -1164,6 +1167,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		self.smart_btn.clicked.connect(self._show_smart_info)
 		self.raid_btn.clicked.connect(self._show_raid_info)
 		self.log_signal.connect(self._append_log)
+		system_events.swap_changed.connect(self._refresh_system_info)
 
 		self._refresh_system_info()
 		self._refresh_device_list()

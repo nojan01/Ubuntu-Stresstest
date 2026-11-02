@@ -38,6 +38,7 @@ from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.stress_ng import STRESS_NG_MODES, StressNgRunner
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.system_events import system_events
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
@@ -253,6 +254,7 @@ class TestPanel(QWidget):
         self.log_signal.connect(self._append_log)
         self.cores.valueChanged.connect(self._update_cpu_info)
         language_manager.language_changed.connect(self._update_cpu_info)
+        system_events.swap_changed.connect(lambda: self._refresh_system_info(update_memory_value=False))
         self._refresh_system_info(update_memory_value=True)
 
     def start_test(self) -> None:
@@ -436,6 +438,7 @@ class TestPanel(QWidget):
     def _on_swap_done(self) -> None:
         """Called (on the main thread) when swapoff succeeded."""
         self._append_log("✓ Swap erfolgreich deaktiviert.")
+        system_events.swap_changed.emit()
         self._refresh_system_info(update_memory_value=False)
 
     def _on_swap_failed(self, error_msg: str) -> None:
@@ -487,6 +490,7 @@ class TestPanel(QWidget):
     def _on_swap_on_done(self) -> None:
         """Called (on the main thread) when swapon succeeded."""
         self._append_log("✓ Swap erfolgreich aktiviert.")
+        system_events.swap_changed.emit()
         self._refresh_system_info(update_memory_value=False)
 
     def _on_swap_on_failed(self, error_msg: str) -> None:

@@ -32,6 +32,7 @@ from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.memory_fill import MemoryFillRunner
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.system_events import system_events
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
@@ -244,6 +245,7 @@ class MemoryFillPanel(QWidget):
         self.klog_btn.clicked.connect(self._launch_klogs)
         self.mce_btn.clicked.connect(self._launch_mcelog)
         self.log_signal.connect(self._append_log)
+        system_events.swap_changed.connect(lambda: self._refresh_system_info(update_memory_value=False))
 
         self._refresh_system_info(update_memory_value=True)
 
@@ -522,6 +524,7 @@ class MemoryFillPanel(QWidget):
 
     def _on_swap_done(self) -> None:
         self._append_log("\u2713 Swap erfolgreich deaktiviert.")
+        system_events.swap_changed.emit()
         self._refresh_system_info(update_memory_value=False)
         if self._start_after_swap:
             self._reset_pending_start()
@@ -569,6 +572,7 @@ class MemoryFillPanel(QWidget):
 
     def _on_swap_on_done(self) -> None:
         self._append_log("\u2713 Swap erfolgreich aktiviert.")
+        system_events.swap_changed.emit()
         self._refresh_system_info(update_memory_value=False)
 
     def _on_swap_on_failed(self, error_msg: str) -> None:

@@ -27,6 +27,7 @@ from hardwaretest.core.system_info import SystemInfo, read_system_info, is_runni
 from hardwaretest.ui.report_html import json_to_html_report
 from hardwaretest.ui.utils import launch_command_in_terminal
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.system_events import system_events
 
 
 SystemInfoProvider = Callable[[], SystemInfo]
@@ -105,6 +106,7 @@ class InfoPanel(QWidget):
             layout.addWidget(btn)
         layout.addStretch(1)
         self.setLayout(layout)
+        system_events.swap_changed.connect(self._update_summary)
 
         self._update_summary()
 

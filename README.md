@@ -2,7 +2,9 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
-### Neu in 0.2.61 (in Arbeit)
+### Neu in 0.2.61
+
+> **Stand 0.2.61:** Der Funktionsumfang ist vorläufig eingefroren – weitere Releases enthalten nur Fehlerbehebungen und Optimierungen.
 
 - **System-Tab: Thunderbolt / USB4.** Neue Tabelle mit Host-Router und angeschlossenen Geräten als Kette (Route), Generation (Thunderbolt 1–4/USB4), ausgehandelter Linkrate × Lanes, Freigabestatus, NVM-Firmware, boltctl-Richtlinie und UUID; Hinweiszeile mit Sicherheitsstufe der Domäne und IOMMU-DMA-Schutz. Orange: Gerät läuft unter der üblichen Rate (Kabel/Port), rot: gesperrt, grau: in boltctl gespeichert, aber nicht angeschlossen. Auch im Textbericht enthalten.
 - **Swap-Zustand tab-übergreifend:** Wird der Swap in einem Tab deaktiviert oder wieder aktiviert, aktualisieren alle anderen Tabs mit Swap-Anzeige bzw. -Button (stress-ng, RAM-Fülltest, mprime, Speichercontroller, Disk-Tabs, Systeminfo) ihren Zustand sofort.

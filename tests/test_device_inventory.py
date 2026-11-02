@@ -172,3 +172,41 @@ def test_missing_tools_and_sysfs(tmp_path, monkeypatch):
     assert inventory == dev.DeviceInventory()
     assert dev.device_lines("de", inventory) == []
     assert dev.parse_lsblk("kaputt") == []
+
+
+def _usb(root: Path, name: str, **values) -> None:
+    for key, value in values.items():
+        _write(root / "bus" / "usb" / "devices" / name / key, str(value))
+
+
+def test_usb_topology_speed_and_downgrade(tmp_path, monkeypatch):
+    _usb(tmp_path, "usb2", idVendor="1d6b", idProduct="0003", manufacturer="Linux 6.8 xhci-hcd",
+         product="xHCI Host Controller", serial="0000:00:14.0", speed="10000", version=" 3.10", bDeviceClass="09",
+         maxchild="4", busnum="2", devnum="1")
+    _usb(tmp_path, "2-1", idVendor="0bda", idProduct="0411", manufacturer="Generic", product="4-Port USB 3.0 Hub",
+         speed="5000", version=" 3.00", bDeviceClass="09", maxchild="4", busnum="2", devnum="2")
+    _usb(tmp_path, "2-1.3", idVendor="0781", idProduct="5581", manufacturer="SanDisk", product="Ultra",
+         serial="4C53", speed="480", version=" 3.00", bDeviceClass="00", maxchild="0", busnum="2", devnum="3")
+    _write(tmp_path / "bus/usb/devices/2-1.3:1.0/bInterfaceClass", "08")
+    driver = tmp_path / "bus/usb/drivers/usb-storage"
+    driver.mkdir(parents=True)
+    (tmp_path / "bus/usb/devices/2-1.3:1.0/driver").symlink_to(driver)
+    _usb(tmp_path, "2-2", idVendor="046d", idProduct="c52b", speed="12", version=" 2.00", bDeviceClass="00",
+         maxchild="0", busnum="2", devnum="4")
+    _write(tmp_path / "bus/usb/devices/2-2:1.0/bInterfaceClass", "03")
+    names = dev.parse_lsusb("Bus 002 Device 004: ID 046d:c52b Logitech, Inc. Unifying Receiver\nnonsense\n")
+    devices = dev.read_usb(tmp_path, names)
+    assert [d.port for d in devices] == ["usb2", "2-1", "2-1.3", "2-2"]
+    root, hub, stick, mouse = devices
+    assert root.is_root_hub and root.model == "xHCI Host Controller (xhci-hcd)" and root.pci == "0000:00:14.0"
+    assert hub.is_hub and hub.depth == 1 and dev.usb_tree_label(hub) == "└ 2-1"
+    assert stick.depth == 2 and dev.usb_tree_label(stick) == "    └ 2-1.3"
+    assert stick.kind == "Massenspeicher" and stick.drivers == ("usb-storage",)
+    assert dev.usb_downgraded(stick) and not dev.usb_downgraded(hub)
+    assert dev.usb_speed_text("de", hub) == "SuperSpeed (5 Gbit/s)"
+    assert dev.usb_speed_text("en", mouse).startswith("Full Speed")
+    assert mouse.model == "Logitech, Inc. Unifying Receiver" and mouse.kind == "HID"
+    assert dev.usb_kind_text("en", stick) == "Mass storage"
+    lines = dev.device_lines("de", dev.DeviceInventory(usb=devices))
+    assert any("USB     └ 2-1.3: SanDisk Ultra" in line and "usb-storage" in line for line in lines)
+    assert dev.read_usb(tmp_path / "missing") == []

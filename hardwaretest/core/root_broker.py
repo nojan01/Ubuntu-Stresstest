@@ -126,6 +126,12 @@ while IFS= read -r line; do
       dmidecode) [ $# -eq 3 ] && [ "$2" = "-t" ] && case "$3" in memory|system) true;; *) false;; esac || ok=0 ;;
       ilorest) [ "$*" = "ilorest --nologo serverlogs --selectlog=IML --json" ] || ok=0 ;;
       modprobe) [ $# -eq 3 ] && [ "$2" = "-q" ] && case "$3" in ipmi_si|ipmi_devintf) true;; *) false;; esac || ok=0 ;;
+      zpool)
+        # Nur Scrub starten/abbrechen; Pool-Namen beginnen mit einem Buchstaben.
+        case $# in 3) [ "$2" = "scrub" ] || ok=0; pool=$3;; 4) [ "$2 $3" = "scrub -s" ] || ok=0; pool=$4;; *) ok=0;; esac
+        case "${pool:-}" in [A-Za-z]*) ;; *) ok=0;; esac
+        case "${pool:-}" in *[!A-Za-z0-9_.:-]*) ok=0;; esac
+        [ ${#pool} -le 64 ] || ok=0 ;;
       ssacli|hpssacli|hpacucli|/opt/smartstorageadmin/ssacli/bin/ssacli|/opt/smartstorageadmin/ssacli/bld/ssacli|/opt/hp/hpssacli/bld/hpssacli|/opt/compaq/hpacucli/bld/hpacucli)
         # Nur lesende Smart-Array-Abfragen (Status/Konfiguration/Laufwerksdetails).
         rest=""; i=0; for a in "$@"; do i=$((i+1)); [ "$i" -gt 1 ] && rest="$rest $a"; done; rest=${rest# }

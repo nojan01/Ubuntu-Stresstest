@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -138,6 +139,10 @@ class TestPlanPanel(QWidget):
         self.disk_read_check = QCheckBox("Vollständiger SATA/SAS/USB-Lesetest (optional)")
         self.disk_read_check.setToolTip(language_manager.tr(
             "Liest ausgewählte /dev/sd*-Datenträger komplett (fio, nur lesend) und vergleicht SMART-Zähler vorher/nachher."))
+        self.zfs_check = QCheckBox("ZFS-Scrub aller importierten Pools (optional)")
+        self.zfs_check.setToolTip(language_manager.tr(
+            "Startet zpool scrub für alle importierten Pools (ONLINE/DEGRADED, nicht schreibgeschützt) und wartet auf das Ergebnis."))
+        self.zfs_check.setVisible(shutil.which("zpool") is not None)
         self.drive_scan_btn = QPushButton("Laufwerke aktualisieren")
         self.select_all_btn = QPushButton("Alle auswählen")
         self.drives = QListWidget()
@@ -166,6 +171,7 @@ class TestPlanPanel(QWidget):
         hardware_form.addRow(self.nvme_check)
         hardware_form.addRow(self.nvme_read_check)
         hardware_form.addRow(self.disk_read_check)
+        hardware_form.addRow(self.zfs_check)
         drive_buttons = QHBoxLayout()
         drive_buttons.addWidget(self.drive_scan_btn)
         drive_buttons.addWidget(self.select_all_btn)
@@ -581,6 +587,7 @@ class TestPlanPanel(QWidget):
             nvme_devices=self._selected_nvme(),
             disk_read_enabled=self.disk_read_check.isChecked(),
             disk_devices=self._selected_disks(),
+            zfs_enabled=self.zfs_check.isChecked(),
             rounds=self.rounds.value(),
             end_time=self._end_time(),
             ping_enabled=self.ping_check.isChecked(),
@@ -611,6 +618,7 @@ class TestPlanPanel(QWidget):
             self.nvme_check,
             self.nvme_read_check,
             self.disk_read_check,
+            self.zfs_check,
             self.ping_check,
             self.iperf_check,
             self.nvidia_check,
@@ -625,7 +633,7 @@ class TestPlanPanel(QWidget):
         for widget in (
             self.cpu_check, self.cpu_duration, self.cpu_mode, self.opendcdiag_check, self.opendcdiag_duration, self.ram_check, self.ram_duration,
             self.ram_percent, self.nvme_check, self.ping_check, self.ping_count,
-            self.nvme_read_check, self.disk_read_check, self.drives, self.drive_scan_btn, self.select_all_btn,
+            self.nvme_read_check, self.disk_read_check, self.zfs_check, self.drives, self.drive_scan_btn, self.select_all_btn,
             self.rounds, self.end_time_check,
             self.iperf_check, self.iperf_duration, self.network_target,
             self.max_loss, self.max_latency, self.max_jitter, self.min_throughput,

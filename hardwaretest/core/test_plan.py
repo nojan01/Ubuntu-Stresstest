@@ -19,7 +19,7 @@ import uuid
 from typing import Callable, Optional
 
 from hardwaretest import __version__
-from hardwaretest.core import device_inventory, hardware_inventory, ipmi, proliant_check
+from hardwaretest.core import device_inventory, hardware_inventory, ipmi, proliant_check, zfs
 from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
@@ -67,6 +67,7 @@ class TestPlanConfig:
     nvme_devices: tuple[NvmeDevice, ...] = ()
     disk_read_enabled: bool = False
     disk_devices: tuple[BlockDisk, ...] = ()
+    zfs_enabled: bool = False
     rounds: int = 1
     # Optionale Endzeit: Der Plan wiederholt sich (bis ``rounds``), startet aber keinen
     # weiteren Teiltest mehr, sobald diese Zeit erreicht ist.
@@ -177,6 +178,7 @@ class TestPlanExecutor:
         self._log = log_fn or (lambda _message: None)
         self._progress = progress_fn or (lambda _done, _total, _name: None)
         self._step_progress = step_progress_fn or (lambda _percent: None)
+        self._zfs_poll_seconds = 5.0
         self._cancel = threading.Event()
         self._active_runner: Optional[BaseTestRunner] = None
         self._monitor: Optional[MonitoringGuard] = None
@@ -200,6 +202,8 @@ class TestPlanExecutor:
             steps.append("nvme_read")
         if config.disk_read_enabled:
             steps.append("disk_read")
+        if config.zfs_enabled:
+            steps.append("zfs_scrub")
         if config.ping_enabled:
             steps.append("ping")
         if config.iperf_enabled:
@@ -258,6 +262,7 @@ class TestPlanExecutor:
             "nvme": self._run_nvme,
             "nvme_read": self._run_nvme_read,
             "disk_read": self._run_disk_read,
+            "zfs_scrub": self._run_zfs_scrub,
             "ping": self._run_ping,
             "iperf3": self._run_iperf,
             "nvidia": self._run_nvidia,
@@ -447,6 +452,91 @@ class TestPlanExecutor:
             else "Full read test, no writes") + f" | {len(disks)} {_text('Datenträger', self.config.language)}"
         result.details = _bounded_details(details, language=self.config.language)
         return result
+
+    def _run_zfs_scrub(self) -> TestPlanStepResult:
+        """Scrub aller importierten Pools; prüft Prüfsummen aller Datenblöcke."""
+        if not shutil.which("zpool"):
+            return self._skipped("zfs_scrub", "zfsutils-linux ist nicht installiert.")
+        started, started_at = time.monotonic(), _now()
+        lang = self.config.language
+        try:
+            pools = zfs.list_pools()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return self._timed_result("zfs_scrub", STATUS_FAILED, started, started_at,
+                                      _text("ZFS-Pools nicht lesbar.", lang), [str(exc)])
+        if not pools:
+            return self._skipped("zfs_scrub", "Keine importierten ZFS-Pools.")
+        details: list[str] = []
+        active: list[zfs.ZfsPool] = []
+        failed = False
+        for pool in pools:
+            try:
+                status = zfs.read_status(pool)
+                readonly = zfs.run_zpool(["get", "-H", "-o", "value", "readonly", pool.name]).strip()
+            except (OSError, RuntimeError, ValueError) as exc:
+                details.append(f"{pool.name}: {exc}")
+                failed = True
+                continue
+            if status.state not in {"ONLINE", "DEGRADED"}:
+                details.append(f"{pool.name}: {_text('Pool nicht verfügbar', lang)} ({status.state})")
+                failed = True
+            elif status.scan_result == "resilver":
+                details.append(f"{pool.name}: {_text('Resilver läuft – Scrub übersprungen.', lang)}")
+            elif readonly != "off":
+                details.append(f"{pool.name}: {_text('schreibgeschützt – Scrub übersprungen.', lang)}")
+            else:
+                if status.scan_result == "paused":
+                    self._nvme_run(["zpool", "scrub", "-s", pool.name], capture_output=True, text=True)
+                completed = self._nvme_run(["zpool", "scrub", pool.name], capture_output=True, text=True)
+                if completed.returncode:
+                    details.append(f"{pool.name}: zpool scrub: {(completed.stderr or completed.stdout).strip()}")
+                    failed = True
+                else:
+                    active.append(pool)
+                    details.append(f"{pool.name}: {_text('Scrub gestartet', lang)} ({pool.health}, "
+                                   f"{pool.size / 1024**3:.1f} GiB, {_text('belegt', lang)} {pool.allocated / 1024**3:.1f} GiB)")
+        pending = list(active)
+        cancelled = False
+        while pending:
+            if self._cancel.is_set() or self._safety_triggered():
+                cancelled = True
+                for pool in pending:
+                    self._nvme_run(["zpool", "scrub", "-s", pool.name], capture_output=True, text=True)
+                break
+            progress: list[float] = []
+            for pool in list(pending):
+                try:
+                    status = zfs.read_status(pool)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    details.append(f"{pool.name}: {exc}")
+                    failed = True
+                    pending.remove(pool)
+                    continue
+                if status.scan_result == "running":
+                    progress.append(status.progress or 0.0)
+                    continue
+                pending.remove(pool)
+                progress.append(100.0)
+                details.append(f"{pool.name}: {status.scan}")
+                if status.has_errors or status.scan_result != "passed":
+                    failed = True
+                    details.append(f"{pool.name}: {_text('ZFS meldet Fehler', lang)} ({status.scan_result}, {status.state})")
+                    details.extend("    " + line for line in status.raw.splitlines() if line.strip())
+            if active:
+                self._step_progress(min(99, int(sum(progress) / len(active))))
+            if pending:
+                self._cancel.wait(self._zfs_poll_seconds)
+        if cancelled:
+            return self._timed_result("zfs_scrub", STATUS_CANCELLED if self._cancel.is_set() else STATUS_FAILED,
+                                      started, started_at, _text("Scrub abgebrochen.", lang), details)
+        summary = f"{len(active)}/{len(pools)} {_text('Pools geprüft', lang)}"
+        if failed:
+            status_text = STATUS_FAILED
+        elif not active:
+            status_text = STATUS_SKIPPED
+        else:
+            status_text = STATUS_PASSED
+        return self._timed_result("zfs_scrub", status_text, started, started_at, summary, details)
 
     def _safety_triggered(self) -> bool:
         return self._monitor is not None and self._monitor.tripped.is_set()
@@ -876,6 +966,7 @@ class TestPlanExecutor:
             return False
         keys = set(self.selected_step_keys())
         return (bool(keys & {"nvme", "nvme_read", "disk_read"}) or ("dcgm" in keys and dcgmi_available())
+                or ("zfs_scrub" in keys and shutil.which("zpool") is not None)
                 or ("opendcdiag" in keys and opendcdiag_available()
                     and not runs_as_root(default_opendcdiag_path()))
                 or (self.config.monitoring_enabled and ipmi.ipmi_available())
@@ -1102,6 +1193,7 @@ def _step_name(key: str, language: str) -> str:
         "nvme": ("NVMe-/Laufwerksgesundheit", "NVMe / drive health"),
         "nvme_read": ("NVMe – vollständiger Lesetest", "NVMe – full read test"),
         "disk_read": ("SATA/SAS/USB – vollständiger Lesetest", "SATA/SAS/USB – full read test"),
+        "zfs_scrub": ("ZFS-Scrub (Prüfsummen aller Pools)", "ZFS scrub (checksums of all pools)"),
         "ping": ("Netzwerk-Ping", "Network ping"),
         "iperf3": ("Netzwerk-Durchsatz (iperf3)", "Network throughput (iperf3)"),
         "nvidia": ("NVIDIA-Treiber und GPU-Inventar", "NVIDIA driver and GPU inventory"),
@@ -1203,6 +1295,17 @@ def _text(source: str, language: str) -> str:
         "Kein Datenträger für den Lesetest ausgewählt.": "No disk selected for the read test.",
         "SMART nicht verfügbar (kein Vorher/Nachher-Vergleich): ": "SMART unavailable (no before/after comparison): ",
         "Datenträger": "disks",
+        "zfsutils-linux ist nicht installiert.": "zfsutils-linux is not installed.",
+        "Keine importierten ZFS-Pools.": "No imported ZFS pools.",
+        "ZFS-Pools nicht lesbar.": "ZFS pools unreadable.",
+        "Pool nicht verfügbar": "Pool unavailable",
+        "Resilver läuft – Scrub übersprungen.": "Resilver in progress – scrub skipped.",
+        "schreibgeschützt – Scrub übersprungen.": "read-only – scrub skipped.",
+        "Scrub gestartet": "Scrub started",
+        "belegt": "used",
+        "ZFS meldet Fehler": "ZFS reports errors",
+        "Scrub abgebrochen.": "Scrub cancelled.",
+        "Pools geprüft": "pools scrubbed",
         "Letztes Ergebnis": "Latest result",
         "Erster Fehler": "First failure",
         "fio oder nvme-cli ist nicht installiert.": "fio or nvme-cli is not installed.",

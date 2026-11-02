@@ -61,8 +61,9 @@ entspricht der derzeitigen Priorität.
   SMART-Vergleich vorher/nachher – umgesetzt in 0.2.61.
 - Zeitgesteuerte Endzeit: nach Erreichen wird kein weiterer Teiltest gestartet –
   umgesetzt in 0.2.61.
+- ZFS-Scrub aller importierten Pools als optionaler Schritt – umgesetzt in 0.2.61.
 - Noch offen: SMART hinter RAID-Controllern (`smartctl -d cciss,N`/`megaraid,N`)
-  für den Vorher/Nachher-Vergleich; ZFS-Scrub im Gesamttestplan.
+  für den Vorher/Nachher-Vergleich.
 
 ### Langzeitmonitoring
 
@@ -79,10 +80,14 @@ entspricht der derzeitigen Priorität.
 - Offline-Prüfung ext2/ext3/ext4 und separat bestätigte konservative Reparatur – umgesetzt in 0.2.26.
 - Eingehängte Dateisysteme bleiben gesperrt; Live-USB-Hinweise und erneute
   Geräte-/Mount-Prüfung vor dem privilegierten Start – umgesetzt.
-- Noch offen: separat abgesicherte Prüfpfade für XFS, Btrfs, NTFS und exFAT.
+- XFS (`xfs_repair -n`/`xfs_repair`), vfat, squashfs, VMFS – umgesetzt in 0.2.5x.
+- Btrfs: lesende Prüfung (`btrfs check --readonly --check-data-csum`) und
+  Fehlerzähler eingehängter Dateisysteme (`btrfs device stats`); bewusst keine
+  automatische Reparatur – umgesetzt in 0.2.61.
+- Noch offen: NTFS und exFAT (Statusdiagnose vorhanden, keine Struktur-Prüfung).
 - ZFS-Poolstatus, geführter Scrub mit Fortschritt/Stop und Text-/HTML-/CSV-Protokoll – umgesetzt in 0.2.28.
-- Noch offen: echte ZFS-Pool-Validierung auf Ubuntu 24.04/26.04 und Einbindung
-  von ZFS-Scrubs in den Gesamttestplan.
+- ZFS-Scrub im Gesamttestplan – umgesetzt in 0.2.61.
+- Noch offen: echte ZFS-Pool-Validierung auf Ubuntu 24.04/26.04.
 
 ## Nachrangig / bei passendem System sinnvoll
 
@@ -100,7 +105,8 @@ entspricht der derzeitigen Priorität.
 
 ### USB-Test
 
-- Übersicht erkannter USB-Geräte und USB-Geschwindigkeiten
+- Übersicht erkannter USB-Geräte, Geschwindigkeiten und Hub-Topologie im
+  System-Tab – umgesetzt in 0.2.61.
 - Vollständiger Lesetest von USB-Datenträgern im Gesamttestplan – umgesetzt in 0.2.61
   (gemeinsam mit SATA/SAS).
 - Nicht-destruktiver Schreibtest auf ausdrücklich ausgewählten Testmedien

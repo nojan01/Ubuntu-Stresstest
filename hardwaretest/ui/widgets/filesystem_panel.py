@@ -48,9 +48,9 @@ class FilesystemPanel(QWidget):
         hint.setWordWrap(True)
         self.bind(hint,
                   "Eingehängte Dateisysteme: Statusdiagnose mit Einhängezustand, Speicherplatz und verfügbaren Fehlerhinweisen. "
-                  "Vollständige Strukturprüfung für ext2/3/4, xfs, vfat, squashfs und VMFS, Reparatur (außer squashfs/VMFS) nur ausgehängt; für die Systempartition ein Live-USB verwenden.",
+                  "Vollständige Strukturprüfung für ext2/3/4, xfs, btrfs, vfat, squashfs und VMFS, Reparatur (außer btrfs/squashfs/VMFS) nur ausgehängt; für die Systempartition ein Live-USB verwenden.",
                   "Mounted filesystems: status diagnosis with mount state, free space and available error indications. "
-                  "Full integrity check for ext2/3/4, xfs, vfat, squashfs and VMFS and repair (except squashfs/VMFS) require an unmounted filesystem; use a live USB for the system partition.")
+                  "Full integrity check for ext2/3/4, xfs, btrfs, vfat, squashfs and VMFS and repair (except btrfs/squashfs/VMFS) require an unmounted filesystem; use a live USB for the system partition.")
         layout.addWidget(hint)
         self.devices = QComboBox()
         self.devices.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -185,6 +185,11 @@ class FilesystemPanel(QWidget):
         elif not device.repairable and device.fstype in VMFS_TYPES:
             message = self.text("Offline-Kandidat. VMFS (ESXi): lesende Metadatenprüfung mit fsck.vmfs; Reparatur nur mit VMware VOMA unter ESXi.",
                                 "Offline candidate. VMFS (ESXi): read-only metadata check with fsck.vmfs; repair only with VMware VOMA on ESXi.")
+        elif not device.repairable and device.fstype == "btrfs":
+            message = self.text("Offline-Kandidat. Btrfs: lesende Struktur- und Prüfsummenprüfung (btrfs check --readonly --check-data-csum); "
+                                "keine automatische Reparatur – eingehängt stattdessen btrfs scrub verwenden.",
+                                "Offline candidate. Btrfs: read-only structure and checksum check (btrfs check --readonly --check-data-csum); "
+                                "no automatic repair – use btrfs scrub on the mounted filesystem instead.")
         elif not device.repairable:
             message = self.text("Offline-Kandidat. squashfs ist schreibgeschützt: nur Prüfung, keine Reparatur möglich.",
                                 "Offline candidate. squashfs is read-only: check only, repair impossible.")

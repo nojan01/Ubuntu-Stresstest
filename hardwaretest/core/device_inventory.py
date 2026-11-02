@@ -1,6 +1,6 @@
-"""Weitere Komponenten für den Tab „System“: PCIe-Links, Netzwerk, Grafik, Speicher-Controller, Datenträger.
+"""Weitere Komponenten für den Tab „System“: PCIe-Links, Netzwerk, Grafik, Speicher-Controller, Datenträger, USB.
 
-Alles ohne root aus ``/sys`` sowie ``lspci``, ``ethtool``, ``lsblk`` und – falls vorhanden – ``nvidia-smi``.
+Alles ohne root aus ``/sys`` sowie ``lspci``, ``ethtool``, ``lsblk``, ``lsusb`` und – falls vorhanden – ``nvidia-smi``.
 Fehlende Programme oder Werte bleiben leer; das Einlesen bricht nie ab.
 """
 
@@ -21,6 +21,14 @@ _TIMEOUT = 10
 # GT/s je Lane → PCIe-Generation
 _GENERATIONS = {"2.5": 1, "5.0": 2, "8.0": 3, "16.0": 4, "32.0": 5, "64.0": 6}
 _SKIP_DISKS = ("loop", "ram", "zram", "fd", "sr")
+# USB-Geschwindigkeiten laut sysfs ``speed`` (Mbit/s) → Bezeichnung
+_USB_SPEEDS = {1: "Low Speed (1,5 Mbit/s)", 12: "Full Speed (12 Mbit/s)", 480: "High Speed (480 Mbit/s)",
+               5000: "SuperSpeed (5 Gbit/s)", 10000: "SuperSpeed+ (10 Gbit/s)", 20000: "SuperSpeed+ (20 Gbit/s)",
+               40000: "USB4 (40 Gbit/s)"}
+_USB_CLASSES = {0x01: "Audio", 0x02: "Kommunikation", 0x03: "HID", 0x05: "Physical", 0x06: "Bild", 0x07: "Drucker",
+                0x08: "Massenspeicher", 0x09: "Hub", 0x0a: "CDC-Daten", 0x0b: "Chipkarte", 0x0d: "Content Security",
+                0x0e: "Video", 0x0f: "Gesundheit", 0x10: "Audio/Video", 0xdc: "Diagnose", 0xe0: "Funk (Bluetooth/WLAN)",
+                0xef: "Verschiedenes", 0xfe: "Anwendungsspezifisch", 0xff: "Herstellerspezifisch"}
 
 LINK_OK = "ok"
 LINK_WIDTH = "width"   # weniger Lanes als möglich: Sitz, Riser, Steckplatz – immer auffällig
@@ -125,12 +133,58 @@ class Disk:
 
 
 @dataclass
+class UsbDevice:
+    port: str                 # sysfs-Name, z. B. "usb3" (Root-Hub) oder "3-10.2"
+    bus: int
+    device: int
+    vendor_id: int
+    product_id: int
+    manufacturer: str = ""
+    product: str = ""
+    serial: str = ""
+    speed_mbps: int = 0       # ausgehandelte Geschwindigkeit
+    usb_version: str = ""     # vom Gerät gemeldete USB-Version (bcdUSB)
+    device_class: int = 0
+    interface_classes: tuple[int, ...] = ()
+    drivers: tuple[str, ...] = ()
+    max_children: int = 0
+    depth: int = 0            # 0 = Root-Hub, 1 = direkt am Root-Hub, …
+    pci: str = ""             # Host-Controller (nur Root-Hubs)
+
+    @property
+    def is_root_hub(self) -> bool:
+        return self.port.startswith("usb")
+
+    @property
+    def is_hub(self) -> bool:
+        return self.device_class == 0x09 or self.max_children > 0
+
+    @property
+    def model(self) -> str:
+        if self.is_root_hub and self.product:
+            # Hersteller ist beim Root-Hub nur „Linux <Kernel> xhci-hcd“.
+            driver = self.manufacturer.rsplit(" ", 1)[-1] if self.manufacturer else ""
+            return self.product + (f" ({driver})" if driver else "")
+        name = " ".join(dict.fromkeys(filter(None, (self.manufacturer, self.product)))).strip()
+        return name or f"{self.vendor_id:04x}:{self.product_id:04x}"
+
+    @property
+    def kind(self) -> str:
+        if self.is_root_hub:
+            return "Root-Hub"
+        classes = [self.device_class] if self.device_class not in (0, 0xef) else list(self.interface_classes)
+        labels = list(dict.fromkeys(_USB_CLASSES.get(c, f"0x{c:02x}") for c in classes if c))
+        return ", ".join(labels) or _USB_CLASSES[0xef]
+
+
+@dataclass
 class DeviceInventory:
     pci: list[PciDevice] = field(default_factory=list)
     network: list[NetInterface] = field(default_factory=list)
     graphics: list[GraphicsDevice] = field(default_factory=list)
     controllers: list[StorageController] = field(default_factory=list)
     disks: list[Disk] = field(default_factory=list)
+    usb: list[UsbDevice] = field(default_factory=list)
 
     @property
     def links(self) -> list[PciDevice]:
@@ -369,18 +423,87 @@ def read_disks(run: Callable) -> list[Disk]:
                                   "NAME,MODEL,VENDOR,SERIAL,REV,SIZE,ROTA,TRAN,LOG-SEC,PHY-SEC,TYPE"]))
 
 
+def parse_lsusb(text: str) -> dict[tuple[int, int], str]:
+    """``lsusb``-Zeilen → {(Vendor, Produkt): Name aus der usb.ids-Datenbank}."""
+    names = {}
+    for line in text.splitlines():
+        match = re.match(r"Bus \d+ Device \d+: ID ([0-9a-f]{4}):([0-9a-f]{4})\s*(.*)", line.strip(), re.I)
+        if match and match[3].strip():
+            names[(int(match[1], 16), int(match[2], 16))] = match[3].strip()
+    return names
+
+
+def _children(path: Path) -> list[Path]:
+    try:
+        return list(path.iterdir())
+    except OSError:
+        return []
+
+
+def _usb_port_sort_key(port: str) -> tuple:
+    if port.startswith("usb"):
+        return (_int_or_none(port[3:]) or 0, ())
+    bus, _, rest = port.partition("-")
+    return (_int_or_none(bus) or 0, tuple(_int_or_none(p) or 0 for p in rest.split(".")))
+
+
+def read_usb(sysfs: Path = SYSFS, names: Optional[dict[tuple[int, int], str]] = None) -> list[UsbDevice]:
+    """USB-Topologie aus ``/sys/bus/usb/devices`` (Geräte, keine Interfaces)."""
+    base = sysfs / "bus" / "usb" / "devices"
+    try:
+        entries = sorted(base.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return []
+    devices: list[UsbDevice] = []
+    for entry in entries:
+        name = entry.name
+        if ":" in name or not (entry / "idVendor").exists():
+            continue
+        interface_classes, drivers = [], []
+        # Interfaces liegen im Gerätverzeichnis und zusätzlich als Link in devices/.
+        interfaces = sorted({p.name: p for p in (*_children(entry), *entries) if p.name.startswith(name + ":")}.values(),
+                            key=lambda p: p.name)
+        for interface in interfaces:
+            cls = _hex(interface / "bInterfaceClass")
+            if cls:
+                interface_classes.append(cls)
+            driver = _link_name(interface / "driver")
+            if driver:
+                drivers.append(driver)
+        vendor, product = _hex(entry / "idVendor"), _hex(entry / "idProduct")
+        manufacturer, product_name = _read(entry / "manufacturer"), _read(entry / "product")
+        if names and not (manufacturer or product_name):
+            product_name = names.get((vendor, product), "")
+        root = name.startswith("usb")
+        devices.append(UsbDevice(
+            port=name, bus=_int(entry / "busnum"), device=_int(entry / "devnum"),
+            vendor_id=vendor, product_id=product, manufacturer=manufacturer, product=product_name,
+            serial=_read(entry / "serial") if not root else "",
+            speed_mbps=_int_or_none(_read(entry / "speed").split(".")[0]) or 0,
+            usb_version=_read(entry / "version"), device_class=_hex(entry / "bDeviceClass"),
+            interface_classes=tuple(dict.fromkeys(interface_classes)), drivers=tuple(dict.fromkeys(drivers)),
+            max_children=_int(entry / "maxchild"),
+            depth=0 if root else name.partition("-")[2].count(".") + 1,
+            pci=_read(entry / "serial") if root else "",
+        ))
+    return sorted(devices, key=lambda d: _usb_port_sort_key(d.port))
+
+
 def read_device_inventory(sysfs: Path = SYSFS, run: Optional[Callable] = None) -> DeviceInventory:
     run = run or subprocess.run
     lspci = _tool("lspci")
     names = parse_lspci(_run(run, [lspci, "-vmm", "-D"])) if lspci else {}
     devices = read_pci_devices(sysfs, names)
     by_address = {device.address: device for device in devices}
+    lsusb = _tool("lsusb")
+    usb_names = parse_lsusb(_run(run, [lsusb])) if lsusb else {}
     return DeviceInventory(
         pci=devices,
         network=read_network(sysfs, by_address, run),
         graphics=read_graphics(sysfs, devices, run),
         controllers=read_controllers(sysfs, devices),
         disks=read_disks(run),
+        usb=read_usb(sysfs, usb_names),
     )
 
 
@@ -409,6 +532,43 @@ def speed_text(language: str, mbps: Optional[int]) -> str:
 
 def vram_text(language: str, value: str) -> str:
     return _tt(language, "gemeinsamer Arbeitsspeicher", "shared system memory") if value == "shared" else value
+
+
+def usb_speed_text(language: str, device: UsbDevice) -> str:
+    label = _USB_SPEEDS.get(device.speed_mbps)
+    if label is None:
+        label = f"{device.speed_mbps} Mbit/s" if device.speed_mbps else ""
+    if language == "en":
+        label = label.replace("1,5 Mbit", "1.5 Mbit")
+    return label
+
+
+def usb_kind_text(language: str, device: UsbDevice) -> str:
+    kind = device.kind
+    if language == "en":
+        for de, en in (("Kommunikation", "Communications"), ("Bild", "Imaging"), ("Drucker", "Printer"),
+                       ("Massenspeicher", "Mass storage"), ("Chipkarte", "Smart card"), ("Gesundheit", "Health"),
+                       ("Diagnose", "Diagnostic"), ("Funk (Bluetooth/WLAN)", "Wireless (Bluetooth/Wi-Fi)"),
+                       ("Verschiedenes", "Miscellaneous"), ("Anwendungsspezifisch", "Application specific"),
+                       ("Herstellerspezifisch", "Vendor specific"), ("Root-Hub", "Root hub")):
+            kind = kind.replace(de, en)
+    return kind
+
+
+def usb_downgraded(device: UsbDevice) -> bool:
+    """USB-3-Gerät (bcdUSB ≥ 3.00), das nur mit 480 Mbit/s oder weniger verbunden ist."""
+    try:
+        version = float(device.usb_version)
+    except ValueError:
+        return False
+    return version >= 3.0 and 0 < device.speed_mbps < 5000
+
+
+def usb_tree_label(device: UsbDevice) -> str:
+    """Port mit Einrückung für die Topologie (Root-Hub → Hub → Gerät)."""
+    if device.is_root_hub:
+        return f"Bus {device.bus:03d} ({device.port})"
+    return "    " * (device.depth - 1) + "└ " + device.port
 
 
 def disk_type_text(disk: Disk) -> str:
@@ -443,6 +603,14 @@ def device_lines(language: str, inventory: DeviceInventory) -> list[str]:
             disk.model, _human(disk.size) if disk.size else "", disk_type_text(disk),
             f"S/N {disk.serial}" if disk.serial else "", f"Firmware {disk.firmware}" if disk.firmware else "",
             sector_text(disk),
+        ))))
+    for device in inventory.usb:
+        lines.append("USB " + usb_tree_label(device) + ": " + " · ".join(filter(None, (
+            device.model, f"{device.vendor_id:04x}:{device.product_id:04x}", usb_kind_text(language, device),
+            usb_speed_text(language, device), f"USB {device.usb_version}" if device.usb_version else "",
+            ", ".join(device.drivers), f"S/N {device.serial}" if device.serial else "",
+            _tt(language, f"{device.max_children} Ports", f"{device.max_children} ports") if device.is_hub and device.max_children else "",
+            device.pci,
         ))))
     return lines
 

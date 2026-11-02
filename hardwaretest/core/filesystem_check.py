@@ -17,10 +17,12 @@ from hardwaretest.core.paths import self_command_for_root
 
 # VMware ESXi-Datenspeicher; blkid meldet je nach Lage VMFS oder VMFS_volume_member.
 VMFS_TYPES = {"VMFS", "VMFS_volume_member"}
-CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs", *VMFS_TYPES}
+CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs", "btrfs", *VMFS_TYPES}
 # squashfs ist ein schreibgeschütztes Abbild; für VMFS gibt es unter Linux nur
 # eine lesende Metadatenprüfung (Reparatur nur mit VMware VOMA unter ESXi).
-REPAIRABLE_TYPES = CHECKABLE_TYPES - {"squashfs", *VMFS_TYPES}
+# Btrfs: ``btrfs check --repair`` kann Dateisysteme zerstören und ist laut
+# btrfs-progs nur auf Anraten der Entwickler zu verwenden – daher nur Prüfung.
+REPAIRABLE_TYPES = CHECKABLE_TYPES - {"squashfs", "btrfs", *VMFS_TYPES}
 
 _TOOLS = {
     "e2fsck": ("/usr/sbin/e2fsck", "/sbin/e2fsck", "e2fsprogs"),
@@ -29,6 +31,7 @@ _TOOLS = {
     "unsquashfs": ("/usr/bin/unsquashfs", "/usr/sbin/unsquashfs", "squashfs-tools"),
     "fsck.vmfs6": ("/usr/sbin/fsck.vmfs6", "/sbin/fsck.vmfs6", "vmfs6-tools"),
     "fsck.vmfs": ("/usr/sbin/fsck.vmfs", "/sbin/fsck.vmfs", "vmfs-tools"),
+    "btrfs": ("/usr/bin/btrfs", "/usr/sbin/btrfs", "btrfs-progs"),
 }
 
 # Ausgabe von fsck.fat, die bei ESXi-Bootbanks (BOOTBANK1/2) immer auftritt: ESXi
@@ -122,7 +125,7 @@ def validate_device(expected: FilesystemDevice, action: str = "check") -> Filesy
     """Fail closed on identity changes, mounts, active layers or unreadable state."""
     current = validate_identity(expected)
     if not current.supported or current.kind not in {"part", "disk", "lvm", "crypt", "loop", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10", "md"}:
-        raise ValueError("Only offline ext2/3/4, xfs, vfat, squashfs, VMFS / Nur ext2/3/4, xfs, vfat, squashfs, VMFS offline unterstützt.")
+        raise ValueError("Only offline ext2/3/4, xfs, btrfs, vfat, squashfs, VMFS / Nur ext2/3/4, xfs, btrfs, vfat, squashfs, VMFS offline unterstützt.")
     if action == "check" and current.checkable_while_mounted:
         return current
     numbers = mounted_numbers(Path("/proc/self/mountinfo").read_text())
@@ -155,6 +158,13 @@ def checker_command(action: str, device: str, fstype: str = "ext4") -> list[str]
             return [_tool("unsquashfs"), "-no-progress", "-pf", "/dev/null", device]
         # Ältere squashfs-tools (< 4.6): nur Superblock, Inode- und Verzeichnistabellen.
         return [_tool("unsquashfs"), "-no-progress", "-lls", device]
+    if fstype == "btrfs":
+        if not check:
+            raise ValueError("Btrfs: no automatic repair (btrfs check --repair is unsafe); use btrfs scrub on a "
+                             "mounted filesystem / Btrfs: keine automatische Reparatur (btrfs check --repair ist "
+                             "unsicher); eingehängt btrfs scrub verwenden.")
+        # --readonly: nur lesen; --check-data-csum prüft zusätzlich alle Datenblöcke.
+        return [_tool("btrfs"), "check", "--readonly", "--check-data-csum", device]
     if fstype in VMFS_TYPES:
         if not check:
             raise ValueError("VMFS: no repair on Linux, use VMware VOMA on ESXi / "
@@ -245,6 +255,10 @@ def read_online_status(device: FilesystemDevice, language: str = "de") -> tuple[
             failed |= count > 0
         except (OSError, ValueError):
             lines.append(t("ext4-Fehlerzähler nicht verfügbar.", "ext4 error counter unavailable."))
+    elif device.fstype == "btrfs" and mounts:
+        stats_failed, stats_lines = btrfs_device_stats(mounts[0][0], language)
+        lines.extend(stats_lines)
+        failed |= stats_failed
     else:
         lines.append(t("Für diesen Typ ist kein ext4-Fehlerzähler verfügbar.", "No ext4 error counter for this filesystem type."))
     try:
@@ -273,6 +287,46 @@ def read_online_status(device: FilesystemDevice, language: str = "de") -> tuple[
     return "\n".join(lines), 4 if failed else (0 if covered else 8)
 
 
+_BTRFS_STAT = re.compile(r"^\[(?P<dev>[^\]]+)\]\.(?P<name>\w+)\s+(?P<value>\d+)\s*$")
+
+
+def parse_btrfs_device_stats(text: str) -> dict[str, dict[str, int]]:
+    """``btrfs device stats`` → {Gerät: {Zähler: Wert}}."""
+    stats: dict[str, dict[str, int]] = {}
+    for line in text.splitlines():
+        match = _BTRFS_STAT.match(line.strip())
+        if match:
+            stats.setdefault(match["dev"], {})[match["name"]] = int(match["value"])
+    return stats
+
+
+def btrfs_device_stats(mountpoint: str, language: str = "de") -> tuple[bool, list[str]]:
+    """Btrfs-Fehlerzähler je Gerät (lesend). True, wenn ein Zähler größer als 0 ist."""
+    def t(de, en):
+        return en if language == "en" else de
+    tool = _tool("btrfs")
+    if not os.path.exists(tool):
+        return False, [t("btrfs-progs fehlen – keine Gerätestatistik.", "btrfs-progs missing – no device statistics.")]
+    try:
+        result = subprocess.run([tool, "device", "stats", mountpoint], capture_output=True, text=True,
+                                errors="replace", timeout=30, env={**os.environ, "LC_ALL": "C"})
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, [t("Btrfs-Gerätestatistik nicht verfügbar: ", "Btrfs device statistics unavailable: ") + str(exc)]
+    stats = parse_btrfs_device_stats(result.stdout)
+    if not stats:
+        return False, [t("Btrfs-Gerätestatistik nicht auswertbar: ", "Btrfs device statistics unreadable: ")
+                       + (result.stderr.strip() or f"Exit {result.returncode}")]
+    lines = [t("Btrfs-Fehlerzähler je Gerät (btrfs device stats):", "Btrfs error counters per device (btrfs device stats):")]
+    failed = False
+    for dev, counters in stats.items():
+        lines.append(f"  {dev}: " + ", ".join(f"{name}={value}" for name, value in counters.items()))
+        failed |= any(counters.values())
+    if failed:
+        lines.append(t("Fehlerzähler größer 0 – Datenträger und Kabel prüfen; btrfs scrub empfohlen.",
+                       "Error counters above 0 – check disks and cabling; btrfs scrub recommended."))
+    return failed, lines
+
+
 def normalize_exit(fstype: str, action: str, code: int, output: str = "") -> int:
     """Rechnet Exit-Codes von xfs_repair/fsck.fat/unsquashfs in e2fsck-Semantik um."""
     if code < 0:
@@ -291,6 +345,11 @@ def normalize_exit(fstype: str, action: str, code: int, output: str = "") -> int
         return 8
     if fstype == "squashfs":
         return 0 if code == 0 else 4
+    if fstype == "btrfs":
+        # btrfs check: 0 = sauber, 1 = Fehler gefunden; alles andere = nicht prüfbar.
+        if code == 0:
+            return 0
+        return 4 if code == 1 else 8
     if fstype in VMFS_TYPES:
         return 0 if code == 0 else 8
     return code

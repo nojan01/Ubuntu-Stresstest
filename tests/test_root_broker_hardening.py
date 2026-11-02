@@ -426,3 +426,20 @@ def test_smartctl_is_only_allowed_read_only_for_disk_and_nvme_paths(tmp_path):
         with pytest.raises(RuntimeError):
             broker.run(bad, timeout=10)
     broker.close()
+
+
+# ----------------------------------------------------------------- zpool scrub (Gesamttest)
+
+
+def test_zpool_is_only_allowed_to_start_or_stop_a_scrub(tmp_path):
+    _install(tmp_path, "zpool", 'echo "zpool $*"; exit 0')
+    broker = _broker(tmp_path)
+    broker.start()
+    assert broker.run(["zpool", "scrub", "tank"], timeout=10).stdout.strip() == "zpool scrub tank"
+    assert broker.run(["zpool", "scrub", "-s", "rpool-1.a:b_c"], timeout=10).returncode == 0
+    for bad in (["zpool", "status"], ["zpool", "destroy", "tank"], ["zpool", "scrub"], ["zpool", "scrub", "-s"],
+                ["zpool", "scrub", "-tank"], ["zpool", "scrub", "-w", "tank"], ["zpool", "scrub", "x" * 65],
+                ["zpool", "scrub", "tank", "extra"], ["zpool", "scrub", "-s", "1tank"]):
+        with pytest.raises(RuntimeError):
+            broker.run(bad, timeout=10)
+    broker.close()

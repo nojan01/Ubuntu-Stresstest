@@ -85,7 +85,7 @@ def test_commands_and_exit_codes_are_conservative():
 def test_inventory_includes_mounted_and_unsupported_for_explanation(monkeypatch):
     rows = {"blockdevices": [{"name": "/dev/test", "children": [
         {"name": "/dev/test0", "type": "part", "fstype": "ext4", "uuid": "abc", "maj:min": "8:1", "mountpoints": ["/"]},
-        {"name": "/dev/test1", "type": "part", "fstype": "btrfs", "uuid": "xyz", "maj:min": "8:2", "mountpoints": [None]},
+        {"name": "/dev/test1", "type": "part", "fstype": "ntfs", "uuid": "xyz", "maj:min": "8:2", "mountpoints": [None]},
     ]}]}
     monkeypatch.setattr(fs.subprocess, "run", lambda *_a, **_kw: SimpleNamespace(stdout=json.dumps(rows)))
     devices = fs.list_filesystems()
@@ -113,7 +113,8 @@ def test_mounted_status_reads_telemetry_and_never_fsck(monkeypatch, fstype):
     assert code == 0
     assert "Not a full integrity check" in report
     assert "Capacity / available" in report
-    assert all(command[0] == "journalctl" for command in commands)
+    assert all(command[0] == "journalctl" or (fstype == "btrfs" and command[1:3] == ["device", "stats"])
+               for command in commands)
     assert "other1" not in report
 
 
@@ -299,3 +300,44 @@ def test_esxi_bootbank_real_image_is_clean_and_label_kept(tmp_path):
     assert fs.run_checker("check", str(image), "vfat") == 0
     assert fs.run_checker("repair", str(image), "vfat") == 0
     assert image.read_bytes() == bytes(data)  # Label im Bootsektor bleibt erhalten
+
+
+# ----------------------------------------------------------------- Btrfs
+
+
+def test_btrfs_is_checkable_read_only_but_never_repairable():
+    device = fs.FilesystemDevice("/dev/x", "btrfs", "u", "8:1", (), "part")
+    assert device.supported and not device.repairable
+    command = fs.checker_command("check", "/dev/x", "btrfs")
+    assert command[1:] == ["check", "--readonly", "--check-data-csum", "/dev/x"]
+    with pytest.raises(ValueError):
+        fs.checker_command("repair", "/dev/x", "btrfs")
+    assert fs.normalize_exit("btrfs", "check", 0) == 0
+    assert fs.normalize_exit("btrfs", "check", 1) == 4
+    assert fs.normalize_exit("btrfs", "check", 2) == 8
+
+
+def test_btrfs_device_stats_parsing_and_rating(monkeypatch):
+    output = ("[/dev/sdb1].write_io_errs    0\n[/dev/sdb1].read_io_errs     3\n[/dev/sdb1].flush_io_errs    0\n"
+              "[/dev/sdb1].corruption_errs  0\n[/dev/sdb1].generation_errs  0\n")
+    stats = fs.parse_btrfs_device_stats(output)
+    assert stats == {"/dev/sdb1": {"write_io_errs": 0, "read_io_errs": 3, "flush_io_errs": 0,
+                                   "corruption_errs": 0, "generation_errs": 0}}
+    monkeypatch.setattr(fs.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(fs.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=output, stderr=""))
+    failed, lines = fs.btrfs_device_stats("/mnt", "de")
+    assert failed and any("read_io_errs=3" in line for line in lines) and any("scrub" in line for line in lines)
+    monkeypatch.setattr(fs.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=0, stdout=output.replace("3", "0"), stderr=""))
+    assert fs.btrfs_device_stats("/mnt", "en")[0] is False
+
+
+@pytest.mark.skipif(shutil.which("mkfs.btrfs") is None or shutil.which("btrfs") is None, reason="btrfs-progs fehlen")
+def test_btrfs_check_real_temporary_image(tmp_path):
+    image = tmp_path / "disposable-btrfs.img"
+    with image.open("wb") as file:
+        file.truncate(128 * 1024 * 1024)
+    subprocess.run(["mkfs.btrfs", "-q", "-f", str(image)], check=True, capture_output=True)
+    before = image.read_bytes()
+    assert fs.run_checker("check", str(image), "btrfs") == 0
+    assert image.read_bytes() == before

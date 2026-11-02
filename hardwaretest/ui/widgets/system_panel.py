@@ -148,6 +148,10 @@ class SystemPanel(QWidget):
         self.graphics_group, self.graphics_table = self._add_table_group(layout)
         self.controller_group, self.controller_table = self._add_table_group(layout)
         self.disk_group, self.disk_table = self._add_table_group(layout)
+        self.usb_group, self.usb_table = self._add_table_group(layout)
+        self.usb_note = QLabel()
+        self.usb_note.setWordWrap(True)
+        self.usb_group.layout().insertWidget(0, self.usb_note)
         layout.addStretch(1)
 
         self._clock_timer = QTimer(self)
@@ -273,6 +277,7 @@ class SystemPanel(QWidget):
         self.graphics_group.setTitle(_t("Grafik", "Graphics"))
         self.controller_group.setTitle(_t("Speicher-Controller", "Storage controllers"))
         self.disk_group.setTitle(_t("Datenträger", "Disks"))
+        self.usb_group.setTitle("USB")
         self._show_cpu()
         self._show_caches()
         self._show_board()
@@ -423,6 +428,23 @@ class SystemPanel(QWidget):
                                 _t("Seriennummer", "Serial number"), "Firmware", _t("Sektor log./phys.", "Sector log./phys.")],
               [[d.name, d.model, dev._human(d.size) if d.size else "", dev.disk_type_text(d), d.serial, d.firmware,
                 dev.sector_text(d)] for d in devices.disks])
+        self.usb_note.setText(_t(
+            "Topologie je Bus: Root-Hub → Hub → Gerät. Geschwindigkeit = ausgehandelt; liegt sie unter der "
+            "USB-Version des Geräts, prüfen Sie Port, Kabel und Hub. Orange: USB-3-Gerät läuft nur mit High Speed.",
+            "Topology per bus: root hub → hub → device. Speed = negotiated; if below the device's USB version, "
+            "check port, cable and hub. Orange: USB 3 device running at High Speed only.",
+        ))
+        rows, colors = [], {}
+        for index, device in enumerate(devices.usb):
+            rows.append([dev.usb_tree_label(device), device.model, f"{device.vendor_id:04x}:{device.product_id:04x}",
+                         dev.usb_kind_text(language, device), dev.usb_speed_text(language, device),
+                         device.usb_version, ", ".join(device.drivers), device.serial or device.pci,
+                         str(device.max_children) if device.is_hub and device.max_children else ""])
+            if not device.is_root_hub and dev.usb_downgraded(device):
+                colors[(index, 4)] = _LINK_COLORS[dev.LINK_SPEED]
+        _fill(self.usb_table, ["Port", _t("Gerät", "Device"), "ID", _t("Art", "Type"), _t("Geschwindigkeit", "Speed"),
+                               "USB", _t("Treiber", "Driver"), _t("Seriennummer / Controller", "Serial / controller"),
+                               "Ports"], rows, colors)
 
     def close_privileged_session(self) -> None:
         process, self._process = self._process, None

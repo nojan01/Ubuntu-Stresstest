@@ -292,6 +292,9 @@ _EN: dict[str, str] = {
     "– Gesamttest ÜBERSPRUNGEN – keine Prüfung ausgeführt": "– Test plan SKIPPED – no checks executed",
     "Vollständiger NVMe-Lesetest (optional)": "Full NVMe read test (optional)",
     "Vollständiger SATA/SAS/USB-Lesetest (optional)": "Full SATA/SAS/USB read test (optional)",
+    "ZFS-Scrub aller importierten Pools (optional)": "ZFS scrub of all imported pools (optional)",
+    "Startet zpool scrub für alle importierten Pools (ONLINE/DEGRADED, nicht schreibgeschützt) und wartet auf das Ergebnis.":
+        "Starts zpool scrub for all imported pools (ONLINE/DEGRADED, not read-only) and waits for the result.",
     "Liest ausgewählte /dev/sd*-Datenträger komplett (fio, nur lesend) und vergleicht SMART-Zähler vorher/nachher.":
         "Reads the selected /dev/sd* disks completely (fio, read-only) and compares SMART counters before/after.",
     "Laufwerke aktualisieren": "Refresh drives",

@@ -516,23 +516,39 @@ def needs_password_for_swap() -> bool:
     if pkexec_path and _is_polkit_agent_running():
         return False
 
-    # Check whether ``sudo -n swapoff -a`` would succeed (NOPASSWD rule).
+    # Passwortfrei nur, wenn sudo ohne Passwort tatsaechlich etwas ausfuehren darf
+    # (gueltiger Zeitstempel oder NOPASSWD). ``sudo -n -l befehl`` reicht dafuer
+    # nicht: Neuere sudo-Versionen beantworten das Auflisten eigener Rechte ohne
+    # Passwort mit Exit 0, obwohl das Ausfuehren eines verlangt.
     sudo_path: Optional[str] = shutil.which("sudo")
     swapoff_path: Optional[str] = shutil.which("swapoff")
     if sudo_path and swapoff_path:
         try:
-            # -n = non-interactive; --validate only checks auth, doesn't
-            # actually run the command.
-            result = subprocess.run(
-                [sudo_path, "-n", "-l", swapoff_path],
-                capture_output=True, text=True, timeout=5,
-            )
+            result = subprocess.run([sudo_path, "-n", "true"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
-                return False  # NOPASSWD is set up
+                return False  # Zeitstempel gueltig oder NOPASSWD fuer ALL
+            listing = subprocess.run([sudo_path, "-n", "-l"], capture_output=True, text=True, timeout=5)
+            if listing.returncode == 0 and sudo_nopasswd_covers(listing.stdout, swapoff_path):
+                return False  # NOPASSWD-Regel speziell fuer swapoff
         except Exception:
             pass
 
     return True
+
+
+def sudo_nopasswd_covers(listing: str, command_path: str) -> bool:
+    """True, wenn ``sudo -l`` eine NOPASSWD-Regel zeigt, die ``command_path`` (oder ALL) umfasst."""
+    name = os.path.basename(command_path)
+    for line in listing.splitlines():
+        _, marker, rest = line.partition("NOPASSWD:")
+        if not marker:
+            continue
+        commands = [c.strip() for c in rest.split(",")]
+        for entry in commands:
+            first = entry.split()[0] if entry.split() else ""
+            if entry == "ALL" or first in (command_path, name) or os.path.basename(first) == name:
+                return True
+    return False
 
 
 def _build_swapoff_cmd(*, password: Optional[str] = None
@@ -560,7 +576,8 @@ def _build_swapoff_cmd(*, password: Optional[str] = None
         return [pkexec_path, swapoff_path, "-a"], None
 
     sudo_path = shutil.which("sudo")
-    cmd = [sudo_path, swapoff_path, "-a"] if sudo_path else [swapoff_path, "-a"]
+    # -n: nie auf eine (unsichtbare) Passworteingabe warten.
+    cmd = [sudo_path, "-n", swapoff_path, "-a"] if sudo_path else [swapoff_path, "-a"]
     return cmd, None
 
 

@@ -574,3 +574,47 @@ def test_needs_password_without_agent_and_without_nopasswd(monkeypatch):
 
     monkeypatch.setattr(system_info.subprocess, "run", fake_run)
     assert system_info.needs_password_for_swap() is True
+
+
+def test_needs_password_when_listing_succeeds_but_execution_requires_one(monkeypatch):
+    """Neuere sudo-Versionen: ``sudo -n -l befehl`` liefert Exit 0, obwohl Ausfuehren ein Passwort verlangt."""
+    monkeypatch.setattr(system_info, "is_running_as_root", lambda: False)
+    monkeypatch.setattr(system_info.shutil, "which",
+                        lambda name: {"pkexec": "/usr/bin/pkexec", "sudo": "/usr/bin/sudo",
+                                      "swapoff": "/usr/sbin/swapoff"}.get(name))
+    monkeypatch.setattr(system_info.os, "getuid", lambda: 1000)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["ps", "-eo"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=_PS_SERVER_NO_AGENT, stderr="")
+        if cmd[1:] == ["-n", "true"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="sudo: Ein Passwort ist notwendig")
+        if cmd[1:] == ["-n", "-l"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="User jano may run:\n    (ALL : ALL) ALL\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="/usr/sbin/swapoff\n", stderr="")
+
+    monkeypatch.setattr(system_info.subprocess, "run", fake_run)
+    assert system_info.needs_password_for_swap() is True
+
+
+def test_no_password_with_cached_timestamp_or_nopasswd_rule(monkeypatch):
+    monkeypatch.setattr(system_info, "is_running_as_root", lambda: False)
+    monkeypatch.setattr(system_info.shutil, "which",
+                        lambda name: {"sudo": "/usr/bin/sudo", "swapoff": "/usr/sbin/swapoff"}.get(name))
+    calls = {"true": 1, "listing": "User may run:\n    (root) NOPASSWD: /usr/sbin/swapoff -a, /usr/bin/true\n"}
+
+    def fake_run(cmd, **kwargs):
+        if cmd[1:] == ["-n", "true"]:
+            return subprocess.CompletedProcess(cmd, calls["true"], stdout="", stderr="")
+        if cmd[1:] == ["-n", "-l"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=calls["listing"], stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(system_info.subprocess, "run", fake_run)
+    assert system_info.needs_password_for_swap() is False  # NOPASSWD fuer swapoff
+    calls["listing"] = "    (ALL : ALL) ALL\n"
+    assert system_info.needs_password_for_swap() is True
+    calls["true"] = 0
+    assert system_info.needs_password_for_swap() is False  # Zeitstempel gueltig
+    assert system_info.sudo_nopasswd_covers("    (ALL) NOPASSWD: ALL\n", "/usr/sbin/swapoff") is True
+    assert system_info.sudo_nopasswd_covers("    (ALL) NOPASSWD: /usr/bin/btop\n", "/usr/sbin/swapoff") is False

@@ -210,3 +210,72 @@ def test_usb_topology_speed_and_downgrade(tmp_path, monkeypatch):
     lines = dev.device_lines("de", dev.DeviceInventory(usb=devices))
     assert any("USB     └ 2-1.3: SanDisk Ultra" in line and "usb-storage" in line for line in lines)
     assert dev.read_usb(tmp_path / "missing") == []
+
+
+def _tb(root: Path, name: str, **values) -> None:
+    for key, value in values.items():
+        _write(root / "bus" / "thunderbolt" / "devices" / name / key, str(value))
+
+
+_BOLTCTL = """\
+ ● Intel Gen12
+   ├─ type:          host
+   ├─ name:          Gen12
+   ├─ vendor:        Intel
+   ├─ uuid:          806b8780-b001-304d-ffff-ffffffffffff
+   └─ status:        authorized
+ ● CalDigit TS4
+   ├─ type:          peripheral
+   ├─ name:          TS4
+   ├─ vendor:        CalDigit
+   ├─ uuid:          aaaa-1111
+   ├─ generation:    USB4
+   ├─ status:        authorized
+   └─ stored:        yes
+      ├─ policy:     auto
+      └─ key:        no
+ o ICY DOCK ASM2464PD
+   |- type:          peripheral
+   |- name:          ASM2464PD
+   |- vendor:        ICY DOCK
+   |- uuid:          bbbb-2222
+   |- generation:    USB4
+   |- status:        disconnected
+   `- stored:        yes
+      |- policy:     iommu
+      `- key:        no
+"""
+
+
+def test_thunderbolt_chain_link_and_stored(tmp_path):
+    _write(tmp_path / "bus/thunderbolt/devices/domain0/security", "user")
+    _write(tmp_path / "bus/thunderbolt/devices/domain0/iommu_dma_protection", "1")
+    _tb(tmp_path, "0-0", device_name="Gen12", vendor_name="INTEL", unique_id="806b8780-b001-304d-ffff-ffffffffffff",
+        generation=4, authorized=1)
+    _tb(tmp_path, "0-1", device_name="TS4", vendor_name="CalDigit", vendor="0x2b8", device="0x1234", unique_id="aaaa-1111",
+        generation=4, authorized=1, nvm_version="52.0", rx_speed="20.0 Gb/s", tx_speed="20.0 Gb/s", rx_lanes=2, tx_lanes=2)
+    _tb(tmp_path, "0-301", device_name="SSD", vendor_name="Acme", unique_id="cccc-3333", generation=3, authorized=0,
+        rx_speed="10.0 Gb/s", tx_speed="10.0 Gb/s", rx_lanes=1, tx_lanes=1)
+    _write(tmp_path / "bus/thunderbolt/devices/0-1:1.1/unique_id", "retimer")   # Retimer wird übersprungen
+    bolt = dev.parse_boltctl(_BOLTCTL)
+    assert [b["name"] for b in bolt] == ["Gen12", "TS4", "ASM2464PD"]
+    devices = dev.read_thunderbolt(tmp_path, bolt)
+    assert [d.route for d in devices] == ["0-0", "0-1", "0-301", ""]
+    host, dock, ssd, stored = devices
+    assert host.is_host and host.security == "user" and host.iommu is True and host.depth == 0
+    assert dock.depth == 1 and dev.tb_tree_label("de", dock) == "└ 0-1" and dock.policy == "auto"
+    assert dock.generation_text == "USB4 / Thunderbolt 4" and dev.tb_link_text("de", dock) == "20.0 Gbit/s × 2"
+    assert not dev.tb_downgraded(dock) and dev.tb_authorized_text("en", dock) == "authorized"
+    assert ssd.depth == 2 and dev.tb_tree_label("de", ssd) == "    └ 0-301"
+    assert dev.tb_downgraded(ssd) and dev.tb_authorized_text("de", ssd) == "gesperrt"
+    assert not stored.connected and stored.policy == "iommu" and stored.generation == 4
+    assert dev.tb_link_text("de", stored) == "nicht verbunden (gespeichert)"
+    lines = dev.device_lines("de", dev.DeviceInventory(thunderbolt=devices))
+    assert lines[0].startswith("Thunderbolt Domäne 0 (0-0): INTEL Gen12 · USB4 / Thunderbolt 4 · freigegeben")
+    assert "IOMMU-DMA-Schutz ja" in lines[0] and "Sicherheit: Benutzer" in lines[0]
+    assert "Richtlinie iommu" in lines[3]
+
+
+def test_thunderbolt_absent(tmp_path):
+    assert dev.read_thunderbolt(tmp_path) == []
+    assert dev.parse_boltctl("") == []

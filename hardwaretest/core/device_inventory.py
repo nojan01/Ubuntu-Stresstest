@@ -177,6 +177,63 @@ class UsbDevice:
         return ", ".join(labels) or _USB_CLASSES[0xef]
 
 
+_TB_SECURITY = {
+    "none": ("Keine – alle Geräte automatisch", "None – all devices auto-authorized"),
+    "user": ("Benutzer – Freigabe nötig", "User – authorization required"),
+    "secure": ("Sicher – Freigabe mit Schlüssel", "Secure – key-based authorization"),
+    "dponly": ("Nur DisplayPort", "DisplayPort only"),
+    "usbonly": ("Nur USB/DisplayPort (kein PCIe)", "USB/DisplayPort only (no PCIe)"),
+    "nopcie": ("Kein PCIe-Tunnel", "No PCIe tunneling"),
+}
+
+
+@dataclass
+class ThunderboltDevice:
+    route: str                 # sysfs-Name, z. B. "0-0" (Host-Router) oder "0-1", "0-301"
+    domain: int = 0
+    name: str = ""
+    vendor: str = ""
+    vendor_id: int = 0
+    device_id: int = 0
+    unique_id: str = ""
+    generation: int = 0        # 1–3 = Thunderbolt 1–3, 4 = USB4/Thunderbolt 4
+    nvm_version: str = ""
+    authorized: Optional[int] = None   # 0 = gesperrt, 1 = freigegeben, 2 = mit Schlüssel
+    rx_speed: str = ""         # z. B. "20.0 Gb/s"
+    tx_speed: str = ""
+    rx_lanes: int = 0
+    tx_lanes: int = 0
+    connected: bool = True     # False = nur in boltctl gespeichert
+    policy: str = ""           # boltctl: auto / manual / iommu
+    security: str = ""         # Sicherheitsstufe der Domäne (nur Host-Router)
+    iommu: Optional[bool] = None       # IOMMU-DMA-Schutz der Domäne (nur Host-Router)
+
+    @property
+    def is_host(self) -> bool:
+        return self.route.endswith("-0")
+
+    @property
+    def depth(self) -> int:
+        hops = self.route.partition("-")[2]
+        return 0 if hops in ("", "0") else (len(hops) + 1) // 2
+
+    @property
+    def model(self) -> str:
+        return " ".join(dict.fromkeys(filter(None, (self.vendor, self.name)))).strip() or self.unique_id
+
+    @property
+    def generation_text(self) -> str:
+        return {1: "Thunderbolt 1", 2: "Thunderbolt 2", 3: "Thunderbolt 3", 4: "USB4 / Thunderbolt 4"}.get(
+            self.generation, "")
+
+    @property
+    def speed_gbps(self) -> float:
+        try:
+            return float((self.rx_speed or self.tx_speed).split()[0])
+        except (ValueError, IndexError):
+            return 0.0
+
+
 @dataclass
 class DeviceInventory:
     pci: list[PciDevice] = field(default_factory=list)
@@ -185,6 +242,7 @@ class DeviceInventory:
     controllers: list[StorageController] = field(default_factory=list)
     disks: list[Disk] = field(default_factory=list)
     usb: list[UsbDevice] = field(default_factory=list)
+    thunderbolt: list[ThunderboltDevice] = field(default_factory=list)
 
     @property
     def links(self) -> list[PciDevice]:
@@ -489,6 +547,80 @@ def read_usb(sysfs: Path = SYSFS, names: Optional[dict[tuple[int, int], str]] = 
     return sorted(devices, key=lambda d: _usb_port_sort_key(d.port))
 
 
+def parse_boltctl(text: str) -> list[dict[str, str]]:
+    """``boltctl list`` → Liste von Geräten mit name/uuid/status/policy/type/vendor/generation."""
+    devices: list[dict[str, str]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line[:1] in ("●", "○", "*", "o") and line[1:2] == " ":
+            devices.append({"name": line[2:].strip()})
+            continue
+        if not devices or line[:1] not in "|`├└":
+            continue
+        key, sep, value = line.lstrip("|`-─├└ ").partition(":")
+        if sep and key.strip() and (key.strip() == "name" or key.strip() not in devices[-1]):
+            devices[-1][key.strip()] = value.strip()
+    return devices
+
+
+def _tb_route_sort_key(route: str) -> tuple:
+    domain, _, hops = route.partition("-")
+    try:
+        return (int(domain), int(hops, 16) if hops else 0)
+    except ValueError:
+        return (0, 0)
+
+
+def read_thunderbolt(sysfs: Path = SYSFS, boltctl: Optional[list[dict[str, str]]] = None) -> list[ThunderboltDevice]:
+    """Thunderbolt-/USB4-Router aus ``/sys/bus/thunderbolt/devices`` (ohne Retimer/Tunnel)."""
+    base = sysfs / "bus" / "thunderbolt" / "devices"
+    try:
+        entries = sorted(base.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return []
+    domains: dict[int, tuple[str, Optional[bool]]] = {}
+    for entry in entries:
+        if entry.name.startswith("domain"):
+            protection = _read(entry / "iommu_dma_protection")
+            domains[_int_or_none(entry.name[6:]) or 0] = (
+                _read(entry / "security"), None if protection == "" else protection == "1")
+    devices: list[ThunderboltDevice] = []
+    for entry in entries:
+        name = entry.name
+        if ":" in name or "-" not in name or not (entry / "unique_id").exists():
+            continue
+        domain = _int_or_none(name.partition("-")[0]) or 0
+        security, iommu = domains.get(domain, ("", None))
+        authorized = _read(entry / "authorized")
+        device = ThunderboltDevice(
+            route=name, domain=domain, name=_read(entry / "device_name"), vendor=_read(entry / "vendor_name"),
+            vendor_id=_hex(entry / "vendor"), device_id=_hex(entry / "device"), unique_id=_read(entry / "unique_id"),
+            generation=_int(entry / "generation"), nvm_version=_read(entry / "nvm_version"),
+            authorized=_int_or_none(authorized), rx_speed=_read(entry / "rx_speed"), tx_speed=_read(entry / "tx_speed"),
+            rx_lanes=_int(entry / "rx_lanes"), tx_lanes=_int(entry / "tx_lanes"),
+        )
+        if device.is_host:
+            device.security, device.iommu = security, iommu
+        devices.append(device)
+    devices.sort(key=lambda d: _tb_route_sort_key(d.route))
+    if boltctl:
+        by_uuid = {d.unique_id: d for d in devices}
+        for stored in boltctl:
+            uuid = stored.get("uuid", "")
+            if uuid in by_uuid:
+                by_uuid[uuid].policy = stored.get("policy", "")
+            elif uuid and stored.get("type", "") != "host":
+                devices.append(ThunderboltDevice(
+                    route="", name=stored.get("name", ""), vendor=stored.get("vendor", ""), unique_id=uuid,
+                    generation={"Thunderbolt 1": 1, "Thunderbolt 2": 2, "Thunderbolt 3": 3, "USB4": 4}.get(
+                        stored.get("generation", ""), 0),
+                    connected=False, policy=stored.get("policy", ""),
+                ))
+    return devices
+
+
 def read_device_inventory(sysfs: Path = SYSFS, run: Optional[Callable] = None) -> DeviceInventory:
     run = run or subprocess.run
     lspci = _tool("lspci")
@@ -497,6 +629,8 @@ def read_device_inventory(sysfs: Path = SYSFS, run: Optional[Callable] = None) -
     by_address = {device.address: device for device in devices}
     lsusb = _tool("lsusb")
     usb_names = parse_lsusb(_run(run, [lsusb])) if lsusb else {}
+    bolt = _tool("boltctl")
+    bolt_devices = parse_boltctl(_run(run, [bolt, "list"])) if bolt else []
     return DeviceInventory(
         pci=devices,
         network=read_network(sysfs, by_address, run),
@@ -504,6 +638,7 @@ def read_device_inventory(sysfs: Path = SYSFS, run: Optional[Callable] = None) -
         controllers=read_controllers(sysfs, devices),
         disks=read_disks(run),
         usb=read_usb(sysfs, usb_names),
+        thunderbolt=read_thunderbolt(sysfs, bolt_devices),
     )
 
 
@@ -571,6 +706,47 @@ def usb_tree_label(device: UsbDevice) -> str:
     return "    " * (device.depth - 1) + "└ " + device.port
 
 
+def tb_tree_label(language: str, device: ThunderboltDevice) -> str:
+    if not device.connected:
+        return "–"
+    if device.is_host:
+        return _tt(language, f"Domäne {device.domain} ({device.route})", f"Domain {device.domain} ({device.route})")
+    return "    " * (device.depth - 1) + "└ " + device.route
+
+
+def tb_link_text(language: str, device: ThunderboltDevice) -> str:
+    if not device.connected:
+        return _tt(language, "nicht verbunden (gespeichert)", "not connected (stored)")
+    if not device.rx_speed and not device.tx_speed:
+        return ""
+    lanes = device.rx_lanes or device.tx_lanes
+    speed = device.rx_speed if device.rx_speed == device.tx_speed else f"{device.rx_speed} ↓ / {device.tx_speed} ↑"
+    speed = speed.replace("Gb/s", "Gbit/s")
+    return f"{speed} × {lanes}" if lanes else speed
+
+
+def tb_downgraded(device: ThunderboltDevice) -> bool:
+    """Verbundenes Gerät läuft unter der für seine Generation üblichen Linkrate (20 Gbit/s × 2 ab TB3)."""
+    if not device.connected or device.is_host or not device.speed_gbps:
+        return False
+    expected = 20.0 if device.generation >= 3 else 10.0
+    lanes = device.rx_lanes or device.tx_lanes
+    return device.speed_gbps < expected or (lanes and lanes < 2)
+
+
+def tb_authorized_text(language: str, device: ThunderboltDevice) -> str:
+    if not device.connected or device.authorized is None:
+        return ""
+    return {0: _tt(language, "gesperrt", "blocked"), 1: _tt(language, "freigegeben", "authorized"),
+            2: _tt(language, "freigegeben (Schlüssel)", "authorized (key)")}.get(
+        device.authorized, str(device.authorized))
+
+
+def tb_security_text(language: str, level: str) -> str:
+    texts = _TB_SECURITY.get(level)
+    return _tt(language, *texts) if texts else level
+
+
 def disk_type_text(disk: Disk) -> str:
     return " ".join(filter(None, (disk.transport.upper() if disk.transport else "", disk.media)))
 
@@ -611,6 +787,17 @@ def device_lines(language: str, inventory: DeviceInventory) -> list[str]:
             ", ".join(device.drivers), f"S/N {device.serial}" if device.serial else "",
             _tt(language, f"{device.max_children} Ports", f"{device.max_children} ports") if device.is_hub and device.max_children else "",
             device.pci,
+        ))))
+    for device in inventory.thunderbolt:
+        lines.append("Thunderbolt " + tb_tree_label(language, device) + ": " + " · ".join(filter(None, (
+            device.model, device.generation_text, tb_link_text(language, device),
+            tb_authorized_text(language, device),
+            f"NVM {device.nvm_version}" if device.nvm_version else "",
+            _tt(language, f"Richtlinie {device.policy}", f"policy {device.policy}") if device.policy else "",
+            _tt(language, f"Sicherheit: {tb_security_text(language, device.security)}",
+                f"security: {tb_security_text(language, device.security)}") if device.security else "",
+            "" if device.iommu is None else _tt(language, f"IOMMU-DMA-Schutz {'ja' if device.iommu else 'nein'}",
+                                                f"IOMMU DMA protection {'yes' if device.iommu else 'no'}"),
         ))))
     return lines
 

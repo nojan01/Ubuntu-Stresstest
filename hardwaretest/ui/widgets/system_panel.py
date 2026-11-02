@@ -152,6 +152,10 @@ class SystemPanel(QWidget):
         self.usb_note = QLabel()
         self.usb_note.setWordWrap(True)
         self.usb_group.layout().insertWidget(0, self.usb_note)
+        self.tb_group, self.tb_table = self._add_table_group(layout)
+        self.tb_note = QLabel()
+        self.tb_note.setWordWrap(True)
+        self.tb_group.layout().insertWidget(0, self.tb_note)
         layout.addStretch(1)
 
         self._clock_timer = QTimer(self)
@@ -278,6 +282,7 @@ class SystemPanel(QWidget):
         self.controller_group.setTitle(_t("Speicher-Controller", "Storage controllers"))
         self.disk_group.setTitle(_t("Datenträger", "Disks"))
         self.usb_group.setTitle("USB")
+        self.tb_group.setTitle("Thunderbolt / USB4")
         self._show_cpu()
         self._show_caches()
         self._show_board()
@@ -445,6 +450,48 @@ class SystemPanel(QWidget):
         _fill(self.usb_table, ["Port", _t("Gerät", "Device"), "ID", _t("Art", "Type"), _t("Geschwindigkeit", "Speed"),
                                "USB", _t("Treiber", "Driver"), _t("Seriennummer / Controller", "Serial / controller"),
                                "Ports"], rows, colors)
+        self._show_thunderbolt(language, devices)
+
+    def _show_thunderbolt(self, language: str, devices: dev.DeviceInventory) -> None:
+        if not devices.thunderbolt:
+            self.tb_note.setText(_t("Kein Thunderbolt-/USB4-Controller gefunden.", "No Thunderbolt/USB4 controller found."))
+            _fill(self.tb_table, [_t("Gerät", "Device")], [])
+            return
+        hosts = [d for d in devices.thunderbolt if d.is_host]
+        host_info = []
+        for host in hosts:
+            parts = [_t(f"Domäne {host.domain}", f"Domain {host.domain}")]
+            if host.security:
+                parts.append(_t("Sicherheitsstufe: ", "Security level: ") + dev.tb_security_text(language, host.security))
+            if host.iommu is not None:
+                parts.append(_t("IOMMU-DMA-Schutz: ", "IOMMU DMA protection: ") + _t("ja", "yes") if host.iommu
+                             else _t("IOMMU-DMA-Schutz: nein", "IOMMU DMA protection: no"))
+            host_info.append(" · ".join(parts))
+        self.tb_note.setText("\n".join(host_info) + "\n" + _t(
+            "Kette je Domäne: Host-Router → Gerät → nachgeschaltetes Gerät. Link = ausgehandelte Rate × Lanes "
+            "(üblich 20 Gbit/s × 2 ab Thunderbolt 3). Orange: Gerät läuft langsamer – Kabel (aktiv/40 Gbit/s), Port "
+            "und Kette prüfen. Rot: Gerät gesperrt (Freigabe über boltctl/Systemeinstellungen nötig). "
+            "Graue Zeilen: in boltctl gespeichert, aktuell nicht angeschlossen.",
+            "Chain per domain: host router → device → downstream device. Link = negotiated rate × lanes "
+            "(typically 20 Gbit/s × 2 from Thunderbolt 3 on). Orange: device runs slower – check cable (active/40 Gbit/s), "
+            "port and chain. Red: device blocked (authorize via boltctl/system settings). "
+            "Grey rows: stored in boltctl, currently not connected.",
+        ))
+        rows, colors = [], {}
+        grey = QColor("#9e9e9e")
+        for index, device in enumerate(devices.thunderbolt):
+            rows.append([dev.tb_tree_label(language, device), device.model, device.generation_text,
+                         dev.tb_link_text(language, device), dev.tb_authorized_text(language, device),
+                         device.nvm_version, device.policy, device.unique_id])
+            if not device.connected:
+                for col in range(8):
+                    colors[(index, col)] = grey
+            elif device.authorized == 0:
+                colors[(index, 4)] = _LINK_COLORS[dev.LINK_WIDTH]
+            elif dev.tb_downgraded(device):
+                colors[(index, 3)] = _LINK_COLORS[dev.LINK_SPEED]
+        _fill(self.tb_table, [_t("Route", "Route"), _t("Gerät", "Device"), _t("Generation", "Generation"), "Link",
+                              _t("Freigabe", "Authorization"), "NVM", _t("Richtlinie", "Policy"), "UUID"], rows, colors)
 
     def close_privileged_session(self) -> None:
         process, self._process = self._process, None

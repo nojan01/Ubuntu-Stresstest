@@ -17,7 +17,8 @@ from hardwaretest.core.paths import self_command_for_root
 
 # VMware ESXi-Datenspeicher; blkid meldet je nach Lage VMFS oder VMFS_volume_member.
 VMFS_TYPES = {"VMFS", "VMFS_volume_member"}
-CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs", "btrfs", *VMFS_TYPES}
+NTFS_TYPES = {"ntfs", "ntfs3"}
+CHECKABLE_TYPES = {"ext2", "ext3", "ext4", "xfs", "vfat", "squashfs", "btrfs", *NTFS_TYPES, *VMFS_TYPES}
 # Das Programm prüft Dateisysteme ausschließlich lesend. Reparaturen (e2fsck -p,
 # xfs_repair, fsck.fat -a, btrfs check --repair …) verändern Metadaten und können
 # Daten entfernen – sie bleiben bewusst dem Administrator auf der Kommandozeile
@@ -31,6 +32,7 @@ _TOOLS = {
     "fsck.vmfs6": ("/usr/sbin/fsck.vmfs6", "/sbin/fsck.vmfs6", "vmfs6-tools"),
     "fsck.vmfs": ("/usr/sbin/fsck.vmfs", "/sbin/fsck.vmfs", "vmfs-tools"),
     "btrfs": ("/usr/bin/btrfs", "/usr/sbin/btrfs", "btrfs-progs"),
+    "ntfsfix": ("/usr/bin/ntfsfix", "/usr/sbin/ntfsfix", "ntfs-3g"),
 }
 
 # Ausgabe von fsck.fat, die bei ESXi-Bootbanks (BOOTBANK1/2) immer auftritt: ESXi
@@ -42,6 +44,8 @@ _VFAT_BENIGN = re.compile(
 _VFAT_LABEL = re.compile(r"^Label in boot sector is '.*', but there is no volume label in root directory\.$")
 _VMFS_SUMMARY = re.compile(r"^(Unallocated blocks|Lost blocks|Undefined inodes|Orphaned inodes|Directory errors)\s*:\s*(\d+)\s*$")
 _VMFS_MAX_DETAIL_LINES = 200
+# ntfsfix -n meldet ein gesetztes Dirty-Flag bzw. Korruption nur im Text; der Exit-Code ist dabei nicht verlässlich.
+_NTFS_FINDING = re.compile(r"dirty|scheduled for check|corrupt|FAILED|chkdsk", re.I)
 
 
 def _tool(name: str) -> str:
@@ -120,7 +124,7 @@ def validate_device(expected: FilesystemDevice, action: str = "check") -> Filesy
     """Fail closed on identity changes, mounts, active layers or unreadable state."""
     current = validate_identity(expected)
     if not current.supported or current.kind not in {"part", "disk", "lvm", "crypt", "loop", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10", "md"}:
-        raise ValueError("Only offline ext2/3/4, xfs, btrfs, vfat, squashfs, VMFS / Nur ext2/3/4, xfs, btrfs, vfat, squashfs, VMFS offline unterstützt.")
+        raise ValueError("Only offline ext2/3/4, xfs, btrfs, vfat, ntfs, squashfs, VMFS / Nur ext2/3/4, xfs, btrfs, vfat, ntfs, squashfs, VMFS offline unterstützt.")
     if action == "check" and current.checkable_while_mounted:
         return current
     numbers = mounted_numbers(Path("/proc/self/mountinfo").read_text())
@@ -153,6 +157,10 @@ def checker_command(action: str, device: str, fstype: str = "ext4") -> list[str]
     if fstype == "btrfs":
         # --readonly: nur lesen; --check-data-csum prüft zusätzlich alle Datenblöcke.
         return [_tool("btrfs"), "check", "--readonly", "--check-data-csum", device]
+    if fstype in NTFS_TYPES:
+        # -n: nur lesen. Basisprüfung (Bootsektor, MFT/MFT-Spiegel, Dirty-Flag); eine vollständige
+        # Strukturprüfung wie chkdsk gibt es unter Linux nicht.
+        return [_tool("ntfsfix"), "-n", device]
     if fstype in VMFS_TYPES:
         # fsck.vmfs(6) liest nur und schreibt nie. VMFS6 zuerst, VMFS3/5 als Rückfall.
         return [_tool("fsck.vmfs6"), device]
@@ -207,7 +215,7 @@ def read_online_status(device: FilesystemDevice, language: str = "de") -> tuple[
         separator = fields.index("-")
         mount_type = fields[separator + 1]
         mount_types = {device.fstype}
-        if device.fstype in {"ntfs", "ntfs3"}:
+        if device.fstype in NTFS_TYPES:
             mount_types.update({"ntfs", "ntfs3", "fuseblk", "fuse.ntfs-3g"})
         # Btrfs uses a virtual major:minor for subvolume mounts. Fresh lsblk
         # mountpoints still identify the selected filesystem correctly.
@@ -238,6 +246,9 @@ def read_online_status(device: FilesystemDevice, language: str = "de") -> tuple[
         stats_failed, stats_lines = btrfs_device_stats(mounts[0][0], language)
         lines.extend(stats_lines)
         failed |= stats_failed
+    elif device.fstype in NTFS_TYPES:
+        lines.append(t("NTFS: kein Fehlerzähler im Kernel. Offline-Basisprüfung mit ntfsfix -n möglich; vollständige Prüfung nur unter Windows (chkdsk).",
+                       "NTFS: no kernel error counter. Offline basic check via ntfsfix -n; full check only under Windows (chkdsk)."))
     else:
         lines.append(t("Für diesen Typ ist kein ext4-Fehlerzähler verfügbar.", "No ext4 error counter for this filesystem type."))
     try:
@@ -325,9 +336,19 @@ def normalize_exit(fstype: str, action: str, code: int, output: str = "") -> int
         if code == 0:
             return 0
         return 4 if code == 1 else 8
+    if fstype in NTFS_TYPES:
+        # ntfsfix -n: 0 = Basisprüfung bestanden, 1 = Korruption/Dirty-Flag; Befunde im Text siehe run_checker.
+        if code == 0:
+            return 0
+        return 4 if code == 1 else 8
     if fstype in VMFS_TYPES:
         return 0 if code == 0 else 8
     return code
+
+
+def ntfs_findings(output: str) -> bool:
+    """True, wenn ntfsfix -n Korruption oder ein gesetztes Dirty-Flag meldet."""
+    return any(_NTFS_FINDING.search(line) for line in output.splitlines())
 
 
 def vfat_only_boot_label_mismatch(output: str) -> bool:
@@ -420,6 +441,12 @@ def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
         print("Hinweis: Label nur im Bootsektor (typisch für ESXi-Bootbanks BOOTBANK1/2) – kein Fehler. / "
               "Note: label in boot sector only (typical for ESXi boot banks) – not an error.", flush=True)
         return 0
+    if fstype in NTFS_TYPES:
+        print("Hinweis: ntfsfix -n prüft nur Bootsektor, MFT/MFT-Spiegel und Dirty-Flag. Eine vollständige "
+              "Strukturprüfung ist nur unter Windows mit chkdsk /f möglich. / Note: ntfsfix -n checks only the boot "
+              "sector, MFT/MFT mirror and dirty flag. A full structure check requires Windows chkdsk /f.", flush=True)
+        if code == 0 and ntfs_findings("".join(collected)):
+            return 4
     if fstype not in {"ext2", "ext3", "ext4"}:
         return normalize_exit(fstype, action, code)
     # Some e2fsck versions return 0 for a declined free-block-count correction.

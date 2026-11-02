@@ -172,7 +172,8 @@ das normale Schließen der App ist währenddessen gesperrt.
 Textprotokoll vollständig, HTML mit einer begrenzten Ausgabevorschau (64.000
 Zeichen) und dem Ergebnis. Es gibt keine Reparaturen im Gesamttestplan.
 Strukturprüfung (lesend) gibt es für ext2/3/4, XFS, Btrfs, vfat, squashfs und VMFS;
-NTFS und exFAT haben nur die Statusdiagnose. ZFS hat eine eigene
+NTFS hat eine lesende Basisprüfung (`ntfsfix -n`: Bootsektor, MFT/MFT-Spiegel, Dirty-Flag –
+keine vollständige Strukturprüfung, dafür Windows `chkdsk /f`), exFAT nur die Statusdiagnose. ZFS hat eine eigene
 Pool-Diagnose (siehe oben). Automatische Unmounts und Partitionsänderungen sind nicht enthalten.
 
 ## Langzeitmonitoring
@@ -230,7 +231,9 @@ The Filesystem tab supports read-only **status diagnosis on mounted filesystems*
 (mount options, space, available ext4 counters and recent device-specific kernel
 errors). This is not a full integrity check. Offline read-only integrity checks cover
 ext2/3/4 (`e2fsck -f -n`), XFS (`xfs_repair -n`), Btrfs (`btrfs check --readonly
---check-data-csum`), vfat (`fsck.fat -n`), squashfs and VMFS. **Since 0.2.61 the program
+--check-data-csum`), vfat (`fsck.fat -n`), squashfs and VMFS; NTFS gets a read-only *basic*
+check only (`ntfsfix -n`: boot sector, MFT/MFT mirror, dirty flag – a full structure check
+requires Windows `chkdsk /f`). **Since 0.2.61 the program
 never repairs filesystems**; repairs are a deliberate administrator action on the command
 line, and the live image ships the tools (e2fsprogs, xfsprogs, btrfs-progs, dosfstools,
 ntfs-3g, exfatprogs, zfsutils-linux, gdisk, testdisk). Mounted filesystems are blocked;

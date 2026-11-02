@@ -1305,6 +1305,8 @@ error indications. It is not a complete integrity check.</p>
 <p>Full integrity checking for <b>offline</b> filesystems: e2fsck -f -n (ext2/3/4),
 xfs_repair -n (XFS), btrfs check --readonly --check-data-csum (Btrfs, incl. data checksums), fsck.fat -n (vfat)
 and unsquashfs -pf /dev/null (squashfs, reads all data blocks). Every check is strictly read-only.
+<b>NTFS</b>: ntfsfix -n performs a read-only <i>basic</i> check only (boot sector, MFT/MFT mirror, dirty flag,
+volume start-up); Linux has no full NTFS structure check – for that run <code>chkdsk /f</code> under Windows.
 <b>VMFS</b> (VMware ESXi datastores, VMFS3/5/6): read-only metadata check with fsck.vmfs6 or fsck.vmfs
 (packages vmfs6-tools/vmfs-tools): inodes, block allocation and directories; reports lost/unallocated blocks,
 undefined/orphaned inodes and directory errors. Data blocks are not read. Limits: the tools are not from VMware
@@ -1363,6 +1365,9 @@ Fehlerhinweise. Dies ist keine vollständige Strukturprüfung.</p>
 <p>Vollständige Strukturprüfung für <b>ausgehängte</b> Dateisysteme: e2fsck -f -n (ext2/3/4),
 xfs_repair -n (XFS), btrfs check --readonly --check-data-csum (Btrfs, inkl. Datenprüfsummen), fsck.fat -n (vfat)
 und unsquashfs -pf /dev/null (squashfs, liest alle Datenblöcke). Jede Prüfung ist strikt lesend.
+<b>NTFS</b>: ntfsfix -n führt nur eine lesende <i>Basisprüfung</i> durch (Bootsektor, MFT/MFT-Spiegel, Dirty-Flag,
+Volume-Start); eine vollständige NTFS-Strukturprüfung gibt es unter Linux nicht – dafür unter Windows
+<code>chkdsk /f</code> ausführen.
 <b>VMFS</b> (VMware-ESXi-Datenspeicher, VMFS3/5/6): lesende Metadatenprüfung mit fsck.vmfs6 bzw. fsck.vmfs
 (Pakete vmfs6-tools/vmfs-tools): Inodes, Blockzuordnung und Verzeichnisse; gemeldet werden verlorene/nicht
 zugeordnete Blöcke, undefinierte/verwaiste Inodes und Verzeichnisfehler. Datenblöcke werden nicht gelesen.

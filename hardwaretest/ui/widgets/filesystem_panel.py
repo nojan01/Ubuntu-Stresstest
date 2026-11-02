@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
-from hardwaretest.core.filesystem_check import VMFS_TYPES, list_filesystems, result_text, worker_command
+from hardwaretest.core.filesystem_check import NTFS_TYPES, VMFS_TYPES, list_filesystems, result_text, worker_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
@@ -47,9 +47,9 @@ class FilesystemPanel(QWidget):
         hint.setWordWrap(True)
         self.bind(hint,
                   "Eingehängte Dateisysteme: Statusdiagnose mit Einhängezustand, Speicherplatz und verfügbaren Fehlerhinweisen. "
-                  "Vollständige Strukturprüfung (nur lesend) für ext2/3/4, xfs, btrfs, vfat, squashfs und VMFS nur ausgehängt; für die Systempartition ein Live-USB verwenden. Das Programm repariert nicht – Reparaturwerkzeuge (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) liegen dem Live-Image bei.",
+                  "Vollständige Strukturprüfung (nur lesend) für ext2/3/4, xfs, btrfs, vfat, squashfs und VMFS sowie eine NTFS-Basisprüfung (ntfsfix -n) nur ausgehängt; für die Systempartition ein Live-USB verwenden. Das Programm repariert nicht – Reparaturwerkzeuge (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) liegen dem Live-Image bei.",
                   "Mounted filesystems: status diagnosis with mount state, free space and available error indications. "
-                  "Full read-only integrity check for ext2/3/4, xfs, btrfs, vfat, squashfs and VMFS requires an unmounted filesystem; use a live USB for the system partition. The program never repairs – repair tools (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) ship with the live image.")
+                  "Full read-only integrity check for ext2/3/4, xfs, btrfs, vfat, squashfs and VMFS plus an NTFS basic check (ntfsfix -n) requires an unmounted filesystem; use a live USB for the system partition. The program never repairs – repair tools (e2fsck, xfs_repair, fsck.fat, btrfs, ntfsfix, fsck.exfat) ship with the live image.")
         layout.addWidget(hint)
         self.devices = QComboBox()
         self.devices.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -185,6 +185,11 @@ class FilesystemPanel(QWidget):
                                 "bei Fehlern eingehängt btrfs scrub verwenden.",
                                 "Offline candidate. Btrfs: read-only structure and checksum check (btrfs check --readonly --check-data-csum); "
                                 "on errors use btrfs scrub on the mounted filesystem.")
+        elif device.fstype in NTFS_TYPES:
+            message = self.text("Offline-Kandidat. NTFS: Basisprüfung (ntfsfix -n: Bootsektor, MFT/MFT-Spiegel, Dirty-Flag). "
+                                "Eine vollständige Strukturprüfung ist nur unter Windows mit chkdsk /f möglich.",
+                                "Offline candidate. NTFS: basic check (ntfsfix -n: boot sector, MFT/MFT mirror, dirty flag). "
+                                "A full structure check requires Windows chkdsk /f.")
         else:
             message = self.text("Offline-Kandidat (nur lesende Prüfung). Identität und Einhängezustand werden vor dem Start erneut geprüft.",
                                 "Offline candidate (read-only check). Device identity and mount state are checked again before starting.")

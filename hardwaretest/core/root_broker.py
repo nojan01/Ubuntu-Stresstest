@@ -48,7 +48,7 @@ FIO_CLI_FLAGS = frozenset({
 
 _ROOT_BROKER_TEMPLATE = r"""
 umask 077
-# Unter pkexec (Root) nur Systempfade; ohne Privilegien (Tests) bleibt PATH erhalten.
+# Unter pkexec (Root) nur Systempfade; sudo setzt secure_path; ohne Privilegien (Tests) bleibt PATH erhalten.
 [ -z "${PKEXEC_UID:-}" ] || { PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; }
 # Exact bundled paths passed as shell arguments, not command names from PATH
 # or interpolated shell source. Keep both CPU variants available.
@@ -57,7 +57,8 @@ odcd_generic=${2:-}
 odcd_tmp_root=${3:-/tmp}
 runtime_parent=${4:-}
 ras_db=/var/lib/rasdaemon/ras-mc_event.db
-caller=${PKEXEC_UID:-}
+# Aufrufender Benutzer: pkexec setzt PKEXEC_UID, sudo -A setzt SUDO_UID.
+caller=${PKEXEC_UID:-${SUDO_UID:-}}
 case "$caller" in ''|*[!0-9]*) caller=$(id -u);; esac
 # Working directory: root-owned, traverse-only, random name; preferably inside
 # the caller's private runtime directory (0700), otherwise /tmp.

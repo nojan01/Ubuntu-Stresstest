@@ -443,3 +443,30 @@ def test_zpool_is_only_allowed_to_start_or_stop_a_scrub(tmp_path):
         with pytest.raises(RuntimeError):
             broker.run(bad, timeout=10)
     broker.close()
+
+
+# ------------------------------------------------- Aufrufer-UID unter sudo -A statt pkexec
+
+
+def _caller_snippet():
+    """Die Zeilen des Root-Skripts, die den aufrufenden Benutzer bestimmen."""
+    lines = root_broker._ROOT_BROKER_TEMPLATE.splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("caller="))
+    end = next(i for i, l in enumerate(lines) if l.startswith("case \"$caller\""))
+    return "\n".join(lines[start:end + 1]) + "\necho \"$caller\"\n"
+
+
+@pytest.mark.parametrize("env, expected", [
+    ({"PKEXEC_UID": "1001"}, "1001"),
+    ({"SUDO_UID": "1002"}, "1002"),
+    ({"PKEXEC_UID": "1001", "SUDO_UID": "1002"}, "1001"),
+    ({"SUDO_UID": "nicht-numerisch"}, str(os.getuid())),
+    ({}, str(os.getuid())),
+])
+def test_caller_uid_from_pkexec_or_sudo(env, expected):
+    # Ohne SUDO_UID gehörten out/err/status unter sudo -A root:0600 und die App
+    # konnte sie nicht lesen ("cat: .../out: Keine Berechtigung").
+    clean = {k: v for k, v in os.environ.items() if k not in {"PKEXEC_UID", "SUDO_UID"}}
+    out = subprocess.run(["sh", "-c", _caller_snippet()], env={**clean, **env},
+                         capture_output=True, text=True, check=True).stdout.strip()
+    assert out == expected

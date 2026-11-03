@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.64
+
+- **Fix Root-Sitzung (seit 0.2.62):** Alle Root-Aktionen über `sudo -A` – NVMe-Selbsttests, SMART-/Gesundheitsdaten, ProLiant Info (iLO, IML, RAID), fio-Lesetests, DCGM, Dateisystemprüfung – scheiterten mit `cat: /tmp/hardwaretest-root.…/out: Keine Berechtigung`. Der Root-Helfer übereignete die Ausgabedateien nur unter pkexec (`PKEXEC_UID`) dem Benutzer; unter sudo blieben sie root:0600. Jetzt wird auch `SUDO_UID` ausgewertet.
+
 ### Neu in 0.2.63
 
 - **Gesamttest:** Kein Teiltest ist mehr vorausgewählt (nur das Monitoring bleibt aktiv) – bisher waren CPU, RAM, NVMe und NVIDIA vorgewählt, obwohl viele Rechner keine NVIDIA-Karte haben.

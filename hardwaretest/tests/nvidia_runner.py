@@ -23,6 +23,7 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         log_fn=None,
         use_pkexec: bool = False,
         language: str = "de",
+        skip_p2p: bool = False,
     ) -> None:
         if not gpu_indices:
             raise TestExecutionError("Keine NVIDIA-GPU ausgewählt")
@@ -32,6 +33,9 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         self.gpu_indices = sorted(set(int(index) for index in gpu_indices))
         self.run_level = run_level
         self.language = language
+        # PCIe-Peer-to-Peer-Test ueberspringen: bei aktivem IOMMU/ACS oder GPUs an
+        # verschiedenen Sockeln schlaegt er mit "buffer mismatch" fehl (kein Defekt).
+        self.skip_p2p = skip_p2p
         self.output_lines: list[str] = []
         self._command_prefix: list[str] = []
         if use_pkexec and not privilege.is_root():
@@ -51,6 +55,7 @@ class DcgmDiagnosticRunner(BaseTestRunner):
             str(self.run_level),
             "--entity-id",
             entities,
+            *(["--parameters", "pcie.test_p2p=false"] if self.skip_p2p else []),
             "--json",
         ]
 
@@ -252,10 +257,12 @@ def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
                 results = [{"status": summary.get("status", test.get("status", "?"))}]
             if not isinstance(results, list):
                 results = [results]
+            result_keys = set()
             for result in results:
                 if not isinstance(result, dict):
                     continue
                 key = _status_key(result.get("status"))
+                result_keys.add(key)
                 symbol = _STATUS_SYMBOLS.get(key, "?") if key else "?"
                 status_text = words[key] if key else str(result.get("status", "?"))
                 target = _entity_label(result)
@@ -266,6 +273,21 @@ def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
                     lines.append(("      Fehler: " if de else "      Error: ") + text)
                 for text in _messages(result.get("info")):
                     lines.append("      Info: " + text)
+            # DCGM 4: Gesamtstatus des Tests kann schlechter als die GPU-Einzelergebnisse
+            # sein (Fail im test_summary bei bestandenen GPUs) -> sichtbar machen.
+            summary = test.get("test_summary") if isinstance(test.get("test_summary"), dict) else None
+            if summary and test.get("results") not in (None, "", []):
+                summary_key = _status_key(summary.get("status"))
+                extra = [(k, _messages(summary.get(k))) for k in ("errors", "warnings")]
+                rank = {"pass": 0, "skip": 1, "warn": 2, "fail": 3}
+                worst = max((rank.get(k, 0) for k in result_keys), default=0)
+                if summary_key and (rank[summary_key] > worst or any(texts for _k, texts in extra)):
+                    symbol = _STATUS_SYMBOLS.get(summary_key, "?")
+                    lines.append(f"  {symbol} {name} – {'Gesamt' if de else 'overall'}: {words[summary_key]}")
+                    for k, texts in extra:
+                        prefix = ("      Fehler: " if de else "      Error: ") if k == "errors" else (
+                            "      Warnung: " if de else "      Warning: ")
+                        lines.extend(prefix + t for t in texts)
 
     for key_name in ("errors", "warnings"):
         texts = _messages(_lookup(payload, (key_name,)))
@@ -279,6 +301,32 @@ def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
         lines.append("Unbekanntes Ergebnisformat – Rohdaten:" if de else "Unknown result format – raw data:")
         lines.append(json.dumps(payload, indent=2, ensure_ascii=False))
     return lines
+
+
+def failed_checks(payload: object) -> list[str]:
+    """Namen der Prüfungen mit Status Fail, z. B. ``["pcie (GPU 0)", "memory (Gesamt)"]``."""
+    _root, categories = _find_categories(payload)
+    names: list[str] = []
+    for category in categories:
+        if not isinstance(category, dict):
+            continue
+        for test in category.get("tests") or []:
+            if not isinstance(test, dict):
+                continue
+            name = str(test.get("name", "?"))
+            results = test.get("results")
+            if isinstance(results, dict):
+                results = [results]
+            for result in results if isinstance(results, list) else []:
+                if isinstance(result, dict) and _status_key(result.get("status")) == "fail":
+                    target = _entity_label(result)
+                    names.append(f"{name} ({target})" if target else name)
+            summary = test.get("test_summary") if isinstance(test.get("test_summary"), dict) else None
+            if (summary and _status_key(summary.get("status")) == "fail") or (
+                    not results and _status_key(test.get("status")) == "fail"):
+                if not any(n == name or n.startswith(name + " (") for n in names):
+                    names.append(name)
+    return names
 
 
 def _extract_json(output: str) -> Optional[object]:

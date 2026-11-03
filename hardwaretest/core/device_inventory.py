@@ -234,6 +234,52 @@ class ThunderboltDevice:
             return 0.0
 
 
+# Fehlerzähler aus /sys/class/fc_host/hostN/statistics – jeder Zuwachs ist auffällig.
+FC_ERROR_COUNTERS = ("link_failure_count", "loss_of_sync_count", "loss_of_signal_count",
+                     "prim_seq_protocol_err_count", "invalid_tx_word_count", "invalid_crc_count",
+                     "error_frames", "dumped_frames", "fcp_frame_alloc_failures")
+_FC_UNSUPPORTED = 0xFFFFFFFFFFFFFFFF
+
+
+@dataclass
+class FcHost:
+    """Fibre-Channel-HBA-Port aus ``/sys/class/fc_host`` (ohne Root lesbar)."""
+
+    host: str                 # host3
+    port_name: str = ""       # WWPN 0x10000090fa…
+    node_name: str = ""       # WWNN
+    port_state: str = ""      # Online, Linkdown, Offline …
+    port_type: str = ""       # NPort (fabric via point-to-point), Loop …
+    speed: str = ""           # „16 Gbit“ oder „unknown“
+    supported_speeds: str = ""
+    fabric_name: str = ""
+    symbolic_name: str = ""
+    model: str = ""
+    model_description: str = ""
+    firmware: str = ""
+    driver: str = ""
+    driver_version: str = ""
+    serial: str = ""
+    pci: str = ""
+    remote_ports: int = 0
+    statistics: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def online(self) -> bool:
+        return self.port_state.lower() == "online"
+
+    @property
+    def error_counters(self) -> dict[str, int]:
+        return {key: value for key, value in self.statistics.items() if key in FC_ERROR_COUNTERS and value > 0}
+
+    @property
+    def severity(self) -> str:
+        """ok | warn | error – Linkdown ist ein Fehler, Fehlerzähler > 0 eine Warnung."""
+        if not self.online:
+            return "error"
+        return "warn" if self.error_counters else "ok"
+
+
 @dataclass
 class DeviceInventory:
     pci: list[PciDevice] = field(default_factory=list)
@@ -243,6 +289,7 @@ class DeviceInventory:
     disks: list[Disk] = field(default_factory=list)
     usb: list[UsbDevice] = field(default_factory=list)
     thunderbolt: list[ThunderboltDevice] = field(default_factory=list)
+    fc_hosts: list[FcHost] = field(default_factory=list)
 
     @property
     def links(self) -> list[PciDevice]:
@@ -621,6 +668,57 @@ def read_thunderbolt(sysfs: Path = SYSFS, boltctl: Optional[list[dict[str, str]]
     return devices
 
 
+def read_fc_hosts(sysfs: Path = SYSFS) -> list[FcHost]:
+    """FC-HBA-Ports aus ``/sys/class/fc_host`` samt Modell/Firmware aus ``scsi_host`` und Statistik."""
+    base = sysfs / "class" / "fc_host"
+    try:
+        entries = sorted(base.iterdir(), key=lambda p: (len(p.name), p.name))
+    except OSError:
+        return []
+    hosts: list[FcHost] = []
+    for entry in entries:
+        scsi = sysfs / "class" / "scsi_host" / entry.name
+        device = entry / "device"
+        pci, driver = "", ""
+        try:
+            resolved = device.resolve()
+            for parent in (resolved, *resolved.parents):
+                if _PCI_ADDRESS.match(parent.name):
+                    pci, driver = parent.name, _link_name(parent / "driver")
+                    break
+        except OSError:
+            pass
+        statistics: dict[str, int] = {}
+        stats_dir = entry / "statistics"
+        try:
+            stat_files = sorted(stats_dir.iterdir())
+        except OSError:
+            stat_files = []
+        for stat in stat_files:
+            raw = _read(stat)
+            try:
+                value = int(raw, 0)
+            except ValueError:
+                continue
+            if value != _FC_UNSUPPORTED and value >= 0:
+                statistics[stat.name] = value
+        try:
+            remote_ports = sum(1 for child in device.iterdir() if child.name.startswith("rport-"))
+        except OSError:
+            remote_ports = 0
+        hosts.append(FcHost(
+            host=entry.name, port_name=_read(entry / "port_name"), node_name=_read(entry / "node_name"),
+            port_state=_read(entry / "port_state"), port_type=_read(entry / "port_type"),
+            speed=_read(entry / "speed"), supported_speeds=_read(entry / "supported_speeds"),
+            fabric_name=_read(entry / "fabric_name"), symbolic_name=_read(entry / "symbolic_name"),
+            model=_read(scsi / "model_name"), model_description=_read(scsi / "model_desc"),
+            firmware=_read(scsi / "fw_version") or _read(scsi / "fwrev"),
+            driver=driver or _read(scsi / "driver_name"), driver_version=_read(scsi / "driver_version") or _read(scsi / "lpfc_drvr_version"),
+            serial=_read(scsi / "serial_num"), pci=pci, remote_ports=remote_ports, statistics=statistics,
+        ))
+    return hosts
+
+
 def read_device_inventory(sysfs: Path = SYSFS, run: Optional[Callable] = None) -> DeviceInventory:
     run = run or subprocess.run
     lspci = _tool("lspci")
@@ -639,6 +737,7 @@ def read_device_inventory(sysfs: Path = SYSFS, run: Optional[Callable] = None) -
         disks=read_disks(run),
         usb=read_usb(sysfs, usb_names),
         thunderbolt=read_thunderbolt(sysfs, bolt_devices),
+        fc_hosts=read_fc_hosts(sysfs),
     )
 
 
@@ -751,6 +850,40 @@ def disk_type_text(disk: Disk) -> str:
     return " ".join(filter(None, (disk.transport.upper() if disk.transport else "", disk.media)))
 
 
+_FC_STATES = {"online": ("Online", "online"), "linkdown": ("Link unterbrochen", "link down"),
+              "offline": ("Offline", "offline"), "blocked": ("blockiert", "blocked"),
+              "bypassed": ("umgangen", "bypassed"), "diagnostics": ("Diagnose", "diagnostics"),
+              "not present": ("nicht vorhanden", "not present"), "error": ("Fehler", "error"),
+              "loopback": ("Loopback", "loopback"), "deleted": ("gelöscht", "deleted"), "unknown": ("unbekannt", "unknown")}
+
+
+def fc_state_text(language: str, host: FcHost) -> str:
+    texts = _FC_STATES.get(host.port_state.lower())
+    return _tt(language, *texts) if texts else host.port_state
+
+
+def fc_speed_text(language: str, host: FcHost) -> str:
+    speed = host.speed.replace("Gbit", "Gbit/s")
+    if not speed or speed.lower() == "unknown":
+        return _tt(language, "unbekannt", "unknown") if host.online else "–"
+    return speed
+
+
+def fc_wwn_text(value: str) -> str:
+    """0x10000090fa123456 → 10:00:00:90:fa:12:34:56"""
+    digits = value.lower().removeprefix("0x")
+    if len(digits) != 16 or not re.fullmatch(r"[0-9a-f]{16}", digits):
+        return value
+    return ":".join(digits[i:i + 2] for i in range(0, 16, 2))
+
+
+def fc_errors_text(language: str, host: FcHost) -> str:
+    errors = host.error_counters
+    if not errors:
+        return "0" if host.statistics else "–"
+    return ", ".join(f"{key.removesuffix('_count')}={value}" for key, value in errors.items())
+
+
 def device_lines(language: str, inventory: DeviceInventory) -> list[str]:
     lines: list[str] = []
     links = inventory.links
@@ -798,6 +931,16 @@ def device_lines(language: str, inventory: DeviceInventory) -> list[str]:
                 f"security: {tb_security_text(language, device.security)}") if device.security else "",
             "" if device.iommu is None else _tt(language, f"IOMMU-DMA-Schutz {'ja' if device.iommu else 'nein'}",
                                                 f"IOMMU DMA protection {'yes' if device.iommu else 'no'}"),
+        ))))
+    for host in inventory.fc_hosts:
+        lines.append(f"FC-HBA {host.host}: " + " · ".join(filter(None, (
+            host.model or host.model_description, f"WWPN {fc_wwn_text(host.port_name)}" if host.port_name else "",
+            fc_state_text(language, host), fc_speed_text(language, host) if host.online else "",
+            host.port_type, f"Fabric {fc_wwn_text(host.fabric_name)}" if host.online and host.fabric_name else "",
+            _tt(language, f"{host.remote_ports} Remote-Ports", f"{host.remote_ports} remote ports") if host.remote_ports else "",
+            f"FW {host.firmware}" if host.firmware else "", host.driver, host.pci,
+            _tt(language, f"Fehlerzähler: {fc_errors_text(language, host)}", f"error counters: {fc_errors_text(language, host)}")
+            if host.error_counters else "",
         ))))
     return lines
 

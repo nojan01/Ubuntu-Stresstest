@@ -124,7 +124,34 @@ while IFS= read -r line; do
         [ $# -eq 4 ] && [ "$2" = "-a" ] && [ "$3" = "-j" ] || ok=0
         case "${4:-}" in /dev/sd[a-z]|/dev/sd[a-z][a-z]|/dev/sd[a-z][a-z][a-z]|/dev/nvme[0-9]|/dev/nvme[0-9][0-9]) ;; *) ok=0;; esac ;;
       ipmitool) case "${2:-} ${3:-}" in "sdr type"|"sdr elist"|"sel list"|"sel elist"|"sel info"|"mc info") ;; *) ok=0;; esac ;;
-      dmidecode) [ $# -eq 3 ] && [ "$2" = "-t" ] && case "$3" in memory|system) true;; *) false;; esac || ok=0 ;;
+      dmidecode)
+        # Nur lesende Tabellen: -t <typ> beliebig oft (System, CPU, Speicher, Netzteile).
+        [ $# -ge 3 ] && [ $(( ($# - 1) % 2 )) -eq 0 ] || ok=0
+        i=0; expect_t=1
+        for a in "$@"; do
+          i=$((i+1)); [ "$i" -eq 1 ] && continue
+          if [ "$expect_t" = 1 ]; then [ "$a" = "-t" ] || ok=0; expect_t=0
+          else case "$a" in memory|system|processor|1|4|16|17|39) ;; *) ok=0;; esac; expect_t=1; fi
+        done ;;
+      ethtool)
+        # Selbsttest (unterbricht bei offline kurz den Link) und SFP-Modulinfo eines Interfaces.
+        case "${2:-}" in
+          -t) { [ $# -eq 3 ] || { [ $# -eq 4 ] && case "$4" in online|offline) true;; *) false;; esac; }; } || ok=0 ;;
+          -m|-S|--module-info) [ $# -eq 3 ] || ok=0 ;;
+          *) ok=0 ;;
+        esac
+        case "${3:-}" in ''|-*|*/*|.|..) ok=0;; esac
+        [ ${#3} -le 15 ] || ok=0 ;;
+      mstlink)
+        # Mellanox-Link-Diagnose (mstflint), nur lesend: -d <PCI-BDF> [--show_module] [--show_counters]
+        [ $# -ge 3 ] && [ $# -le 5 ] && [ "$2" = "-d" ] || ok=0
+        case "${3:-}" in
+          [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F].[0-7]) ;;
+          [0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F].[0-7]) ;;
+          *) ok=0 ;;
+        esac
+        i=0; for a in "$@"; do i=$((i+1)); [ "$i" -le 3 ] && continue
+          case "$a" in --show_module|--show_counters) ;; *) ok=0;; esac; done ;;
       ilorest) [ "$*" = "ilorest --nologo serverlogs --selectlog=IML --json" ] || ok=0 ;;
       modprobe) [ $# -eq 3 ] && [ "$2" = "-q" ] && case "$3" in ipmi_si|ipmi_devintf) true;; *) false;; esac || ok=0 ;;
       zpool)

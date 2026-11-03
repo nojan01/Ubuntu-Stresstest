@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardwaretest.core import privilege
+from hardwaretest.core import ipmi, privilege
 from hardwaretest.core.nvidia import (
     LinuxNvidiaStatus,
     NvidiaGpu,
@@ -35,6 +35,7 @@ from hardwaretest.tests.nvidia_runner import (
     GpuStressRunner,
     cuda_driver_available,
     dcgmi_available,
+    failed_checks,
 )
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
@@ -178,6 +179,16 @@ class NvidiaPanel(QWidget):
 
         diag_form = QFormLayout()
         diag_form.addRow("DCGM-Diagnosestufe", self.level_box)
+        self.skip_p2p_box = QCheckBox("PCIe-Peer-to-Peer-Test überspringen (IOMMU/ACS aktiv, GPUs an verschiedenen Sockeln)")
+        self.skip_p2p_box.setToolTip(
+            "Der P2P-Teil des DCGM-pcie-Tests kopiert direkt zwischen zwei GPUs. Bei aktivem IOMMU/VT-d mit PCIe-ACS "
+            "oder GPUs an verschiedenen CPU-Sockeln scheitert er mit „buffer mismatch“ (ID 86/87) – kein GPU-Defekt. "
+            "Entspricht dcgmi diag -p pcie.test_p2p=false."
+        )
+        # Synergy: GPUs auf dem Grafikmodul hinter PCIe-Switch -> P2P scheitert ohne Defekt.
+        # ProLiant DL und andere Systeme: P2P-Test läuft mit.
+        self.skip_p2p_box.setChecked(ipmi.is_synergy())
+        diag_form.addRow("", self.skip_p2p_box)
         diag_buttons = QHBoxLayout()
         diag_buttons.addWidget(self.start_btn)
         diag_buttons.addWidget(self.stop_btn)
@@ -390,6 +401,7 @@ class NvidiaPanel(QWidget):
                 log_fn=lines.append,
                 use_pkexec=not privilege.is_root() and privilege.tool() is not None,
                 language=language_manager.language,
+                skip_p2p=self.skip_p2p_box.isChecked(),
             )
             runner.start()
         except Exception as exc:  # pragma: no cover - DCGM/polkit dependent
@@ -556,8 +568,13 @@ class NvidiaPanel(QWidget):
             self._finish_stress(runner, result, aborted)
             return
         counts = runner.status_counts()
+        failed_names = ", ".join(failed_checks(runner.parsed_payload())) if counts["fail"] else ""
+        fail_key = ("DCGM meldet {failed} fehlgeschlagene Prüfung(en): {names}. Details stehen im Protokoll."
+                    if failed_names else "DCGM meldet {failed} fehlgeschlagene Prüfung(en). Details stehen im Protokoll.")
         evaluation_error = runner.evaluation_error() if result is not None and result.passed else None
         report = runner.report_lines(language_manager.language)
+        if self._p2p_failure(runner, failed_names):
+            report += ["", *self._p2p_hint_lines()]
         if runner.parsed_payload() is not None:
             report += ["", "--- " + language_manager.tr("Rohausgabe (JSON)") + " ---", *runner.output_lines]
         self.output.setPlainText("\n".join(report))
@@ -573,8 +590,8 @@ class NvidiaPanel(QWidget):
             self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(
                 self.diag_status,
-                "DCGM meldet {failed} fehlgeschlagene Prüfung(en). Details stehen im Protokoll.",
-                failed=counts["fail"],
+                fail_key,
+                failed=counts["fail"], names=failed_names,
             )
         elif aborted and counts["pass"] > 0:
             self._set_runtime_text(
@@ -609,9 +626,30 @@ class NvidiaPanel(QWidget):
             self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(
                 self.diag_status,
-                "DCGM meldet {failed} fehlgeschlagene Prüfung(en). Details stehen im Protokoll.",
-                failed=counts["fail"],
+                fail_key,
+                failed=counts["fail"], names=failed_names,
             )
+
+    @staticmethod
+    def _p2p_failure(runner, failed_names: str) -> bool:
+        if getattr(runner, "skip_p2p", False) or "pcie" not in failed_names:
+            return False
+        raw = "\n".join(runner.output_lines)
+        return "P2P" in raw or '"error_id": 86' in raw or '"error_id": 87' in raw
+
+    @staticmethod
+    def _p2p_hint_lines() -> list[str]:
+        tr = language_manager.tr
+        return [
+            "--- " + tr("Hinweis zum PCIe-Peer-to-Peer-Fehler") + " ---",
+            tr("Der pcie-Test scheitert am P2P-Teil (ID 86/87) – meist kein GPU-Defekt, sondern IOMMU/VT-d mit PCIe-ACS "
+               "oder GPUs hinter PCIe-Switches (HPE Synergy Grafikmodul)."),
+            tr("Abhilfe 1: Checkbox „PCIe-Peer-to-Peer-Test überspringen“ setzen (dcgmi diag -p pcie.test_p2p=false)."),
+            tr("Abhilfe 2: Kernelparameter iommu=pt (notfalls intel_iommu=off/amd_iommu=off) in /etc/default/grub, update-grub, Neustart."),
+            tr("Abhilfe 3: BIOS/RBSU → Advanced Options → PCIe Access Control Services (ACS) bzw. VT-d/IOMMU deaktivieren "
+               "(nur wenn kein SR-IOV benötigt wird)."),
+            tr("Abhilfe 4: options nvidia NVreg_RegistryDwords=\"ForceP2P=1\" in /etc/modprobe.d/nvidia.conf, Neustart."),
+        ]
 
     def _finish_stress(self, runner, result, aborted: bool) -> None:
         self.output.setPlainText("\n".join(getattr(runner, "_ui_log_lines", [])))

@@ -84,6 +84,9 @@ def test_dcgm_command_targets_every_selected_gpu(monkeypatch=None):
         assert runner.build_command() == [
             "dcgmi", "diag", "--run", "2", "--entity-id", "gpu:0,gpu:1,gpu:3", "--json"
         ]
+        assert DcgmDiagnosticRunner(TestParameters(0), [0], 2, skip_p2p=True).build_command() == [
+            "dcgmi", "diag", "--run", "2", "--entity-id", "gpu:0", "--parameters", "pcie.test_p2p=false", "--json"
+        ]
     finally:
         module.dcgmi_available = original
 
@@ -193,3 +196,49 @@ def test_dcgm_report_handles_dcgm4_schema_and_extra_top_level_keys():
     assert "Info: GPU to Host bandwidth: 13.53 GB/s" in text
     assert "– memory: übersprungen" in text
     assert "{" not in text
+
+
+def test_dcgm_report_shows_failed_test_summary_and_names_failed_checks():
+    """DCGM 4: GPU-Ergebnisse Pass, test_summary Fail -> Fail muss im Klartext erscheinen."""
+    import json
+
+    from hardwaretest.tests.nvidia_runner import failed_checks
+
+    payload = {"DCGM Diagnostic": {"test_categories": [
+        {"category": "Integration", "tests": [
+            {"name": "pcie", "test_summary": {"status": "Fail", "errors": [
+                {"error_id": 86, "warning": "P2P write verification failed"}]},
+             "results": [{"entity_id": 0, "status": "Pass", "warnings": ["P2P write verification failed"]},
+                         {"entity_id": 1, "status": "Pass"}]}]},
+        {"category": "Hardware", "tests": [
+            {"name": "memory", "test_summary": {"status": "Pass"},
+             "results": [{"entity_id": 0, "status": "Pass"}, {"entity_id": 1, "status": "Fail",
+                                                                "errors": ["ECC error"]}]}]},
+    ]}}
+    runner = DcgmDiagnosticRunner(TestParameters(0), [0, 1], 2)
+    runner.output_lines = json.dumps(payload, indent=1).splitlines()
+    text = "\n".join(runner.report_lines("de"))
+    assert "✓ pcie – GPU 0: bestanden" in text
+    assert "✗ pcie – Gesamt: FEHLGESCHLAGEN" in text and "Fehler: P2P write verification failed (ID 86)" in text
+    assert "✗ memory – GPU 1: FEHLGESCHLAGEN" in text
+    assert "memory – Gesamt" not in text
+    assert runner.status_counts()["fail"] == 2
+    assert failed_checks(runner.parsed_payload()) == ["pcie", "memory (GPU 1)"]
+
+
+def test_p2p_hint_only_without_skip_and_with_p2p_failure():
+    from hardwaretest.ui.widgets.nvidia_panel import NvidiaPanel
+
+    class Runner:
+        def __init__(self, skip_p2p, lines):
+            self.skip_p2p = skip_p2p
+            self.output_lines = lines
+
+    p2p = ['{"error_id": 86, "message": "P2P write verification failed: buffer mismatch"}']
+    assert NvidiaPanel._p2p_failure(Runner(False, p2p), "pcie")
+    assert not NvidiaPanel._p2p_failure(Runner(True, p2p), "pcie")
+    assert not NvidiaPanel._p2p_failure(Runner(False, p2p), "memory (GPU 1)")
+    assert not NvidiaPanel._p2p_failure(Runner(False, ['{"error_id": 12}']), "pcie")
+    hints = NvidiaPanel._p2p_hint_lines()
+    assert any("iommu=pt" in line for line in hints)
+    assert any("ForceP2P=1" in line for line in hints)

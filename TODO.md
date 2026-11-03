@@ -1,145 +1,65 @@
-# Hardwaretest – Entwicklungs-Roadmap
+# Hardwaretest – offene Punkte
 
-Diese Liste dokumentiert die gewünschten Erweiterungen. Die Reihenfolge
-entspricht der derzeitigen Priorität.
+Umgesetzte Funktionen stehen im README („Neu in …“) und in der Hilfe der App.
+Die Reihenfolge entspricht der derzeitigen Priorität.
 
 ## Hohe Priorität
 
 ### Netzwerk-Test
 
-- Status: zweite Ausbaustufe umgesetzt
-- `iperf3`-Client für Durchsatztests zu einem frei wählbaren Server – umgesetzt
-- Ping-, Latenz-, Jitter- und Paketverlustmessung – umgesetzt
-- Pass/Fail-Grenzwerte für Paketverlust, Latenz, Jitter und Durchsatz – umgesetzt
-- Adapterauswahl und Bindung des Tests an eine konkrete Schnittstelle – umgesetzt
-- Wiederholte Ping-/iperf3-Läufe im Gesamttestplan mit kompakter Zusammenfassung und CSV – umgesetzt in 0.2.29.
-- Frei konfigurierbare Netzwerk-Grenzwerte auch im Gesamttestplan – umgesetzt in 0.2.30.
-- Übersicht der Netzwerkadapter, Link-Geschwindigkeit und Treiber – umgesetzt
-- Offen (nach Feature-Freeze): ethtool-Selbsttest und Fehlerzähler
-  - `ethtool -t <iface>` (Online-Selbsttest des Treibers: Register, EEPROM,
-    Interrupt, Loopback, Link; `offline` gründlicher, trennt kurz den Link) –
-    unterstützt von Broadcom (tg3/bnx2/bnxt), Intel (igb/ixgbe/i40e/ice), Mellanox
-  - `ethtool -S` Fehlerzähler (CRC, rx/tx errors, dropped) vor und nach dem
-    iperf3-/Ping-Lauf vergleichen und Zuwächse als Fehler werten
-  - `ethtool -m` für SFP/DAC-Module (Temperatur, Rx/Tx-Leistung, Herstellerdaten)
-  - Herstellertools (Broadcom bnxtnvm/bnxtmt, Intel nvmupdate, Mellanox MFT
-    `mlxlink`) sind lizenz-/NDA-gebunden bzw. nur für Firmware – nicht ins ISO;
-    allenfalls Mellanox MFT (frei als .deb) optional
-- Offen (nach Feature-Freeze): Fibre-Channel-HBAs (QLogic/Marvell qla2xxx,
-  Emulex/Broadcom lpfc, HPE-gebrandet)
-  - Übersicht aus `/sys/class/fc_host/hostN/`: `port_state`, `speed`,
-    `port_name` (WWPN), `fabric_name`, Firmware aus
-    `/sys/class/scsi_host/hostN/fw_version` (vgl. `systool -c fc_host -v`)
-  - Fehlerzähler `/sys/class/fc_host/hostN/statistics/` (`link_failure_count`,
-    `loss_of_sync_count`, `loss_of_signal_count`, `invalid_crc_count`,
-    `error_frames`) vor/nach einem Lesetest vergleichen; Zuwächse als Fehler
-  - Lasttest nur mit sichtbarer LUN: fio lesend auf `/dev/mapper/mpath*` bzw.
-    `/dev/sdX` (wie Disk-Gerätetest), Pfadstatus per `multipath -ll`
-  - Ohne Fabric: Loopback-Stecker am SFP → `port_state` Online, Zähler ruhig
-  - Herstellertools (frei ladbar, proprietär, nicht ins Repo): QLogic
-    `qaucli` (hp-qaucli) und Emulex `hbacmd` (hp-elxocmcore) mit
-    `LoopBackTest`, SFP-Daten (`GetXcvrData`); allenfalls optional beim
-    ISO-Build einbinden wie MemTest86
+- ethtool-Fehlerzähler (`ethtool -S`: CRC, rx/tx errors, dropped) automatisch vor und
+  nach dem iperf3-/Ping-Lauf vergleichen und Zuwächse als Fehler werten.
+- Proprietäre Herstellertools (NVIDIA MFT `mlxlink`/`mlxcables`, Broadcom
+  `bnxtnvm`/`bnxtmt`, Intel `nvmupdate`) sind nicht im externen Live-ISO enthalten –
+  sie kämen ausschließlich über `--vendor-tools` ins interne ISO. Falls gewünscht:
+  optionale Schaltflächen, nur sichtbar, wenn das Tool installiert ist
+  (frei und immer verfügbar: `ethtool`, `mstflint`/`mstlink`).
 
-### NVMe-Test und -Diagnose
+### Fibre Channel (zurückgestellt – keine FC-Hardware vorhanden)
 
-- Status: umgesetzt: Erkennung mit Modell, Seriennummer und Firmware,
-  SMART-/Gesundheitsdaten, Selbsttest-Protokoll mit bestanden/fehlgeschlagen,
-  zeitbegrenzter Lese-Benchmark sowie vollständiger nicht-destruktiver Lese-Test.
-- Vollständige NVMe-Lesetests mit Auswahl und SMART-Vergleich vorher/nachher im
-  Gesamttestplan und gemeinsamen Text-/HTML-/CSV-Bericht – umgesetzt in 0.2.29.
-- Noch offen: zeitlicher SMART-Verlauf auch im eigenständigen Langzeitmonitoring.
+- FC-Lasttest: fio lesend auf sichtbarer LUN (`/dev/mapper/mpath*` bzw. `/dev/sdX`)
+  mit Vergleich der Fehlerzähler aus `/sys/class/fc_host/hostN/statistics/`
+  (`link_failure_count`, `loss_of_sync_count`, `loss_of_signal_count`,
+  `invalid_crc_count`, `error_frames`) vorher/nachher; Pfadstatus per `multipath -ll`.
+- Ohne Fabric: Loopback-Stecker am SFP → `port_state` Online, Zähler ruhig.
+- Herstellertools (proprietär, nur internes ISO): QLogic `qaucli` (hp-qaucli) und
+  Emulex `hbacmd` (hp-elxocmcore) mit `LoopBackTest` und SFP-Daten (`GetXcvrData`).
 
-### GPU-Test – NVIDIA für KI, AI und Virtual Desktop
+### NVMe / Langzeitmonitoring
 
-- Status: erste Ausbaustufe umgesetzt: Mehrfachauswahl, Erkennung über
-  `nvidia-smi`, Treiber/CUDA-Kompatibilität, VRAM, Temperatur, Leistung und ECC
-  sowie optionale DCGM-Diagnosestufen 1–4 mit Pass/Fail-Protokoll.
-- Taktraten sowie aktuelle/maximale PCIe-Generation und Linkbreite – umgesetzt
-- Auslastungs-, Temperatur-, Leistungs-, VRAM- und Taktmonitor während des
-  Tests mit konfigurierbarem Messintervall – umgesetzt
-- CUDA-Prüfung (Treiber-/CUDA-Version, GPUs, Rechentest) – umgesetzt
-- VRAM-Stresstest mit Fehlerprüfung (Vulkan für alle Hersteller, CUDA für NVIDIA,
-  Muster und Zähler über 32 Bit hinaus) – umgesetzt in 0.2.5x/0.2.60
-- GPU-Lasttest für KI-/VDI-Szenarien mit frei wählbarer Dauer (Vulkan/CUDA, auch
-  im Gesamttestplan) – umgesetzt
-- Protokollierung von Xid-Meldungen und Kernel-Logs sowie Telemetrie während des
-  Tests – umgesetzt
-- DCGM-Diagnose als lesbarer Textbericht (DCGM 3.x und 4.x) – umgesetzt in 0.2.61
-- Noch offen: Lasttest auf AMD-/Intel-GPUs über ROCm/oneAPI (derzeit nur Vulkan).
+- Zeitlicher SMART-Verlauf im eigenständigen Langzeitmonitoring.
+- Grenzwerte für weitere Messgrößen und zusätzliche Diagrammauswahl im HTML-Bericht.
+
+### GPU-Test
+
+- Lasttest auf AMD-/Intel-GPUs über ROCm/oneAPI (derzeit nur Vulkan).
 
 ### Gesamttestplan
 
-- Status: erste Ausbaustufe umgesetzt
-- Automatischer Ablauf aus CPU-, RAM-, NVMe-Gesundheits-, Netzwerk- und optional
-  NVIDIA-/DCGM-Prüfungen – umgesetzt
-- Dauer und Ein-/Ausschluss jedes Teiltests konfigurierbar – umgesetzt
-- Abbruch beim ersten fehlgeschlagenen Teiltest oder manueller Abbruch – umgesetzt
-- Zusammenfassender Klartext- und HTML-Report mit Ergebnissen, Details und
-  Zeitstempeln – umgesetzt
-- Begleitmonitoring mit Temperatur-/ECC-Sicherheitsabbruch und CSV-/Text-/HTML-Bericht – umgesetzt in 0.2.26
-- Vollständige NVMe-Lesetests sowie 1–10.000 Wiederholungen des gesamten Plans mit
-  kompaktem Bericht und fortlaufender CSV – umgesetzt in 0.2.29.
-- OpenDCDiag, GPU-Lasttest (Vulkan/CUDA), ProLiant-/RAID-Momentaufnahme – umgesetzt
-  in 0.2.5x–0.2.61.
-- Vollständige SATA/SAS/USB-Lesetests (`/dev/sd*`, nur lesend) mit
-  SMART-Vergleich vorher/nachher – umgesetzt in 0.2.61.
-- Zeitgesteuerte Endzeit: nach Erreichen wird kein weiterer Teiltest gestartet –
-  umgesetzt in 0.2.61.
-- ZFS-Scrub aller importierten Pools als optionaler Schritt – umgesetzt in 0.2.61.
-- Noch offen: SMART hinter RAID-Controllern (`smartctl -d cciss,N`/`megaraid,N`)
-  für den Vorher/Nachher-Vergleich.
+- SMART hinter RAID-Controllern (`smartctl -d cciss,N`/`megaraid,N`) für den
+  Vorher/Nachher-Vergleich.
 
-### Langzeitmonitoring
+### Dateisystemprüfung
 
-- Status: erste Ausbaustufe umgesetzt in 0.2.26 (Temperaturen, Lüfter, ECC/EDAC,
-  ext4-Fehlerzähler, NVIDIA-Messwerte, neue Kernelmeldungen, CSV und kompakte
-  Text-/HTML-Berichte; im Gesamttestplan integriert).
-- Individuelle, gespeicherte Temperaturgrenzen sowie kompakte Live-/HTML-Diagramme
-  mit Min/Max/Mittelwert und Messlücken – umgesetzt in 0.2.30, auch im Begleitmonitoring.
-- Noch offen: zeitlicher SMART-Verlauf, Grenzwerte für weitere Messgrößen und
-  zusätzliche Diagrammauswahl im HTML-Bericht.
-
-### Dateisystemprüfung und Reparatur
-
-- Offline-Prüfung ext2/ext3/ext4 und separat bestätigte konservative Reparatur – umgesetzt in 0.2.26.
-- Eingehängte Dateisysteme bleiben gesperrt; Live-USB-Hinweise und erneute
-  Geräte-/Mount-Prüfung vor dem privilegierten Start – umgesetzt.
-- XFS (`xfs_repair -n`/`xfs_repair`), vfat, squashfs, VMFS – umgesetzt in 0.2.5x.
-- Btrfs: lesende Prüfung (`btrfs check --readonly --check-data-csum`) und
-  Fehlerzähler eingehängter Dateisysteme (`btrfs device stats`); bewusst keine
-  automatische Reparatur – umgesetzt in 0.2.61.
-- Reparaturfunktion in 0.2.61 bewusst entfernt (nur lesende Prüfung); Reparaturwerkzeuge
-  liegen dem Live-ISO bei.
-- NTFS: lesende Basisprüfung mit `ntfsfix -n` (Bootsektor, MFT, Dirty-Flag) – umgesetzt in 0.2.61;
-  eine vollständige Strukturprüfung existiert unter Linux nicht (Windows `chkdsk`).
-- exFAT: lesende Strukturprüfung mit `fsck.exfat -n` – umgesetzt in 0.2.61.
-- ZFS-Poolstatus, geführter Scrub mit Fortschritt/Stop und Text-/HTML-/CSV-Protokoll – umgesetzt in 0.2.28.
-- ZFS-Scrub im Gesamttestplan – umgesetzt in 0.2.61.
-- Noch offen: echte ZFS-Pool-Validierung auf Ubuntu 24.04/26.04.
+- Echte ZFS-Pool-Validierung auf Ubuntu 24.04/26.04.
 
 ## Nachrangig / bei passendem System sinnvoll
 
-### Netzteil- und Server-Hardware-Test
+### Netzteil- und Server-Hardware
 
-- HPE iLO/Redfish, ProLiant-Health und Smart-Array-Prüfungen immer ausdrücklich
-  als HPE-spezifisch markieren; fehlende HPE-Hardware niemals als PC-Fehler werten.
-
-- Prüfung verfügbarer Netzteil-, Spannungs- und Redundanzdaten über
-  IPMI, `lm-sensors` oder HPE-Werkzeuge
-- Speziell für HPE ProLiant: Erkennung von redundanten Netzteilen,
-  Health-Status und Warnungen, sofern das System die Werte bereitstellt
-- Kein künstlicher Lasttest des Netzteils; stattdessen Bewertung der
-  Sensorwerte während CPU-, GPU- und Datenträgerlast
+- HPE iLO/Redfish, ProLiant-Health und Smart-Array-Prüfungen immer ausdrücklich als
+  HPE-spezifisch markieren; fehlende HPE-Hardware niemals als PC-Fehler werten.
+- Netzteil-/Redundanzdaten über `lm-sensors` oder HPE-Werkzeuge ergänzen (DMI und
+  IPMI sind umgesetzt); Bewertung der Sensorwerte während CPU-, GPU- und
+  Datenträgerlast – kein künstlicher Netzteil-Lasttest.
+- Netzteile/Redundanz am ProLiant mit 2 und 4 Netzteilen real verifizieren
+  (DMI Typ 39, IPMI 0x08/0x09, Netzkabel ziehen → „Redundancy Lost“).
+- mstlink-Parser gegen echte Mellanox-Ausgabe verifizieren.
 
 ### USB-Test
 
-- Übersicht erkannter USB-Geräte, Geschwindigkeiten und Hub-Topologie im
-  System-Tab – umgesetzt in 0.2.61.
-- Vollständiger Lesetest von USB-Datenträgern im Gesamttestplan – umgesetzt in 0.2.61
-  (gemeinsam mit SATA/SAS).
-- Nicht-destruktiver Schreibtest auf ausdrücklich ausgewählten Testmedien
-- Optionaler Test von Kamera, Audio und weiteren angeschlossenen Geräten
+- Nicht-destruktiver Schreibtest auf ausdrücklich ausgewählten Testmedien.
+- Optionaler Test von Kamera, Audio und weiteren angeschlossenen Geräten.
 
 ## Grundsätze
 
@@ -148,4 +68,4 @@ entspricht der derzeitigen Priorität.
 - Optionale Werkzeuge werden erkannt und mit einer verständlichen
   Installationshilfe angezeigt, statt zwingende Abhängigkeiten zu werden.
 - Alle neuen Tests liefern strukturierte Ergebnisse für den vorhandenen
-  Systemreport und den geplanten Gesamttestplan.
+  Systemreport und den Gesamttestplan.

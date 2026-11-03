@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from hardwaretest.core import privilege
+from hardwaretest.core import ipmi, privilege
 from hardwaretest.core import device_inventory as dev
 from hardwaretest.core import hardware_inventory as inv
 from hardwaretest.ui.i18n import language_manager
@@ -31,6 +31,7 @@ def _item(text) -> QTableWidgetItem:
 
 
 _LINK_COLORS = {dev.LINK_WIDTH: QColor("#c62828"), dev.LINK_SPEED: QColor("#ef6c00")}
+_SEVERITY_COLORS = {"error": QColor("#c62828"), "warn": QColor("#ef6c00"), "ok": QColor("#2e7d32")}
 
 
 def _fill(table: QTableWidget, headers: list[str], rows: list[list], colors: dict | None = None,
@@ -78,6 +79,8 @@ class SystemPanel(QWidget):
         self._memory_error = ""
         self._process: QProcess | None = None
         self._devices = dev.DeviceInventory()
+        self._power_sensors: list[ipmi.Sensor] | None = None
+        self._power_sensors_error = ""
 
         outer = QVBoxLayout(self)
         buttons = QHBoxLayout()
@@ -155,6 +158,14 @@ class SystemPanel(QWidget):
         self.tb_note = QLabel()
         self.tb_note.setWordWrap(True)
         self.tb_group.layout().insertWidget(0, self.tb_note)
+        self.fc_group, self.fc_table = self._add_table_group(layout)
+        self.fc_note = QLabel()
+        self.fc_note.setWordWrap(True)
+        self.fc_group.layout().insertWidget(0, self.fc_note)
+        self.power_group, self.power_table = self._add_table_group(layout)
+        self.power_note = QLabel()
+        self.power_note.setWordWrap(True)
+        self.power_group.layout().insertWidget(0, self.power_note)
         layout.addStretch(1)
 
         self._clock_timer = QTimer(self)
@@ -179,7 +190,18 @@ class SystemPanel(QWidget):
         self._caches = inv.read_caches()
         self._board = inv.read_board_info()
         self._memory, self._memory_error = inv.read_memory_inventory()
+        self._read_power_sensors()
         self.retranslate()
+
+    def _read_power_sensors(self) -> None:
+        """IPMI-Netzteilsensoren ohne Passwortabfrage (root bzw. sudo -n, z. B. Live-ISO)."""
+        self._power_sensors, self._power_sensors_error = None, ""
+        if not ipmi.ipmi_available():
+            return
+        run = ipmi._noninteractive_runner()
+        if run is None:
+            return
+        self._power_sensors, self._power_sensors_error = ipmi.read_power_sensors(run)
 
     def _read_with_password(self) -> None:
         if privilege.tool() is None or self._process is not None:
@@ -212,14 +234,30 @@ class SystemPanel(QWidget):
         process.deleteLater()
         if code == 0 and output:
             self._memory, self._memory_error = inv.parse_dmidecode(output), ""
+            if self._power_sensors is None:
+                # sudo-Zeitstempel ist nach dem Passwortdialog meist noch gültig.
+                self._read_power_sensors()
         else:
             self._memory_error = error or fallback_error or _t("Abgebrochen", "Cancelled")
         self.retranslate()
 
     def text_lines(self) -> list[str]:
-        return inv.inventory_lines(
-            language_manager.language, self._packages, self._caches, self._board, self._memory, self._memory_error,
-        ) + dev.device_lines(language_manager.language, self._devices)
+        language = language_manager.language
+        lines = inv.inventory_lines(
+            language, self._packages, self._caches, self._board, self._memory, self._memory_error,
+        ) + dev.device_lines(language, self._devices)
+        if self._power_sensors:
+            redundancy = ipmi.power_redundancy(self._power_sensors)
+            lines.append(_t("Netzteile (IPMI): ", "Power supplies (IPMI): ") + "; ".join(
+                f"{sensor.name}: {sensor.reading}" for sensor in self._power_sensors)
+                + (f" – {self._redundancy_text(redundancy)}" if redundancy else ""))
+        return lines
+
+    @staticmethod
+    def _redundancy_text(redundancy: str | None) -> str:
+        return {"redundant": _t("Redundanz: vollständig", "redundancy: full"),
+                "degraded": _t("Redundanz: eingeschränkt", "redundancy: degraded"),
+                "lost": _t("Redundanz: verloren", "redundancy: lost")}.get(redundancy or "", "")
 
     def _copy(self) -> None:
         QGuiApplication.clipboard().setText("\n".join(self.text_lines()))
@@ -265,7 +303,7 @@ class SystemPanel(QWidget):
     # ------------------------------------------------------------------ Anzeige
     def retranslate(self, *_args) -> None:
         self.refresh_button.setText(_t("Neu einlesen", "Refresh"))
-        self.password_button.setText(_t("Speichermodule mit Passwort auslesen", "Read memory modules with password"))
+        self.password_button.setText(_t("Speichermodule und Netzteile mit Passwort auslesen", "Read memory modules and power supplies with password"))
         self.copy_button.setText(_t("In Zwischenablage kopieren", "Copy to clipboard"))
         self.password_button.setVisible(
             self._memory is None and not privilege.is_root() and privilege.tool() is not None
@@ -283,6 +321,8 @@ class SystemPanel(QWidget):
         self.disk_group.setTitle(_t("Datenträger", "Disks"))
         self.usb_group.setTitle("USB")
         self.tb_group.setTitle("Thunderbolt / USB4")
+        self.fc_group.setTitle(_t("Fibre-Channel-HBAs", "Fibre Channel HBAs"))
+        self.power_group.setTitle(_t("Netzteile / Redundanz", "Power supplies / redundancy"))
         self._show_cpu()
         self._show_caches()
         self._show_board()
@@ -451,6 +491,87 @@ class SystemPanel(QWidget):
                                "USB", _t("Treiber", "Driver"), _t("Seriennummer / Controller", "Serial / controller"),
                                "Ports"], rows, colors)
         self._show_thunderbolt(language, devices)
+        self._show_fc(language, devices)
+        self._show_power(language)
+
+    def _show_fc(self, language: str, devices: dev.DeviceInventory) -> None:
+        headers = ["Host", _t("Modell", "Model"), "WWPN", _t("Zustand", "State"), _t("Geschwindigkeit", "Speed"),
+                   _t("Topologie", "Topology"), "Fabric", _t("Remote-Ports", "Remote ports"), "Firmware",
+                   _t("Treiber", "Driver"), "PCI", _t("Fehlerzähler", "Error counters")]
+        if not devices.fc_hosts:
+            self.fc_note.setText(_t("Kein Fibre-Channel-HBA gefunden (/sys/class/fc_host).",
+                                    "No Fibre Channel HBA found (/sys/class/fc_host)."))
+            _fill(self.fc_table, headers, [])
+            return
+        self.fc_note.setText(_t(
+            "Aus /sys/class/fc_host. Rot: Port nicht online (Kabel, SFP, Switch-Port, Zoning prüfen). Orange: "
+            "Fehlerzähler > 0 seit Treiberstart (link_failure, loss_of_sync/signal, invalid_crc, error_frames) – "
+            "meist Kabel/SFP; wächst der Zähler unter Last weiter, Komponente tauschen. Durchsatz über eine LUN "
+            "lässt sich im Tab „Datenträger“ messen.",
+            "From /sys/class/fc_host. Red: port not online (check cable, SFP, switch port, zoning). Orange: error "
+            "counters > 0 since driver start (link_failure, loss_of_sync/signal, invalid_crc, error_frames) – "
+            "usually cable/SFP; if counters keep growing under load, replace the component. Throughput via a LUN "
+            "can be measured in the “Disks” tab.",
+        ))
+        rows, colors = [], {}
+        for index, host in enumerate(devices.fc_hosts):
+            rows.append([host.host, host.model or host.model_description, dev.fc_wwn_text(host.port_name),
+                         dev.fc_state_text(language, host), dev.fc_speed_text(language, host), host.port_type,
+                         dev.fc_wwn_text(host.fabric_name) if host.online else "", str(host.remote_ports),
+                         host.firmware, " ".join(filter(None, (host.driver, host.driver_version))), host.pci,
+                         dev.fc_errors_text(language, host)])
+            if not host.online:
+                colors[(index, 3)] = _SEVERITY_COLORS["error"]
+            elif host.error_counters:
+                colors[(index, 11)] = _SEVERITY_COLORS["warn"]
+        _fill(self.fc_table, headers, rows, colors)
+
+    def _show_power(self, language: str) -> None:
+        headers = [_t("Quelle", "Source"), _t("Netzteil", "Power supply"), _t("Hersteller / Modell", "Vendor / model"),
+                   _t("Leistung", "Power"), "Status", _t("Seriennummer", "Serial number")]
+        rows, colors, notes = [], {}, []
+        supplies = self._memory.power_supplies if self._memory else []
+        for index, psu in enumerate(supplies, start=1):
+            rows.append(["DMI", psu.location or psu.name or _t(f"Netzteil {index}", f"Power supply {index}"),
+                         " ".join(filter(None, (psu.manufacturer, psu.model))),
+                         psu.max_power, inv.power_status_text(language, psu)
+                         + (_t(" · Hot-Plug", " · hot-plug") if psu.hot_replaceable else ""), psu.serial])
+            color = _SEVERITY_COLORS.get(psu.severity)
+            if color is not None:
+                colors[(len(rows) - 1, 4)] = color
+        if supplies:
+            notes.append(_t("DMI (dmidecode Typ 39): ", "DMI (dmidecode type 39): ") + inv.power_summary(language, supplies))
+        elif self._memory is None:
+            notes.append(_t("Netzteildaten aus DMI benötigen Root-Rechte (dmidecode) – siehe Schaltfläche oben.",
+                            "Power supply data from DMI needs root (dmidecode) – see button above."))
+        else:
+            notes.append(_t("DMI meldet keine Netzteile (Typ 39 fehlt – bei Desktop-Mainboards üblich).",
+                            "DMI reports no power supplies (type 39 missing – common on desktop boards)."))
+        if self._power_sensors:
+            for sensor in self._power_sensors:
+                rows.append(["IPMI", sensor.name, sensor.entity, "", sensor.reading, ""])
+                color = _SEVERITY_COLORS.get(sensor.severity)
+                if color is not None:
+                    colors[(len(rows) - 1, 4)] = color
+            redundancy = ipmi.power_redundancy(self._power_sensors)
+            if redundancy:
+                notes.append("IPMI: " + self._redundancy_text(redundancy))
+        elif self._power_sensors_error:
+            notes.append(_t("IPMI-Sensoren nicht lesbar: ", "IPMI sensors unavailable: ")
+                         + self._power_sensors_error.splitlines()[0][:120])
+        elif ipmi.ipmi_available() and not privilege.is_root():
+            notes.append(_t("IPMI-Netzteilsensoren benötigen Root-Rechte (ipmitool sdr type 0x08/0x09).",
+                            "IPMI power supply sensors need root (ipmitool sdr type 0x08/0x09)."))
+        notes.append(_t(
+            "Redundanz-Test: Bei zwei bestückten, fehlerfreien Netzteilen ein Netzkabel ziehen – der Server muss "
+            "weiterlaufen, IPMI meldet „Redundancy Lost“/„Power Supply AC lost“; nach dem Einstecken muss „Fully "
+            "Redundant“ zurückkehren (Ereignisse im ProLiant-Tab unter IML/SEL).",
+            "Redundancy test: with two populated, healthy supplies unplug one power cord – the server must keep "
+            "running and IPMI reports “Redundancy Lost”/“Power Supply AC lost”; after reconnecting, “Fully "
+            "Redundant” must return (events in the ProLiant tab under IML/SEL).",
+        ))
+        self.power_note.setText("\n".join(notes))
+        _fill(self.power_table, headers, rows, colors)
 
     def _show_thunderbolt(self, language: str, devices: dev.DeviceInventory) -> None:
         if not devices.thunderbolt:

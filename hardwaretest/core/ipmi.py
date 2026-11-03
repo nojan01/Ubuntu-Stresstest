@@ -275,6 +275,11 @@ def is_proliant() -> bool:
                 and _HPE_ILO_MODELS.search(product))
 
 
+def is_synergy() -> bool:
+    """HPE Synergy Compute Module: GPUs sitzen auf dem Grafikmodul hinter einem PCIe-Switch."""
+    return "synergy" in _read("/sys/class/dmi/id/product_name").lower()
+
+
 def system_identity() -> dict[str, str]:
     base = "/sys/class/dmi/id/"
     return {key: _read(base + name) for key, name in (
@@ -348,6 +353,44 @@ def parse_sensors(text: str) -> list[Sensor]:
 def read_sensors(run: Runner) -> tuple[Optional[list[Sensor]], str]:
     text, error = _run_text(run, ["ipmitool", "sdr", "elist"], 120)
     return (parse_sensors(text) if text is not None else None), error
+
+
+# Sensortypen laut IPMI-Spezifikation: 0x08 Power Supply, 0x09 Power Unit (Redundanz).
+POWER_SENSOR_TYPES = ("0x08", "0x09")
+
+
+def read_power_sensors(run: Runner) -> tuple[Optional[list[Sensor]], str]:
+    """Netzteil- und Redundanzsensoren (``ipmitool sdr type 0x08`` / ``0x09``).
+
+    Zeilen wie ``Power Supply 1 | 9Eh | ok | 10.1 | Presence detected`` oder
+    ``Power Supplies | A4h | ok | 21.1 | Fully Redundant``.
+    """
+    sensors: list[Sensor] = []
+    errors: list[str] = []
+    for code in POWER_SENSOR_TYPES:
+        text, error = _run_text(run, ["ipmitool", "sdr", "type", code], 60)
+        if text is None:
+            errors.append(error)
+            continue
+        for sensor in parse_sensors(text):
+            if sensor.name not in {s.name for s in sensors}:
+                sensors.append(sensor)
+    if not sensors and len(errors) == len(POWER_SENSOR_TYPES):
+        return None, errors[0]
+    return sensors, ""
+
+
+def power_redundancy(sensors: list[Sensor]) -> Optional[str]:
+    """Redundanzaussage aus den Power-Unit-Sensoren: ``redundant`` | ``lost`` | ``degraded`` | None."""
+    for sensor in sensors:
+        text = sensor.reading.lower()
+        if "fully redundant" in text or text.strip() == "redundant":
+            return "redundant"
+        if "redundancy lost" in text or "non-redundant" in text or "insufficient" in text:
+            return "lost"
+        if "redundancy degraded" in text:
+            return "degraded"
+    return None
 
 
 @dataclass

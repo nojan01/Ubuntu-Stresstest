@@ -564,6 +564,23 @@ ausgewählt, bindet Hardwaretest Ping und iperf3 gezielt an diese Schnittstelle.
       oder höherer Linkgeschwindigkeit wählen. „Netzwerkadapter aktualisieren“ nach dem
       Umstecken von Kabeln. <b>Sinnvoll</b> für Linkstabilität, Kabel/Transceiver und
       Treiberprobleme; <b>nicht sinnvoll</b> als Messung über Internet oder WLAN.</li>
+  <li><b>ethtool-Selbsttest</b> (<code>ethtool -t</code>, Root-Rechte, nur physische
+      Adapter): Der Treiber prüft Register, EEPROM, Interrupts, Loopback und Link.
+      „Offline (gründlich, trennt den Link kurz)“ testet mehr, unterbricht aber
+      laufende Verbindungen. Nicht jeder Treiber unterstützt den Test („Operation not
+      supported“ ist kein Hardwarefehler). Vor und nach dem Test werden die Fehlerzähler
+      aus <code>ethtool -S</code> (CRC, rx/tx errors, dropped) verglichen; ein Zuwachs
+      wird im Ergebnis als Warnung angezeigt.</li>
+  <li><b>SFP-Modul lesen</b> (<code>ethtool -m</code>): Hersteller, Typ, Seriennummer,
+      Temperatur, Spannung sowie Rx-/Tx-Leistung des Transceivers. Bei RJ45-Adaptern
+      ohne Modul erscheint ein Hinweis.</li>
+  <li><b>Mellanox Link-Diagnose</b> (<code>mstlink</code> aus dem freien Paket
+      <code>mstflint</code>, Root): nur sichtbar bei Mellanox/NVIDIA-Adaptern (mlx4/mlx5),
+      wenn <code>mstflint</code> installiert ist. Zeigt Link-Zustand, Geschwindigkeit, FEC,
+      Firmware-Empfehlung („No issue was observed“), physische Fehler/BER, Link-Down-Zähler
+      und die Moduldaten mit Grenzwerten. <span style="color:#ef6c00">Orange</span> bei
+      Fehlerzählern &gt; 0, Werten außerhalb der Modulgrenzen oder einer anderen Empfehlung;
+      <span style="color:#c62828">rot</span> ohne Link. Alle Werte stehen im Log.</li>
 </ul>
 
 <hr>
@@ -594,6 +611,21 @@ DCGM-Diagnosen sind für Rechenzentrums-GPUs vorgesehen; bei Workstation-Karten
 laufen nur Teile, GeForce-Karten werden nicht unterstützt.
 Ist <code>dcgmi</code> nicht installiert, wird der Bereich „DCGM-Diagnose“
 ausgeblendet (ebenso die DCGM-Option im Gesamttest).
+Schlägt bei zwei oder mehr GPUs nur der <b>pcie</b>-Test mit „P2P write verification
+failed: buffer mismatch“ (ID 86/87) fehl, ist das kein GPU-Defekt: Der Peer-to-Peer-Teil
+kopiert direkt zwischen zwei GPUs und scheitert bei aktivem IOMMU/VT-d mit PCIe-ACS oder
+GPUs an verschiedenen CPU-Sockeln. Abhilfe: „PCIe-Peer-to-Peer-Test überspringen“
+ankreuzen (auf HPE Synergy automatisch vorbelegt, auf ProLiant DL aus) (<code>pcie.test_p2p=false</code>).
+Soll P2P wirklich funktionieren, gibt es drei Stellschrauben: (1) Kernelparameter
+<code>iommu=pt</code> (notfalls <code>intel_iommu=off</code> bzw. <code>amd_iommu=off</code>) in <code>GRUB_CMDLINE_LINUX_DEFAULT</code>,
+dann <code>update-grub</code> und Neustart; (2) im BIOS/RBSU unter „Advanced Options“
+PCIe Access Control Services (ACS) bzw. VT-d/IOMMU deaktivieren, sofern kein SR-IOV
+benötigt wird; (3) Treiber-Override <code>options nvidia NVreg_RegistryDwords="ForceP2P=1"</code>
+in <code>/etc/modprobe.d/nvidia.conf</code> (ein vorhandenes <code>ForceP2P=0</code> ersetzen),
+danach Neustart. Auf Synergy-Blades sitzen die GPUs im Grafik-Erweiterungsmodul hinter
+PCIe-Switches und Mezzanine-Karten – dort bleibt das Überspringen meist die praktikable Lösung.
+Der Bericht zeigt bei DCGM 4 neben den
+GPU-Einzelergebnissen auch den Gesamtstatus je Test („Gesamt“), wenn er schlechter ausfällt.
 Nicht unterstützt: Pascal/Volta (GTX 10xx, P4, P40, P100, V100) und älter.
 Die vollständige Installationsanleitung liegt unter
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
@@ -735,7 +767,7 @@ Nenn- und Ist-Takt, Rank, ECC, Spannung, Hersteller, Teile- und Seriennummer).
 <p>
 Die Speichermodule liest <code>dmidecode</code> mit Root-Rechten. Das .deb erlaubt
 Mitgliedern der Gruppe sudo genau <code>dmidecode -t 1 -t 4 -t 16 -t 17</code> ohne Passwort;
-sonst erscheint „Speichermodule mit Passwort auslesen“. „In Zwischenablage kopieren“
+sonst erscheint „Speichermodule und Netzteile mit Passwort auslesen“ (liest alle DMI-Tabellen inkl. Netzteile). „In Zwischenablage kopieren“
 liefert alles als Text, z. B. für Tickets.
 </p>
 <p>
@@ -750,6 +782,25 @@ Treiber, Firmware, MAC, Zustand, Geschwindigkeit), <b>Grafik</b> (Treiber, VRAM,
 <b>Speicher-Controller</b> (SATA/SAS/RAID/NVMe mit Firmware) und <b>Datenträger</b> (Modell,
 Größe, HDD/SSD, Anschluss, Seriennummer, Firmware, Sektorgröße). Diese Angaben stehen auch
 im System-Abschnitt des Gesamttest-Berichts.
+</p>
+<p>
+<b>Fibre-Channel-HBAs</b> (QLogic/Marvell qla2xxx, Emulex/Broadcom lpfc) werden aus
+<code>/sys/class/fc_host</code> gelesen: Port-Zustand, Geschwindigkeit, WWPN/WWNN,
+Fabric, Firmware, Treiber und die Anzahl erreichbarer Remote-Ports. Die Fehlerzähler
+(Link-Failures, Loss of Sync/Signal, CRC, Error Frames) werden angezeigt;
+<span style="color:#c62828">rot</span> bei Zählern &gt; 0 oder „Linkdown“ mit gestecktem
+Kabel. Ohne Fabric lässt sich ein Port mit einem Loopback-Stecker prüfen: Zustand
+„Online“, Zähler bleiben ruhig.
+</p>
+<p>
+<b>Netzteile / Redundanz:</b> Die DMI-Tabelle (Typ 39, braucht Root wie die
+Speichermodule) zeigt Einbauort, Hersteller, Modell, Seriennummer, Maximalleistung,
+Status und ob ein Netzteil bestückt und hot-plug-fähig ist. Auf Servern mit IPMI
+(<code>ipmitool</code>) kommen die Netzteil-Sensoren und der Redundanzstatus hinzu
+(„Fully Redundant“, „Redundancy Lost“, „AC lost“). Redundanz-Test: bei zwei bestückten,
+fehlerfreien Netzteilen ein Netzkabel ziehen – der Server muss weiterlaufen und IPMI
+„Redundancy Lost“ melden; nach dem Einstecken muss „Fully Redundant“ zurückkehren.
+Ein künstlicher Lasttest des Netzteils findet nicht statt.
 </p>
 
 <hr>
@@ -1349,6 +1400,22 @@ Linux chooses the route. Selecting an adapter binds ping and iperf3 to that inte
       higher link speed. "Refresh network adapters" after re-plugging cables.
       <b>Useful</b> for link stability, cables/transceivers and driver problems;
       <b>not useful</b> as a measurement over the Internet or Wi-Fi.</li>
+  <li><b>ethtool self-test</b> (<code>ethtool -t</code>, root, physical adapters only):
+      the driver checks registers, EEPROM, interrupts, loopback and link. "Offline
+      (thorough, briefly drops the link)" tests more but interrupts running connections.
+      Not every driver supports the test ("Operation not supported" is not a hardware
+      fault). Error counters from <code>ethtool -S</code> (CRC, rx/tx errors, dropped)
+      are compared before and after the test; an increase is shown as a warning.</li>
+  <li><b>Read SFP module</b> (<code>ethtool -m</code>): vendor, type, serial number,
+      temperature, voltage and Rx/Tx power of the transceiver. RJ45 adapters without a
+      module show a note.</li>
+  <li><b>Mellanox link diagnostics</b> (<code>mstlink</code> from the free
+      <code>mstflint</code> package, root): only shown for Mellanox/NVIDIA adapters
+      (mlx4/mlx5) when <code>mstflint</code> is installed. Shows link state, speed, FEC,
+      firmware recommendation ("No issue was observed"), physical errors/BER, link-down
+      counter and module data with limits. <span style="color:#ef6c00">Orange</span> for
+      error counters &gt; 0, values outside module limits or any other recommendation;
+      <span style="color:#c62828">red</span> without link. All values go to the log.</li>
 </ul>
 
 <hr>
@@ -1379,6 +1446,21 @@ DCGM diagnostics target data-center GPUs; on workstation cards only parts run,
 GeForce cards are not supported.
 If <code>dcgmi</code> is not installed, the “DCGM diagnostics” section is hidden
 (as is the DCGM option in the test plan).
+If, with two or more GPUs, only the <b>pcie</b> test fails with “P2P write verification
+failed: buffer mismatch” (ID 86/87), this is not a GPU defect: the peer-to-peer part copies
+directly between two GPUs and fails with IOMMU/VT-d plus PCIe ACS enabled or GPUs on
+different CPU sockets. Remedy: tick “Skip PCIe peer-to-peer test” (pre-selected on HPE Synergy, off on ProLiant DL)
+(<code>pcie.test_p2p=false</code>). If P2P really has to work, there are three knobs:
+(1) kernel parameter <code>iommu=pt</code> (or, if needed, <code>intel_iommu=off</code>/<code>amd_iommu=off</code>) in
+<code>GRUB_CMDLINE_LINUX_DEFAULT</code>, then <code>update-grub</code> and reboot;
+(2) in the BIOS/RBSU under “Advanced Options” disable PCIe Access Control Services (ACS)
+or VT-d/IOMMU, provided SR-IOV is not required; (3) driver override
+<code>options nvidia NVreg_RegistryDwords="ForceP2P=1"</code> in
+<code>/etc/modprobe.d/nvidia.conf</code> (replace an existing <code>ForceP2P=0</code>), then reboot.
+On Synergy blades the GPUs sit in the graphics expansion module behind PCIe switches and
+mezzanine cards – there, skipping the test usually remains the practical choice.
+With DCGM 4 the report also shows the overall
+status per test (“overall”) when it is worse than the per-GPU results.
 Not supported: Pascal/Volta (GTX 10xx, P4, P40, P100, V100) and older.
 The complete installation guide is available at
 <code>/opt/hardwaretest/docs/NVIDIA_GPU.md</code>.
@@ -1515,7 +1597,7 @@ rated and configured speed, rank, ECC, voltage, manufacturer, part and serial nu
 <p>
 Memory modules are read by <code>dmidecode</code> with root privileges. The .deb lets
 members of the sudo group run exactly <code>dmidecode -t 1 -t 4 -t 16 -t 17</code> without a
-password; otherwise "Read memory modules with password" appears. "Copy to clipboard"
+password; otherwise "Read memory modules and power supplies with password" appears (reads all DMI tables incl. power supplies). "Copy to clipboard"
 returns everything as text, e.g. for tickets.
 </p>
 <p>
@@ -1529,6 +1611,24 @@ Also <b>network</b> (model, driver, firmware, MAC, state, speed), <b>graphics</b
 VRAM, VBIOS), <b>storage controllers</b> (SATA/SAS/RAID/NVMe with firmware) and <b>disks</b>
 (model, size, HDD/SSD, transport, serial number, firmware, sector size). This information is
 also part of the system section of the full test report.
+</p>
+<p>
+<b>Fibre Channel HBAs</b> (QLogic/Marvell qla2xxx, Emulex/Broadcom lpfc) are read from
+<code>/sys/class/fc_host</code>: port state, speed, WWPN/WWNN, fabric, firmware, driver
+and the number of reachable remote ports. Error counters (link failures, loss of
+sync/signal, CRC, error frames) are shown; <span style="color:#c62828">red</span> for
+counters &gt; 0 or "Linkdown" with a cable attached. Without a fabric, a port can be
+checked with a loopback plug: state "Online", counters stay quiet.
+</p>
+<p>
+<b>Power supplies / redundancy:</b> the DMI table (type 39, needs root like the memory
+modules) shows location, manufacturer, model, serial number, maximum power, status and
+whether a supply is populated and hot-pluggable. On servers with IPMI
+(<code>ipmitool</code>) the power supply sensors and the redundancy state are added
+("Fully Redundant", "Redundancy Lost", "AC lost"). Redundancy test: with two populated,
+healthy supplies unplug one power cord – the server must keep running and IPMI must
+report "Redundancy Lost"; after plugging it back in "Fully Redundant" must return.
+There is no artificial load test of the power supply.
 </p>
 
 <hr>

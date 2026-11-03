@@ -73,3 +73,37 @@ def test_runner_streams_and_stops_through_broker(tmp_path):
     runner.stop(aborted=True)
     assert not runner.is_running()
     broker.close()
+
+
+def test_dmidecode_and_ethtool_allowlist(tmp_path):
+    for name in ("dmidecode", "ethtool", "mstlink"):
+        tool = tmp_path / name
+        tool.write_text('#!/bin/sh\necho "$*"\n')
+        tool.chmod(0o755)
+    broker = _broker(tmp_path)
+    broker.start()
+    try:
+        # Mehrere -t-Paare (Systemtab und Gesamttest lesen Typ 1, 4, 16, 17 und 39 in einem Aufruf).
+        assert broker.run(["dmidecode", "-t", "1", "-t", "4", "-t", "16", "-t", "17", "-t", "39"],
+                          timeout=10).stdout.strip() == "-t 1 -t 4 -t 16 -t 17 -t 39"
+        assert broker.run(["dmidecode", "-t", "memory"], timeout=10).returncode == 0
+        for bad in (["dmidecode", "-t"], ["dmidecode", "-t", "0"], ["dmidecode", "--dump-bin", "/tmp/x"],
+                    ["dmidecode", "-t", "1", "-s", "system-serial-number"]):
+            with pytest.raises(RuntimeError):
+                broker.run(bad, timeout=10)
+        assert broker.run(["ethtool", "-t", "eth0"], timeout=10).stdout.strip() == "-t eth0"
+        assert broker.run(["ethtool", "-t", "ens1f0", "online"], timeout=10).returncode == 0
+        assert broker.run(["ethtool", "-m", "ens1f0"], timeout=10).returncode == 0
+        for bad in (["ethtool", "-t"], ["ethtool", "-t", "eth0", "loop"], ["ethtool", "-s", "eth0", "speed", "10"],
+                    ["ethtool", "-t", "-m"], ["ethtool", "-m", "../x"], ["ethtool", "-t", "a" * 16]):
+            with pytest.raises(RuntimeError):
+                broker.run(bad, timeout=10)
+        assert broker.run(["mstlink", "-d", "0000:2e:00.0", "--show_module", "--show_counters"],
+                          timeout=10).stdout.strip() == "-d 0000:2e:00.0 --show_module --show_counters"
+        assert broker.run(["mstlink", "-d", "2e:00.1"], timeout=10).returncode == 0
+        for bad in (["mstlink", "-d"], ["mstlink", "-d", "/dev/mst/x"], ["mstlink", "-d", "2e:00.0", "--port_type", "PCIE"],
+                    ["mstlink", "-d", "2e:00.0", "--set_speed", "25G"], ["mstlink", "-d", "0000:2e:00"]):
+            with pytest.raises(RuntimeError):
+                broker.run(bad, timeout=10)
+    finally:
+        broker.close()

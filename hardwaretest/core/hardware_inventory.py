@@ -20,7 +20,7 @@ CPU_SYSFS = Path("/sys/devices/system/cpu")
 HYBRID_SYSFS = Path("/sys/devices")
 DMI_SYSFS = Path("/sys/class/dmi/id")
 CPUINFO = Path("/proc/cpuinfo")
-DMIDECODE_ARGS = ["-t", "1", "-t", "4", "-t", "16", "-t", "17"]
+DMIDECODE_ARGS = ["-t", "1", "-t", "4", "-t", "16", "-t", "17", "-t", "39"]
 
 # Für Stresstests aussagekräftige Befehlssätze, in Anzeigereihenfolge.
 NOTABLE_FLAGS = (
@@ -159,6 +159,47 @@ class DmiProcessor:
 
 
 @dataclass
+class PowerSupply:
+    """DMI-Typ 39 „System Power Supply“ (dmidecode -t 39)."""
+
+    location: str = ""
+    name: str = ""
+    manufacturer: str = ""
+    model: str = ""
+    serial: str = ""
+    revision: str = ""
+    max_power: str = ""          # „500 W“ oder leer (Unknown)
+    status: str = ""             # „Present, OK“, „Present, Critical“, „Not Present“ …
+    kind: str = ""               # Switching, Linear, Battery …
+    hot_replaceable: Optional[bool] = None
+    plugged: Optional[bool] = None
+    unplugged: Optional[bool] = None
+
+    @property
+    def placeholder(self) -> bool:
+        """BIOS-Platzhalter ohne jede Angabe (Desktop-Boards melden oft Typ 39 mit „Default string“)."""
+        return not any((self.location, self.name, self.manufacturer, self.model, self.serial, self.max_power))
+
+    @property
+    def present(self) -> bool:
+        return "not present" not in self.status.lower() and self.unplugged is not True
+
+    @property
+    def severity(self) -> str:
+        """ok | warn | error | info – für die Ampel im System-Tab."""
+        status = self.status.lower()
+        if not self.present or self.placeholder:
+            return "info"
+        if "critical" in status or "non-recoverable" in status:
+            return "error"
+        if "non-critical" in status or "warn" in status or self.plugged is False or self.unplugged is True:
+            return "warn"
+        if "ok" in status:
+            return "ok"
+        return "info"
+
+
+@dataclass
 class MemoryInventory:
     devices: list[MemoryDevice] = field(default_factory=list)
     processors: list[DmiProcessor] = field(default_factory=list)
@@ -166,6 +207,7 @@ class MemoryInventory:
     max_capacity: list[str] = field(default_factory=list)
     slots_declared: int = 0
     system_serial: str = ""
+    power_supplies: list[PowerSupply] = field(default_factory=list)
 
     @property
     def installed(self) -> list[MemoryDevice]:
@@ -410,6 +452,21 @@ def parse_dmidecode(text: str) -> MemoryInventory:
                 part_number=_clean(values.get("Part Number", "")),
                 serial=_clean(values.get("Serial Number", "")),
             ))
+        elif "\nSystem Power Supply" in "\n" + block:
+            inventory.power_supplies.append(PowerSupply(
+                location=_clean(values.get("Location", "")),
+                name=_clean(values.get("Name", "")),
+                manufacturer=_clean(values.get("Manufacturer", "")),
+                model=_clean(values.get("Model Part Number", "")),
+                serial=_clean(values.get("Serial Number", "")),
+                revision=_clean(values.get("Revision", "")),
+                max_power=_clean(values.get("Max Power Capacity", "")),
+                status=_clean(values.get("Status", "")),
+                kind=_clean(values.get("Type", "")),
+                hot_replaceable=_yes_no(values.get("Hot Replaceable")),
+                plugged=_yes_no(values.get("Plugged")),
+                unplugged=_yes_no(values.get("Unplugged")),
+            ))
         elif "\nMemory Device" in "\n" + block:
             inventory.devices.append(MemoryDevice(
                 locator=values.get("Locator", "?"),
@@ -536,7 +593,54 @@ def inventory_lines(
                 "ECC" if device.ecc else "", device.manufacturer, device.part_number,
                 f"S/N {device.serial}" if device.serial else "",
             ))))
+        if memory.power_supplies:
+            lines.append(_tt(language, "Netzteile (DMI): ", "Power supplies (DMI): ") + power_summary(language, memory.power_supplies))
+            for psu in memory.power_supplies:
+                lines.append("  " + " · ".join(filter(None, (
+                    psu.location or psu.name, psu.name if psu.location and psu.name != psu.location else "",
+                    psu.manufacturer, psu.model, psu.max_power, power_status_text(language, psu),
+                    _tt(language, "Hot-Plug", "hot-plug") if psu.hot_replaceable else "",
+                    f"S/N {psu.serial}" if psu.serial else "",
+                ))))
     return lines
+
+
+def power_status_text(language: str, psu: PowerSupply) -> str:
+    status = psu.status.lower()
+    if psu.placeholder:
+        return _tt(language, "Platzhalter (keine Daten)", "placeholder (no data)")
+    if not psu.present:
+        return _tt(language, "nicht bestückt", "not present")
+    if psu.plugged is False or psu.unplugged is True:
+        return _tt(language, "vorhanden, nicht eingesteckt", "present, unplugged")
+    if "critical" in status or "non-recoverable" in status:
+        return _tt(language, "Fehler", "failed")
+    if "non-critical" in status or "warn" in status:
+        return _tt(language, "Warnung", "warning")
+    if "ok" in status:
+        return "OK"
+    return psu.status or _tt(language, "unbekannt", "unknown")
+
+
+def power_summary(language: str, supplies: list[PowerSupply]) -> str:
+    """„2/2 bestückt, redundant“ bzw. Hinweis auf fehlende Redundanz."""
+    placeholders = [psu for psu in supplies if psu.placeholder]
+    supplies = [psu for psu in supplies if not psu.placeholder]
+    if not supplies:
+        return _tt(language, f"{len(placeholders)} Einträge ohne Daten (BIOS-Platzhalter, keine Aussage möglich)",
+                   f"{len(placeholders)} entries without data (BIOS placeholders, no assessment possible)")
+    present = [psu for psu in supplies if psu.present]
+    healthy = [psu for psu in present if psu.severity == "ok"]
+    text = _tt(language, f"{len(present)}/{len(supplies)} bestückt", f"{len(present)}/{len(supplies)} present")
+    if len(healthy) >= 2:
+        text += _tt(language, ", redundant", ", redundant")
+    elif len(supplies) >= 2:
+        text += _tt(language, ", keine Redundanz", ", no redundancy")
+    if len(healthy) < len(present):
+        text += _tt(language, f", {len(present) - len(healthy)} mit Störung", f", {len(present) - len(healthy)} with fault")
+    if placeholders:
+        text += _tt(language, f", {len(placeholders)} Platzhalter ignoriert", f", {len(placeholders)} placeholders ignored")
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -572,9 +676,17 @@ def _bits(value: str) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
+def _yes_no(value) -> Optional[bool]:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return True if text == "yes" else False if text == "no" else None
+
+
 def _clean(value: str) -> str:
     value = (value or "").strip()
-    if value.lower() in {"not specified", "unknown", "none", "not provided", "no dimm", "undefined"}:
+    if value.lower() in {"not specified", "unknown", "none", "not provided", "no dimm", "undefined",
+                         "default string", "to be filled by o.e.m.", "to be filled by oem"}:
         return ""
     return value
 

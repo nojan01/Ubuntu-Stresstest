@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import shutil
-from typing import Optional
+import subprocess
+from typing import Callable, Optional
 
-from PySide6.QtCore import QSignalBlocker, QTimer, Qt, Signal
+from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -23,10 +25,28 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardwaretest.core import network, privilege
 from hardwaretest.core.network import NetworkAdapter, list_network_adapters
+from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.test_runner import TestParameters, TestResult
 from hardwaretest.tests.network import NetworkRunner, threshold_failures
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
+
+
+class _EthtoolWorker(QThread):
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, action: Callable[[], object], parent: QWidget) -> None:
+        super().__init__(parent)
+        self._action = action
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(self._action())
+        except Exception as exc:  # pragma: no cover - abhängig von Treiber und Rechteerhöhung
+            self.failed.emit(str(exc))
 
 
 class NetworkPanel(QWidget):
@@ -43,6 +63,11 @@ class NetworkPanel(QWidget):
         self._last_failure: Optional[tuple[str, str]] = None
         self._last_completion_warning = ""
         self._last_aborted = False
+        self._stats_before: dict[str, int] = {}
+        self._stats_interface = ""
+        self._counter_deltas: dict[str, int] = {}
+        self._ethtool_worker: Optional[_EthtoolWorker] = None
+        self._root_session: Optional[RootBroker] = None
 
         self.adapter_box = QComboBox()
         self.adapter_box._hardwaretest_skip_tree = True
@@ -55,9 +80,26 @@ class NetworkPanel(QWidget):
         adapter_header = QHBoxLayout()
         adapter_header.addWidget(self.adapter_box, 1)
         adapter_header.addWidget(self.adapter_scan_btn)
+        self.selftest_btn = QPushButton("ethtool-Selbsttest")
+        self.selftest_offline = QCheckBox("Offline-Test (Link wird kurz unterbrochen)")
+        self.module_btn = QPushButton("SFP-Modul auslesen (ethtool -m)")
+        self.mstlink_btn = QPushButton("Mellanox Link-Diagnose (mstlink)")
+        self.mstlink_btn.setVisible(False)
+        self.ethtool_result = QLabel("")
+        self.ethtool_result.setWordWrap(True)
+        self.ethtool_result.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.ethtool_result.setVisible(False)
+        ethtool_row = QHBoxLayout()
+        ethtool_row.addWidget(self.selftest_btn)
+        ethtool_row.addWidget(self.selftest_offline)
+        ethtool_row.addWidget(self.module_btn)
+        ethtool_row.addWidget(self.mstlink_btn)
+        ethtool_row.addStretch(1)
         adapter_layout = QVBoxLayout()
         adapter_layout.addLayout(adapter_header)
         adapter_layout.addWidget(self.adapter_info)
+        adapter_layout.addLayout(ethtool_row)
+        adapter_layout.addWidget(self.ethtool_result)
         adapter_group = QGroupBox("Netzwerkadapter")
         adapter_group.setLayout(adapter_layout)
 
@@ -135,6 +177,9 @@ class NetworkPanel(QWidget):
 
         self.adapter_scan_btn.clicked.connect(self._scan_adapters)
         self.adapter_box.currentIndexChanged.connect(self._show_selected_adapter)
+        self.selftest_btn.clicked.connect(self._start_selftest)
+        self.module_btn.clicked.connect(self._read_module)
+        self.mstlink_btn.clicked.connect(self._run_mstlink)
         self.start_ping.clicked.connect(lambda: self._start("ping"))
         self.start_iperf.clicked.connect(lambda: self._start("iperf3"))
         self.stop_btn.clicked.connect(self._stop)
@@ -182,6 +227,7 @@ class NetworkPanel(QWidget):
 
     def _show_selected_adapter(self) -> None:
         selected = str(self.adapter_box.currentData() or "")
+        self._update_ethtool_buttons()
         adapters = [self._adapters[selected]] if selected in self._adapters else list(self._adapters.values())
         if not adapters:
             self.adapter_info.setPlainText(language_manager.tr("Keine Netzwerkadapter gefunden."))
@@ -305,6 +351,9 @@ class NetworkPanel(QWidget):
             self.runner = None
             return
 
+        self._stats_interface = adapter.name if adapter else ""
+        self._stats_before = network.read_ethtool_stats(self._stats_interface)
+        self._counter_deltas = {}
         self._last_result = None
         self._last_summary = None
         self._last_failure = None
@@ -340,6 +389,16 @@ class NetworkPanel(QWidget):
         self._last_summary = self.runner.summary()
         self._last_failure = self.runner.failure()
         self._last_completion_warning = self.runner.completion_warning
+        if self._stats_before:
+            self._counter_deltas = network.error_counter_deltas(
+                self._stats_before, network.read_ethtool_stats(self._stats_interface))
+            if self._counter_deltas:
+                self.log_signal.emit(language_manager.tr(
+                    "Fehlerzähler ({interface}) während des Tests gewachsen: {counters}",
+                    interface=self._stats_interface, counters=self._counters_text()))
+            else:
+                self.log_signal.emit(language_manager.tr(
+                    "Fehlerzähler ({interface}) unverändert (ethtool -S).", interface=self._stats_interface))
         self._render_result()
         self._set_runtime_text(self.status, "Fertig")
         self.progress.setValue(100)
@@ -446,6 +505,179 @@ class NetworkPanel(QWidget):
         self.stop_btn.setEnabled(running)
         self.adapter_box.setEnabled(not running)
         self.adapter_scan_btn.setEnabled(not running)
+        self._update_ethtool_buttons()
+
+    # ------------------------------------------------------------------ ethtool
+    def _counters_text(self) -> str:
+        return ", ".join(f"{name} +{delta}" for name, delta in self._counter_deltas.items())
+
+    def _append_counter_note(self) -> None:
+        if not self._counter_deltas or self._last_aborted:
+            return
+        note = language_manager.tr("Fehlerzähler gewachsen: {counters}", counters=self._counters_text())
+        self.result.setText(self.result.text() + "\n⚠ " + note)
+        if self._last_result is not None and self._last_result.passed:
+            self.result.setStyleSheet(self._result_style("#ffaa00"))
+
+    def _selected_adapter(self) -> Optional[NetworkAdapter]:
+        return self._adapters.get(str(self.adapter_box.currentData() or ""))
+
+    def _update_ethtool_buttons(self) -> None:
+        adapter = self._selected_adapter()
+        idle = self._ethtool_worker is None and not (self.runner and self.runner.is_running())
+        physical = adapter is not None and adapter.bus_address != "virtual"
+        available = shutil.which("ethtool") is not None and (privilege.is_root() or privilege.tool() is not None)
+        for widget in (self.selftest_btn, self.selftest_offline, self.module_btn):
+            widget.setEnabled(idle and physical and available)
+        tip = ""
+        if shutil.which("ethtool") is None:
+            tip = language_manager.tr("ethtool ist nicht installiert.")
+        elif not physical:
+            tip = language_manager.tr("Bitte einen physischen Adapter auswählen.")
+        for widget in (self.selftest_btn, self.module_btn):
+            widget.setToolTip(tip)
+        # Nur bei Mellanox/NVIDIA-Adaptern und installiertem mstflint sichtbar – sonst kein Hinweis.
+        mellanox = adapter is not None and network.is_mellanox(adapter) and network.mstlink_available()
+        self.mstlink_btn.setVisible(mellanox)
+        self.mstlink_btn.setEnabled(mellanox and idle and (privilege.is_root() or privilege.tool() is not None))
+
+    def _ethtool_run(self, command, **kwargs):
+        if privilege.is_root() or privilege.tool() is None:
+            return subprocess.run(command, **kwargs)
+        if self._root_session is None:
+            self._root_session = RootBroker(reason=language_manager.tr("Netzwerkadapter prüfen (ethtool)"))
+        return self._root_session.run(command, **kwargs)
+
+    def _run_ethtool(self, action: Callable[[], object], on_success: Callable[[object], None]) -> None:
+        if self._ethtool_worker is not None:
+            return
+        worker = _EthtoolWorker(action, self)
+        self._ethtool_worker = worker
+        worker.completed.connect(on_success)
+        worker.failed.connect(self._ethtool_failed)
+        connect_finished(worker, self._ethtool_finished)
+        self._update_ethtool_buttons()
+        worker.start()
+
+    def _ethtool_finished(self, worker=None) -> None:
+        if release_worker(self, "_ethtool_worker", worker):
+            self._set_runtime_text(self.status, "Bereit")
+            self._update_ethtool_buttons()
+
+    def _ethtool_failed(self, message: str) -> None:
+        self._show_ethtool("✗ ethtool fehlgeschlagen: {details}", "#ff5555", details=message)
+
+    def _show_ethtool(self, source: str, color: str, **values: object) -> None:
+        self.ethtool_result.setVisible(True)
+        self.ethtool_result.setStyleSheet(f"color: {color}; font-weight: bold; padding: 2px;")
+        self._set_runtime_text(self.ethtool_result, source, **values)
+
+    def _start_selftest(self) -> None:
+        adapter = self._selected_adapter()
+        if adapter is None:
+            return
+        offline = self.selftest_offline.isChecked()
+        if offline:
+            answer = QMessageBox.question(
+                self,
+                language_manager.tr("Offline-Selbsttest"),
+                language_manager.tr(
+                    "Der Offline-Selbsttest unterbricht die Verbindung von {interface} für einige Sekunden "
+                    "(Register-, EEPROM-, Interrupt- und Loopback-Test). Laufende Verbindungen über diesen "
+                    "Adapter brechen ab. Fortfahren?", interface=adapter.name),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._set_runtime_text(self.status, "ethtool-Selbsttest läuft auf {interface} …", interface=adapter.name)
+        name = adapter.name
+        self._run_ethtool(
+            lambda: (name, network.run_ethtool_selftest(name, offline, run=self._ethtool_run)),
+            self._show_selftest,
+        )
+
+    def _show_selftest(self, value: object) -> None:
+        name, result = value
+        if result.passed is None:
+            self._show_ethtool("? Selbsttest auf {interface} ohne Ergebnis – {details}", "#ffaa00", interface=name,
+                               details=result.error or language_manager.tr("Treiber unterstützt keinen Selbsttest"))
+            return
+        details = "; ".join(f"{test}: {code}" for test, code in result.entries)
+        if result.passed:
+            self._show_ethtool("✓ Selbsttest auf {interface} bestanden ({details})", "#55ff55", interface=name,
+                               details=details or language_manager.tr("keine Einzelergebnisse"))
+        else:
+            failed = "; ".join(f"{test}: {code}" for test, code in result.failed_entries) or details
+            self._show_ethtool("✗ Selbsttest auf {interface} fehlgeschlagen – {details}", "#ff5555", interface=name,
+                               details=failed)
+        for line in (details.split("; ") if details else []):
+            self.log_signal.emit(f"ethtool -t {name}: {line}")
+
+    def _read_module(self) -> None:
+        adapter = self._selected_adapter()
+        if adapter is None:
+            return
+        name = adapter.name
+        self._set_runtime_text(self.status, "SFP-Modul von {interface} wird gelesen …", interface=name)
+        self._run_ethtool(lambda: (name, network.read_ethtool_module(name, run=self._ethtool_run)), self._show_module)
+
+    def _show_module(self, value: object) -> None:
+        name, (values, error) = value
+        if error:
+            self._show_ethtool("✗ SFP-Modul auf {interface} nicht lesbar: {details}", "#ff5555", interface=name, details=error)
+            return
+        if not values:
+            self._show_ethtool("Kein steckbares Modul (SFP/QSFP) auf {interface} oder keine Moduldaten.", "#bbbbbb", interface=name)
+            return
+        alarms = values.pop("Alarms", "")
+        text = " | ".join(f"{key}: {val}" for key, val in values.items())
+        if alarms:
+            self._show_ethtool("⚠ SFP {interface}: {details} | Alarme: {alarms}", "#ffaa00", interface=name, details=text, alarms=alarms)
+        else:
+            self._show_ethtool("SFP {interface}: {details}", "#bbbbbb", interface=name, details=text)
+
+    def _run_mstlink(self) -> None:
+        adapter = self._selected_adapter()
+        if adapter is None or not network.is_mellanox(adapter):
+            return
+        name, bus = adapter.name, adapter.bus_address
+        self._set_runtime_text(self.status, "mstlink-Diagnose läuft auf {interface} …", interface=name)
+        self._run_ethtool(lambda: (name, network.run_mstlink(bus, run=self._ethtool_run)), self._show_mstlink)
+
+    def _show_mstlink(self, value: object) -> None:
+        name, result = value
+        if result.error:
+            self._show_ethtool("✗ mstlink auf {interface} fehlgeschlagen: {details}", "#ff5555",
+                               interface=name, details=result.error)
+            return
+        for section, values in result.sections.items():
+            for key, val in values.items():
+                self.log_signal.emit(f"mstlink {name} [{section}] {key}: {val}")
+        parts = [part for part in (result.physical_state or result.state, result.speed, result.fec) if part]
+        if result.effective_errors is not None:
+            parts.append(f"Errors {result.effective_errors}")
+        if result.raw_ber:
+            parts.append(f"BER {result.raw_ber}")
+        if result.recommendation:
+            parts.append(result.recommendation)
+        module = result.module
+        if module:
+            parts.append("Modul: " + ", ".join(f"{label} {module[key]}" for key, label in network._MSTLINK_MODULE_KEYS
+                                               if key in module))
+        details = " | ".join(parts)
+        if result.severity == "error":
+            self._show_ethtool("✗ mstlink {interface}: kein Link – {details}", "#ff5555", interface=name, details=details)
+        elif result.severity == "warn":
+            self._show_ethtool("⚠ mstlink {interface}: {details} | Auffällig: {warnings}", "#ffaa00", interface=name,
+                               details=details, warnings="; ".join(result.warnings))
+        else:
+            self._show_ethtool("✓ mstlink {interface}: {details}", "#55ff55", interface=name, details=details)
+
+    def close_privileged_session(self) -> None:
+        if self._root_session is not None:
+            self._root_session.close()
+            self._root_session = None
 
     def _retranslate_runtime(self, _language: str | None = None) -> None:
         selected = str(self.adapter_box.currentData() or "")
@@ -465,3 +697,10 @@ class NetworkPanel(QWidget):
             self.status.setText(language_manager.tr(source, **values))
         if self._last_result is not None or self._last_aborted:
             self._render_result()
+            self._append_counter_note()
+        if self.ethtool_result.isVisible():
+            state = getattr(self.ethtool_result, "_hardwaretest_runtime_text", None)
+            if state:
+                source, values = state
+                self.ethtool_result.setText(language_manager.tr(source, **values))
+        self._update_ethtool_buttons()

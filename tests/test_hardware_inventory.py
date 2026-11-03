@@ -228,7 +228,7 @@ def test_read_memory_inventory_uses_runner() -> None:
 
     memory, error = inv.read_memory_inventory(run)
     assert error == "" and memory is not None and len(memory.installed) == 1
-    assert calls == [["dmidecode", "-t", "1", "-t", "4", "-t", "16", "-t", "17"]]
+    assert calls == [["dmidecode", "-t", "1", "-t", "4", "-t", "16", "-t", "17", "-t", "39"]]
 
     def denied(command, **kwargs):
         return subprocess.CompletedProcess(command, 1, "", "sudo: Ein Passwort ist notwendig\n")

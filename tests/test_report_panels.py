@@ -134,3 +134,42 @@ def test_nvme_panel_writes_io_and_self_test_reports(tmp_path, monkeypatch):
     assert "hwtest-nvme-selbsttest-" in panel.report_bar.last_path.name
     html = panel.report_bar.last_path.read_text(encoding="utf-8")
     assert "BESTANDEN" in html
+
+
+def test_gpu_panel_writes_report(tmp_path, monkeypatch):
+    from hardwaretest.ui.widgets import gpu_panel
+
+    panel = gpu_panel.GpuPanel()
+    runner = _FakeRunner(TestResult(passed=True, errors=[], duration_actual=3.0, exit_code=0))
+    runner._ui_log_lines = ["ok"]
+    panel._runner = runner
+    panel._run_params = [("GPU 0", "Testkarte")]
+    panel._finish()
+    assert "hwtest-gpu-vulkan-" in panel.report_bar.last_path.name
+    assert "Testkarte" in panel.report_bar.last_path.read_text(encoding="utf-8")
+
+
+def test_network_panel_writes_report(tmp_path, monkeypatch):
+    from hardwaretest.ui.widgets import network_panel
+
+    monkeypatch.setattr(network_panel, "list_network_adapters", lambda: [])
+    panel = network_panel.NetworkPanel()
+    runner = _FakeRunner(TestResult(passed=True, errors=[], duration_actual=3.0, exit_code=0))
+    runner.summary = lambda: {"latency_avg_ms": 1.5, "latency_min_ms": 1.0, "latency_max_ms": 2.0,
+                              "jitter_ms": 0.2, "packet_loss_percent": 0.0}
+    runner.failure = lambda: None
+    runner.completion_warning = ""
+    panel.runner = runner
+    panel._run_params = [("Zielhost", "10.0.0.9")]
+    panel._finish()
+    assert "hwtest-netzwerk-" in panel.report_bar.last_path.name
+    html = panel.report_bar.last_path.read_text(encoding="utf-8")
+    assert "10.0.0.9" in html and "latency_avg_ms" in html and "BESTANDEN" in html
+
+
+def test_monitoring_session_uses_hwtest_name(tmp_path):
+    from hardwaretest.core.monitoring import MonitorSession
+
+    session = MonitorSession(tmp_path, collect=lambda **_: {}, journal=None)
+    assert session.csv_path.name.startswith("hwtest-monitoring-")
+    session.close()

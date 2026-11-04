@@ -712,6 +712,19 @@ _EN: dict[str, str] = {
     "Modell": "Model",
     "Seriennummer": "Serial number",
     "Firmware": "Firmware",
+    "Speicherbelegung": "Memory usage",
+    "GPU – Vulkan-Lasttest": "GPU – Vulkan stress test",
+    "Netzwerk – Verbindungstest": "Network – connectivity test",
+    "Zielhost": "Target host",
+    "Adapter": "Adapter",
+    "Mindestdurchsatz": "Minimum throughput",
+    "Pakete": "Packets",
+    "Max. Paketverlust": "Max. packet loss",
+    "Max. Latenz": "Max. latency",
+    "Max. Jitter": "Max. jitter",
+    "Kein Ergebnis": "No result",
+    "Messwerte": "Measurements",
+    "Fehlerzähler ({interface})": "Error counters ({interface})",
 }
 
 _EN_PARTS: tuple[tuple[str, str], ...] = (

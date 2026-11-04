@@ -19,7 +19,7 @@ from hardwaretest.core.monitoring import MonitorSession, collect_metrics
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.monitor_history import is_temperature, render_chart
 from hardwaretest.ui.i18n import language_manager
-from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 from hardwaretest.ui.sensor_limits import edit_sensor_limits, load_sensor_limits
 
@@ -125,7 +125,7 @@ class MonitoringPanel(QWidget):
         self.limit.setRange(30, 120)
         self.limit.setValue(100)
         self.limit.setSuffix(" °C")
-        self.directory = QLineEdit(str(Path.home() / "Hardwaretest-Berichte"))
+        self.directory = QLineEdit(str(Path.home() / "Downloads"))
         for widget, de, en in (
             (self.interval, "Messintervall", "Sample interval"),
             (self.duration, "Dauer (0 = bis zum Stoppen)", "Duration (0 = until stopped)"),
@@ -149,11 +149,9 @@ class MonitoringPanel(QWidget):
         buttons = QHBoxLayout()
         self.start_btn = QPushButton()
         self.stop_btn = QPushButton()
-        self.open_btn = QPushButton()
         for button, de, en in (
             (self.start_btn, "Monitoring starten", "Start monitoring"),
             (self.stop_btn, "Stoppen und Protokoll abschließen", "Stop and finish report"),
-            (self.open_btn, "HTML-Protokoll öffnen", "Open HTML report"),
         ):
             self.bind(button, de, en)
             buttons.addWidget(button)
@@ -161,6 +159,8 @@ class MonitoringPanel(QWidget):
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.report_bar = ReportBar()
+        layout.addWidget(self.report_bar)
         self.chart_box = QComboBox()
         self.chart_box.setMinimumContentsLength(25)
         self.chart_box.setToolTip(self.text("Diagramme für maximal 256 Messreihen; alle Messwerte in CSV.",
@@ -180,10 +180,8 @@ class MonitoringPanel(QWidget):
         self.events.setMaximumBlockCount(200)
         layout.addWidget(self.events, 1)
         self.stop_btn.setEnabled(False)
-        self.open_btn.setEnabled(False)
         self.start_btn.clicked.connect(self.start)
         self.stop_btn.clicked.connect(self.stop)
-        self.open_btn.clicked.connect(self.open_report)
         self.choose.clicked.connect(self.choose_directory)
         self.sensor_limits_btn.clicked.connect(lambda: edit_sensor_limits(self, self.limit.value()))
         self.chart_box.currentTextChanged.connect(self.update_chart)
@@ -235,7 +233,7 @@ class MonitoringPanel(QWidget):
         self._failed = self._tripped = False
         self._warning = False
         self._html = None
-        self.open_btn.setEnabled(False)
+        self.report_bar.set_path(None)
         self.events.clear()
         self.metrics.clear()
         self._history = {}
@@ -311,7 +309,7 @@ class MonitoringPanel(QWidget):
         paths, summary = result
         self._html = paths[1]
         self.metrics.setPlainText(summary)
-        self.open_btn.setEnabled(True)
+        self.report_bar.set_path(Path(self._html))
 
     def finished(self, worker=None):
         if not release_worker(self, "_worker", worker):
@@ -328,7 +326,3 @@ class MonitoringPanel(QWidget):
                             + (self.text(" – mit Fehler/Warnung; Protokoll prüfen.", " – error/warning; check report.")
                                if self._failed or self._tripped or self._warning else "")
                             + (f"\n{self._html}" if self._html else ""))
-
-    def open_report(self):
-        if self._html:
-            open_html_report(self._html, self)

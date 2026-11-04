@@ -230,7 +230,9 @@ class MonitorSession:
         self.journal = journal if journal is not None else KernelEvents()
         directory = Path(directory).expanduser()
         directory.mkdir(parents=True, exist_ok=True)
-        self.base = directory / f"monitor-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}"
+        self.base = directory / f"hwtest-monitoring-{datetime.now():%Y%m%d-%H%M%S}"
+        if self.base.with_suffix(".csv").exists():
+            self.base = self.base.with_name(f"{self.base.name}-{uuid.uuid4().hex[:6]}")
         self.started = now()
         self.samples = 0
         self.alert_count = 0

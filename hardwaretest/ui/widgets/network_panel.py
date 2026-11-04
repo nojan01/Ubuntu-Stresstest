@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime
 import subprocess
 from typing import Callable, Optional
 
@@ -27,10 +28,12 @@ from PySide6.QtWidgets import (
 
 from hardwaretest.core import network, privilege
 from hardwaretest.core.network import NetworkAdapter, list_network_adapters
+from hardwaretest.core.report import STATUS_CANCELLED, STATUS_FAILED, STATUS_PASSED, Report
 from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.test_runner import TestParameters, TestResult
 from hardwaretest.tests.network import NetworkRunner, threshold_failures
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
@@ -173,6 +176,8 @@ class NetworkPanel(QWidget):
         layout.addWidget(self.result)
         layout.addWidget(self.progress)
         layout.addWidget(self.status)
+        self.report_bar = ReportBar()
+        layout.addWidget(self.report_bar)
         layout.addWidget(self.log_view, 1)
 
         self.adapter_scan_btn.clicked.connect(self._scan_adapters)
@@ -353,6 +358,18 @@ class NetworkPanel(QWidget):
 
         self._stats_interface = adapter.name if adapter else ""
         self._stats_before = network.read_ethtool_stats(self._stats_interface)
+        self._started_at = datetime.now()
+        tr = language_manager.tr
+        self._run_params = [(tr("Testmodus"), "iperf3" if mode == "iperf3" else "ping"), (tr("Zielhost"), target),
+                            (tr("Adapter"), self._adapter_label(adapter) if adapter else "–")]
+        if mode == "iperf3":
+            self._run_params.append((tr("Dauer (geplant)"), f"{self.iperf_duration.value()} s"))
+            self._run_params.append((tr("Mindestdurchsatz"), f"{self.min_throughput.value():.0f} Mbit/s"))
+        else:
+            self._run_params.append((tr("Pakete"), str(self.ping_count.value())))
+            self._run_params.append((tr("Max. Paketverlust"), f"{self.max_loss.value():.1f} %"))
+            self._run_params.append((tr("Max. Latenz"), f"{self.max_latency.value():.1f} ms"))
+            self._run_params.append((tr("Max. Jitter"), f"{self.max_jitter.value():.1f} ms"))
         self._counter_deltas = {}
         self._last_result = None
         self._last_summary = None
@@ -404,6 +421,34 @@ class NetworkPanel(QWidget):
         self.progress.setValue(100)
         self._set_running(False)
         self.runner = None
+        self._write_report()
+
+    def _write_report(self) -> None:
+        tr = language_manager.tr
+        result = self._last_result
+        text = self.result.text().strip()
+        if self._last_aborted:
+            status = STATUS_CANCELLED
+        elif result is not None and result.passed and not text.startswith("✗"):
+            status = STATUS_PASSED
+        else:
+            status = STATUS_FAILED
+        report = Report(test="netzwerk", title=tr("Netzwerk – Verbindungstest"), status=status,
+                        summary=text.lstrip("✓✗? ") or tr("Kein Ergebnis"),
+                        started=getattr(self, "_started_at", None), finished=datetime.now(),
+                        parameters=getattr(self, "_run_params", []))
+        rows = [(tr("Exit-Code"), str(result.exit_code) if result is not None else "–"),
+                (tr("Tatsächliche Dauer"), f"{float(result.duration_actual or 0):.1f} s" if result is not None else "–")]
+        for key, value in (self._last_summary or {}).items():
+            rows.append((key, f"{value:.2f}" if isinstance(value, float) else str(value)))
+        report.add_section(tr("Messwerte"), "pairs", rows)
+        if self._counter_deltas:
+            report.add_section(tr("Fehlerzähler ({interface})", interface=self._stats_interface), "pairs",
+                               [(k, str(v)) for k, v in self._counter_deltas.items()])
+        if result is not None and result.errors:
+            report.add_section(tr("Fehler"), "list", list(result.errors))
+        report.raw_output = self.log_view.toPlainText()
+        self.report_bar.publish(report)
 
     def _render_result(self) -> None:
         result = self._last_result

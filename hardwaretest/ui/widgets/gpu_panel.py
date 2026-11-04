@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Optional
 
 from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Signal
@@ -26,6 +27,7 @@ from hardwaretest.core.gpu_sysfs import DrmGpu, IntelGpuSampler, list_drm_gpus, 
 from hardwaretest.core.test_runner import TestParameters
 from hardwaretest.tests.vulkan_runner import VulkanStressRunner, list_vulkan_gpus
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.report_bar import ReportBar, runner_report
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 _TYPES = {"integrated": "integriert", "discrete": "dediziert", "virtual": "virtuell", "other": "sonstige"}
@@ -46,6 +48,9 @@ class GpuPanel(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._gpus: list[dict] = []
+        self._started_at: Optional[datetime] = None
+        self._run_params: list[tuple[str, str]] = []
+        self.report_bar = ReportBar()
         self._gpu_checks: dict[int, QCheckBox] = {}
         self._scan_worker: Optional[_ScanWorker] = None
         self._runner: Optional[VulkanStressRunner] = None
@@ -134,6 +139,7 @@ class GpuPanel(QWidget):
         result_layout.addWidget(self.result)
         result_layout.addWidget(self.progress)
         result_layout.addWidget(self.status)
+        result_layout.addWidget(self.report_bar)
         result_layout.addWidget(self.output)
         result_group = QGroupBox("Testergebnis")
         result_group.setLayout(result_layout)
@@ -295,6 +301,12 @@ class GpuPanel(QWidget):
             return
         runner._ui_log_lines = lines
         self._runner = runner
+        self._started_at = datetime.now()
+        tr = language_manager.tr
+        self._run_params = [(tr("Dauer (geplant)"), f"{minutes} min"),
+                            (tr("Speicherbelegung"), f"{self.stress_memory.value()} %")]
+        self._run_params += [(f"GPU {gpu['index']}", self._format_gpu(gpu)) for gpu in self._gpus
+                             if gpu["index"] in indices]
         self.output.clear()
         self._set_text(self.result, "⌛ GPU-Lasttest läuft")
         self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
@@ -367,6 +379,9 @@ class GpuPanel(QWidget):
             self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_text(self.status, "{count} Fehlermeldung(en). Details stehen im Protokoll.",
                            count=len(result.errors) if result is not None else 0)
+        self.report_bar.publish(runner_report("gpu-vulkan", language_manager.tr("GPU – Vulkan-Lasttest"), result,
+                                              started=self._started_at, parameters=self._run_params,
+                                              log_text="\n".join(lines), cancelled=aborted))
 
     # --- Hilfen ----------------------------------------------------------------
     def _set_running(self, running: bool) -> None:

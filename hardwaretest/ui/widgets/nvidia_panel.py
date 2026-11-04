@@ -74,10 +74,12 @@ class _GpuSpecsWorker(QThread):
         self._indices = indices
 
     def run(self) -> None:
+        errors: list[str] = []
         try:
-            self.completed.emit(nvidia_report.collect_gpu_specs(self._indices))
-        except Exception:  # pragma: no cover - driver dependent
-            self.completed.emit([])
+            specs = nvidia_report.collect_gpu_specs(self._indices, errors=errors)
+        except Exception as exc:  # pragma: no cover - driver dependent
+            specs, errors = [], [str(exc)]
+        self.completed.emit((specs, errors))
 
 
 class NvidiaPanel(QWidget):
@@ -92,6 +94,7 @@ class NvidiaPanel(QWidget):
         self._linux_status: Optional[LinuxNvidiaStatus] = None
         self._specs_worker: Optional[_GpuSpecsWorker] = None
         self._diag_specs: Optional[list[dict[str, str]]] = None
+        self._diag_spec_errors: list[str] = []
         self._diag_meta: dict[str, object] = {}
         self._last_html: Optional[Path] = None
 
@@ -684,8 +687,15 @@ class NvidiaPanel(QWidget):
         self._specs_worker = worker
         worker.start()
 
-    def _store_diag_specs(self, specs: object) -> None:
-        self._diag_specs = list(specs) if isinstance(specs, list) else []
+    @staticmethod
+    def _unpack_specs(value: object) -> tuple[list[dict[str, str]], list[str]]:
+        if isinstance(value, tuple) and len(value) == 2:
+            specs, errors = value
+            return (list(specs) if isinstance(specs, list) else []), [str(e) for e in errors]
+        return (list(value) if isinstance(value, list) else []), []
+
+    def _store_diag_specs(self, value: object) -> None:
+        self._diag_specs, self._diag_spec_errors = self._unpack_specs(value)
 
     def _write_diag_html(self, runner, counts: dict[str, int], failed_names: str, aborted: bool,
                          evaluation_error: Optional[str]) -> None:
@@ -697,15 +707,17 @@ class NvidiaPanel(QWidget):
         tr = language_manager.tr
         meta = self._diag_meta or {}
         specs = self._diag_specs
+        spec_errors = list(self._diag_spec_errors)
         if specs is None:
-            specs = nvidia_report.collect_gpu_specs(meta.get("indices"))
+            specs = nvidia_report.collect_gpu_specs(meta.get("indices"), errors=spec_errors)
         verdict = self.result.text()
         color = {"#44ff44": "#2e7d32", "#ff4444": "#c62828", "#ffaa00": "#e65100"}
         verdict_color = next((v for k, v in color.items() if k in self.result.styleSheet()), "#000")
         details = [self.diag_status.text()]
         if evaluation_error:
             details.append(evaluation_error)
-        hints = self._p2p_hint_lines()[1:] if self._p2p_failure(runner, failed_names) else None
+        hints = list(self._p2p_hint_lines()[1:]) if self._p2p_failure(runner, failed_names) else []
+        hints += [tr("Datenblatt: {error}", error=e) for e in spec_errors]
         started = meta.get("started")
         meta_rows = [
             (tr("DCGM-Stufe"), str(meta.get("level", "?"))),
@@ -717,7 +729,7 @@ class NvidiaPanel(QWidget):
             meta_rows.append((tr("Dauer"), f"{int((datetime.now() - started).total_seconds())} s"))
         html = nvidia_report.render_html(
             specs, lang, payload=payload, title_suffix=tr("DCGM-Diagnose Stufe {level}", level=meta.get("level", "?")),
-            verdict=verdict, verdict_color=verdict_color, details=details, hints=hints, meta=meta_rows)
+            verdict=verdict, verdict_color=verdict_color, details=details, hints=hints or None, meta=meta_rows)
         try:
             path = nvidia_report.report_path("dcgm-diagnose")
             path.write_text(html, encoding="utf-8")
@@ -736,12 +748,16 @@ class NvidiaPanel(QWidget):
         self.datasheet_btn.setEnabled(False)
         self._collect_specs(None, self._finish_datasheet)
 
-    def _finish_datasheet(self, specs: object) -> None:
+    def _finish_datasheet(self, value: object) -> None:
         self.datasheet_btn.setEnabled(bool(self._gpus))
         lang = language_manager.language
         tr = language_manager.tr
-        html = nvidia_report.render_html(list(specs) if isinstance(specs, list) else [], lang,
-                                         title_suffix=tr("GPU-Datenblatt"))
+        specs, errors = self._unpack_specs(value)
+        if not specs:
+            self._set_raw_text(self.inventory_status,
+                               tr("GPU-Datenblatt: keine Daten von nvidia-smi – {error}", error="; ".join(errors) or "?"))
+        html = nvidia_report.render_html(specs, lang, title_suffix=tr("GPU-Datenblatt"),
+                                         hints=[tr("Datenblatt: {error}", error=e) for e in errors] or None)
         try:
             path = nvidia_report.report_path("gpu-datenblatt")
             path.write_text(html, encoding="utf-8")
@@ -750,7 +766,8 @@ class NvidiaPanel(QWidget):
             return
         self._last_html = path
         self.html_btn.setEnabled(True)
-        self._set_raw_text(self.inventory_status, tr("GPU-Datenblatt gespeichert: {path}", path=str(path)))
+        if specs:
+            self._set_raw_text(self.inventory_status, tr("GPU-Datenblatt gespeichert: {path}", path=str(path)))
         open_html_report(path, self)
 
     @staticmethod

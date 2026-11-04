@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -91,17 +92,51 @@ def merge_remapped_rows(specs: list[GpuSpecs], text: str) -> None:
             target[name] = _clean(value)
 
 
-def collect_gpu_specs(indices: Optional[list[int]] = None, run: RunCommand = subprocess.run) -> list[GpuSpecs]:
-    """Datenblatt aller (oder der gewählten) GPUs über nvidia-smi; leere Liste ohne Treiber."""
-    fields = ",".join(f for f, _d, _e in SPEC_FIELDS)
-    try:
-        completed = run(["nvidia-smi", f"--query-gpu={fields}", "--format=csv,noheader"],
-                        check=False, capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
+_INVALID_FIELD = re.compile(r'Field "([^"]+)" is not a valid field', re.I)
+
+
+def query_gpu_fields(fields: list[str], run: RunCommand = subprocess.run,
+                     errors: Optional[list[str]] = None) -> tuple[list[str], str]:
+    """``nvidia-smi --query-gpu`` mit Rückzug: Felder, die der Treiber nicht kennt, werden
+    anhand der Fehlermeldung entfernt und die Abfrage wiederholt. Liefert (Felder, CSV)."""
+    remaining = list(fields)
+    for _attempt in range(len(fields)):
+        if not remaining:
+            break
+        try:
+            completed = run(["nvidia-smi", f"--query-gpu={','.join(remaining)}", "--format=csv,noheader"],
+                            check=False, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            if errors is not None:
+                errors.append(f"nvidia-smi: {exc}")
+            return [], ""
+        if completed.returncode == 0:
+            return remaining, completed.stdout
+        message = (completed.stderr or completed.stdout or "").strip()
+        bad = _INVALID_FIELD.findall(message)
+        bad = [b for b in bad if b in remaining]
+        if not bad:
+            if errors is not None:
+                errors.append(f"nvidia-smi (exit {completed.returncode}): {message[:300] or 'keine Ausgabe'}")
+            return [], ""
+        if errors is not None:
+            errors.append("nvidia-smi kennt nicht: " + ", ".join(bad))
+        remaining = [f for f in remaining if f not in bad]
+    return [], ""
+
+
+def collect_gpu_specs(indices: Optional[list[int]] = None, run: RunCommand = subprocess.run,
+                      errors: Optional[list[str]] = None) -> list[GpuSpecs]:
+    """Datenblatt aller (oder der gewählten) GPUs über nvidia-smi; leere Liste ohne Treiber.
+    ``errors`` sammelt Hinweise, warum Felder oder das ganze Datenblatt fehlen."""
+    fields = [f for f, _d, _e in SPEC_FIELDS]
+    used, stdout = query_gpu_fields(fields, run, errors)
+    if not used:
         return []
-    if completed.returncode != 0:
-        return []
-    specs = parse_specs_csv(completed.stdout)
+    specs = parse_specs_csv(stdout, tuple(used))
+    for spec in specs:
+        for name in fields:
+            spec.setdefault(name, "–")
     try:
         remapped = run(["nvidia-smi", f"--query-remapped-rows={','.join(REMAPPED_FIELDS)}", "--format=csv,noheader"],
                        check=False, capture_output=True, text=True, timeout=30)

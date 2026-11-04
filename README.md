@@ -2,6 +2,12 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.68
+
+- **NVIDIA GPU – Datenblatt:** Kennt der Treiber ein Abfragefeld von `nvidia-smi` nicht, wird es
+  weggelassen und die Abfrage wiederholt, statt ein leeres Datenblatt zu liefern. Fehler von
+  `nvidia-smi` erscheinen jetzt in der Statuszeile und als Hinweis im HTML-Bericht.
+
 ### Neu in 0.2.67
 
 - **NVIDIA GPU – HTML-Bericht:** Nach jeder DCGM-Diagnose wird ein HTML-Bericht in

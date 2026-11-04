@@ -348,3 +348,34 @@ def test_report_path_in_downloads(tmp_path):
     path = nvidia_report.report_path("dcgm-diagnose", downloads=tmp_path)
     assert path.parent == tmp_path
     assert path.name.startswith("dcgm-diagnose-") and path.suffix == ".html"
+
+
+def test_collect_gpu_specs_drops_unknown_fields_and_reports_them():
+    calls = []
+
+    def run(cmd, **_kwargs):
+        calls.append(cmd)
+        query = next((c for c in cmd if c.startswith("--query-gpu=")), "")
+        if "inforom.pwr" in query:
+            return subprocess.CompletedProcess(cmd, 2, stdout="", stderr='Field "inforom.pwr" is not a valid field to query.\n')
+        if query:
+            fields = query.split("=", 1)[1].split(",")
+            row = ", ".join("00000000:17:00.0" if f == "pci.bus_id" else ("0" if f == "index" else "x") for f in fields)
+            return subprocess.CompletedProcess(cmd, 0, stdout=row + "\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    errors: list[str] = []
+    specs = nvidia_report.collect_gpu_specs(run=run, errors=errors)
+    assert len(specs) == 1 and specs[0]["index"] == "0"
+    assert specs[0]["inforom.pwr"] == "–" and specs[0]["name"] == "x"
+    assert any("inforom.pwr" in e for e in errors)
+    assert sum(1 for c in calls if any(a.startswith("--query-gpu=") for a in c)) == 2
+
+
+def test_collect_gpu_specs_reports_other_failures():
+    def run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(cmd, 9, stdout="", stderr="NVIDIA-SMI has failed")
+
+    errors: list[str] = []
+    assert nvidia_report.collect_gpu_specs(run=run, errors=errors) == []
+    assert errors and "NVIDIA-SMI has failed" in errors[0]

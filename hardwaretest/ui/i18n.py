@@ -119,6 +119,8 @@ _EN: dict[str, str] = {
     "HTML-Bericht gespeichert: {path}": "HTML report saved: {path}",
     "HTML-Bericht konnte nicht gespeichert werden: {error}": "HTML report could not be saved: {error}",
     "GPU-Datenblatt gespeichert: {path}": "GPU data sheet saved: {path}",
+    "GPU-Datenblatt: keine Daten von nvidia-smi – {error}": "GPU data sheet: no data from nvidia-smi – {error}",
+    "Datenblatt: {error}": "Data sheet: {error}",
     "GPU-Datenblatt": "GPU data sheet",
     "DCGM-Diagnose Stufe {level}": "DCGM diagnostic level {level}",
     "DCGM-Stufe": "DCGM level",

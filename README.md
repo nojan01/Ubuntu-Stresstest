@@ -2,6 +2,16 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.69
+
+- **Einheitliche HTML-Berichte:** Jeder Test-Tab (stress-ng, Prime95, OpenDCDiag,
+  Speichercontroller, RAM-Fülltest, Disk, NVMe, Netzwerk, NVIDIA GPU, GPU Vulkan,
+  Dateisystem, ZFS, Monitoring, ProLiant, Gesamttest) schreibt nach jedem Test automatisch
+  einen Bericht nach `~/Downloads/hwtest-<test>-JJJJMMTT-HHMMSS.html` mit gleichem Aufbau
+  (Status, Zusammenfassung, Parameter, Abschnitte, Hinweise, Rohausgabe) und bietet
+  „Bericht öffnen“. Gesamttest-CSV und Systemreport (`hwtest-systemreport-…`) folgen dem
+  gleichen Namensschema.
+
 ### Neu in 0.2.68
 
 - **NVIDIA GPU – Datenblatt:** Kennt der Treiber ein Abfragefeld von `nvidia-smi` nicht, wird es

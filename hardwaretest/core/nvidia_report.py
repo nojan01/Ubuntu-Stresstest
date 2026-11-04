@@ -10,6 +10,8 @@ from pathlib import Path
 import subprocess
 from typing import Callable, Optional
 
+from hardwaretest.core import report
+
 RunCommand = Callable[..., subprocess.CompletedProcess]
 
 # (nvidia-smi-Feld, deutsche Bezeichnung, englische Bezeichnung)
@@ -233,33 +235,23 @@ def results_table_html(payload: object, language: str = "de") -> str:
 
 def render_html(specs: list[GpuSpecs], language: str = "de", *, payload: object = None, title_suffix: str = "",
                 verdict: str = "", verdict_color: str = "", details: Optional[list[str]] = None,
-                hints: Optional[list[str]] = None, meta: Optional[list[tuple[str, str]]] = None) -> str:
-    """Eigenständige HTML-Seite: Kopf, Datenblatt, (optional) DCGM-Ergebnisse und Hinweise."""
+                hints: Optional[list[str]] = None, meta: Optional[list[tuple[str, str]]] = None,
+                status: str = "", test: str = "", started: Optional[datetime] = None) -> str:
+    """Eigenständige HTML-Seite im gemeinsamen Hardwaretest-Layout: Kopf, Datenblatt, (optional) DCGM-Ergebnisse."""
     de = language != "en"
     title = ("NVIDIA-GPU-Bericht" if de else "NVIDIA GPU report") + (f" – {title_suffix}" if title_suffix else "")
-    style = ("<style>body{font-family:sans-serif;margin:24px}table{border-collapse:collapse;margin:8px 0}"
-             "td,th{border:1px solid #ccc;padding:3px 8px;text-align:left;vertical-align:top}th{background:#f0f0f0}"
-             "h1{font-size:1.5em}h2{font-size:1.2em;margin-top:28px}.meta td{border:none;padding:1px 12px 1px 0}"
-             "pre{background:#f7f7f7;padding:8px;overflow:auto}</style>")
-    meta_rows = [("Erstellt" if de else "Created", datetime.now().strftime("%d.%m.%Y %H:%M:%S" if de else "%Y-%m-%d %H:%M:%S"))]
-    meta_rows += meta or []
-    html = [f'<!doctype html><html lang="{"de" if de else "en"}"><head><meta charset="utf-8"><title>{escape(title)}</title>{style}</head><body>',
-            f"<h1>{escape(title)}</h1>",
-            '<table class="meta">' + "".join(f"<tr><td><b>{escape(k)}</b></td><td>{escape(v)}</td></tr>" for k, v in meta_rows) + "</table>"]
-    if verdict:
-        html.append(f'<p style="font-size:1.3em;font-weight:bold;color:{verdict_color or "#000"}">{escape(verdict)}</p>')
-    if details:
-        html.append("<p>" + "<br>".join(escape(d) for d in details) + "</p>")
-    html.append(f"<h2>{'Technische Daten' if de else 'Technical data'}</h2>" + specs_table_html(specs, language))
+    if not status:
+        status = {"#2e7d32": report.STATUS_PASSED, "#c62828": report.STATUS_FAILED,
+                  "#e65100": report.STATUS_WARNING}.get(verdict_color, report.STATUS_INFO)
+    summary = " · ".join(part for part in [verdict, *(details or [])] if part)
+    doc = report.Report(test=test or ("nvidia-dcgm" if payload is not None else "gpu-datenblatt"), title=title,
+                        status=status, summary=summary, language=language, started=started,
+                        finished=datetime.now() if started else None, parameters=list(meta or []), hints=list(hints or []))
+    doc.add_section("Technische Daten" if de else "Technical data", "html", text=specs_table_html(specs, language))
     if payload is not None:
-        html.append(f"<h2>{'DCGM-Ergebnisse' if de else 'DCGM results'}</h2>" + results_table_html(payload, language))
-    if hints:
-        html.append(f"<h2>{'Hinweise' if de else 'Notes'}</h2><ul>" + "".join(f"<li>{escape(h)}</li>" for h in hints) + "</ul>")
-    html.append("</body></html>")
-    return "".join(html)
+        doc.add_section("DCGM-Ergebnisse" if de else "DCGM results", "html", text=results_table_html(payload, language))
+    return report.render_html(doc)
 
 
-def report_path(kind: str = "dcgm-diagnose", downloads: Optional[Path] = None) -> Path:
-    base = downloads or (Path.home() / "Downloads")
-    base.mkdir(parents=True, exist_ok=True)
-    return base / f"{kind}-{datetime.now():%Y%m%d-%H%M%S}.html"
+def report_path(kind: str = "nvidia-dcgm", downloads: Optional[Path] = None) -> Path:
+    return report.report_path(kind, downloads)

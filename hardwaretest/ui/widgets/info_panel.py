@@ -128,8 +128,8 @@ class InfoPanel(QWidget):
             self.summary.append(f"Konnte {' '.join(command)} nicht starten.")
 
     def _export_info(self) -> None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        target = Path.home() / "Downloads" / f"hardwaretest_system_report_{timestamp}.json"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = Path.home() / "Downloads" / f"hwtest-systemreport-{timestamp}.json"
         self.last_report_path = target
         self._launch_report_script(target)
 
@@ -261,6 +261,7 @@ class InfoPanel(QWidget):
         candidates = []
         if self.last_report_path:
             candidates.append(self.last_report_path)
+        candidates.extend(sorted(downloads.glob("hwtest-systemreport-*.json"), reverse=True))
         candidates.extend(sorted(downloads.glob("hardwaretest_system_report_*.json"), reverse=True))
         for entry in candidates:
             if entry.exists():

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from hardwaretest.core import nvidia_report, privilege
+from hardwaretest.core.report import STATUS_CANCELLED, STATUS_INFO, STATUS_WARNING
 from hardwaretest.core.nvidia import (
     LinuxNvidiaStatus,
     NvidiaGpu,
@@ -41,6 +42,7 @@ from hardwaretest.tests.nvidia_runner import (
 )
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
@@ -170,9 +172,7 @@ class NvidiaPanel(QWidget):
         self.start_btn = QPushButton("DCGM-Diagnose starten")
         self.stop_btn = QPushButton("DCGM-Diagnose stoppen")
         self.stop_btn.setEnabled(False)
-        self.html_btn = QPushButton("HTML-Bericht öffnen")
-        self.html_btn.setToolTip("Der HTML-Bericht (Datenblatt + DCGM-Ergebnisse) wird nach jeder Diagnose in ~/Downloads abgelegt.")
-        self.html_btn.setEnabled(False)
+        self.report_bar = ReportBar()
         self.result = QLabel("")
         self.result.setWordWrap(True)
         self.progress = QProgressBar()
@@ -222,7 +222,6 @@ class NvidiaPanel(QWidget):
         diag_buttons = QHBoxLayout()
         diag_buttons.addWidget(self.start_btn)
         diag_buttons.addWidget(self.stop_btn)
-        diag_buttons.addWidget(self.html_btn)
         diag_layout = QVBoxLayout()
         diag_layout.addLayout(diag_form)
         diag_layout.addLayout(diag_buttons)
@@ -236,6 +235,7 @@ class NvidiaPanel(QWidget):
         result_layout.addWidget(self.result)
         result_layout.addWidget(self.progress)
         result_layout.addWidget(self.diag_status)
+        result_layout.addWidget(self.report_bar)
         result_layout.addWidget(self.output)
         result_group = QGroupBox("Testergebnis")
         result_group.setLayout(result_layout)
@@ -271,7 +271,6 @@ class NvidiaPanel(QWidget):
         self.select_all.toggled.connect(self._select_all)
         self.start_btn.clicked.connect(self._start_diagnostic)
         self.stop_btn.clicked.connect(self._stop_diagnostic)
-        self.html_btn.clicked.connect(self._open_html)
         self.datasheet_btn.clicked.connect(self._export_datasheet)
         self.stress_start_btn.clicked.connect(self._start_stress)
         self.stress_stop_btn.clicked.connect(self._stop_diagnostic)
@@ -725,24 +724,20 @@ class NvidiaPanel(QWidget):
             (tr("PCIe-P2P-Test übersprungen"), tr("ja") if meta.get("skip_p2p") else tr("nein")),
             (tr("Befehl"), str(meta.get("command") or "dcgmi diag")),
         ]
-        if isinstance(started, datetime):
-            meta_rows.append((tr("Dauer"), f"{int((datetime.now() - started).total_seconds())} s"))
         html = nvidia_report.render_html(
             specs, lang, payload=payload, title_suffix=tr("DCGM-Diagnose Stufe {level}", level=meta.get("level", "?")),
-            verdict=verdict, verdict_color=verdict_color, details=details, hints=hints or None, meta=meta_rows)
+            verdict=verdict, verdict_color=verdict_color, details=details, hints=hints or None, meta=meta_rows,
+            status=STATUS_CANCELLED if aborted else "", test="nvidia-dcgm",
+            started=started if isinstance(started, datetime) else None)
         try:
-            path = nvidia_report.report_path("dcgm-diagnose")
+            path = nvidia_report.report_path("nvidia-dcgm")
             path.write_text(html, encoding="utf-8")
         except OSError as exc:
             self.output.append("\n" + tr("HTML-Bericht konnte nicht gespeichert werden: {error}", error=str(exc)))
             return
         self._last_html = path
-        self.html_btn.setEnabled(True)
+        self.report_bar.set_path(path)
         self.output.append("\n" + tr("HTML-Bericht gespeichert: {path}", path=str(path)))
-
-    def _open_html(self) -> None:
-        if self._last_html is not None:
-            open_html_report(self._last_html, self)
 
     def _export_datasheet(self) -> None:
         self.datasheet_btn.setEnabled(False)
@@ -756,7 +751,8 @@ class NvidiaPanel(QWidget):
         if not specs:
             self._set_raw_text(self.inventory_status,
                                tr("GPU-Datenblatt: keine Daten von nvidia-smi – {error}", error="; ".join(errors) or "?"))
-        html = nvidia_report.render_html(specs, lang, title_suffix=tr("GPU-Datenblatt"),
+        html = nvidia_report.render_html(specs, lang, title_suffix=tr("GPU-Datenblatt"), test="gpu-datenblatt",
+                                         status=STATUS_WARNING if errors else STATUS_INFO,
                                          hints=[tr("Datenblatt: {error}", error=e) for e in errors] or None)
         try:
             path = nvidia_report.report_path("gpu-datenblatt")
@@ -765,7 +761,7 @@ class NvidiaPanel(QWidget):
             QMessageBox.warning(self, tr("GPU-Datenblatt"), tr("HTML-Bericht konnte nicht gespeichert werden: {error}", error=str(exc)))
             return
         self._last_html = path
-        self.html_btn.setEnabled(True)
+        self.report_bar.set_path(path)
         if specs:
             self._set_raw_text(self.inventory_status, tr("GPU-Datenblatt gespeichert: {path}", path=str(path)))
         open_html_report(path, self)

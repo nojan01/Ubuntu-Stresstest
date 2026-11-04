@@ -57,6 +57,12 @@ nicht-destruktiv – mit Ausnahme von <b>Disk (Destruktiv)</b>.
 
 <h2>Allgemeine Bedienhinweise</h2>
 <ul>
+  <li><b>Berichte:</b> Jeder Tab schreibt nach jedem Test automatisch einen HTML-Bericht
+      nach <code>~/Downloads/hwtest-&lt;test&gt;-JJJJMMTT-HHMMSS.html</code> (z.&nbsp;B.
+      <code>hwtest-stress-ng-…</code>, <code>hwtest-gesamttest-…</code>). Alle Berichte haben
+      den gleichen Aufbau: Status, Zusammenfassung, Parameter, Abschnitte, Hinweise und
+      Rohausgabe. „Bericht öffnen“ zeigt den zuletzt erzeugten Bericht; der Gesamttest
+      legt zusätzlich eine CSV mit gleichem Namen ab.</li>
   <li><b>Dauer:</b> Stunden / Minuten / Sekunden – die Gesamtlaufzeit des Tests.</li>
   <li><b>CPU-Worker (Threads):</b> Anzahl der Test-Worker auf logischen CPUs,
       nicht die Anzahl physischer Kerne. Beispiel: 32 physische Kerne mit
@@ -728,8 +734,7 @@ Paketverlust, mittlere Latenz, Jitter und minimalen Durchsatz gelten für jeden
 Durchlauf. Mindestdurchsatz 0 = ausgeschaltet, andere Null-Grenzwerte sind strikt.
 Fehlende oder ungültige Messwerte sind kein bestandener Test; ein Grenzwertfehler
 kann auch bei Exit-Code 0 auftreten und bleibt im Gesamtbericht erhalten.</p>
-<p><b>Ablauf und Protokoll:</b> Protokollordner (Standard „Hardwaretest-Berichte“ in
-Dokumente), „Bei erstem Fehler abbrechen“, <b>Durchläufe</b> 1–10.000 des gesamten
+<p><b>Ablauf und Protokoll:</b> Protokollordner (Standard „Downloads“), „Bei erstem Fehler abbrechen“, <b>Durchläufe</b> 1–10.000 des gesamten
 Plans und optional eine <b>Endzeit</b>: Danach startet kein Teiltest mehr, ein
 laufender wird zu Ende geführt – praktisch für Nachtläufe bis zum Arbeitsbeginn.
 <b>Begleitendes Monitoring mit Sicherheitsabbruch</b> (Standard an) zeichnet
@@ -914,6 +919,12 @@ non-destructive – except <b>Disk (Destructive)</b>.
 
 <h2>General Usage Notes</h2>
 <ul>
+  <li><b>Reports:</b> every tab automatically writes an HTML report after each test to
+      <code>~/Downloads/hwtest-&lt;test&gt;-YYYYMMDD-HHMMSS.html</code> (e.g.
+      <code>hwtest-stress-ng-…</code>, <code>hwtest-gesamttest-…</code>). All reports share
+      the same layout: status, summary, parameters, sections, hints and raw output.
+      "Open report" shows the most recent report; the full test additionally writes a
+      CSV with the same name.</li>
   <li><b>Duration:</b> Hours / Minutes / Seconds – total runtime of the test.</li>
   <li><b>CPU workers (threads):</b> Number of test workers on logical CPUs,
       not physical cores. Example: 32 physical cores with hyper-threading
@@ -1571,8 +1582,7 @@ packet loss, average latency, jitter and minimum throughput apply to every round
 Minimum throughput 0 = off, other zero thresholds are strict. Missing or invalid
 measurements are not a passed test; a threshold failure can occur even with exit
 code 0 and is kept in the overall report.</p>
-<p><b>Flow and report:</b> report folder (default "Hardwaretest-Berichte" in
-Documents), "Stop on first failure", <b>Rounds</b> 1–10,000 of the whole plan and an
+<p><b>Flow and report:</b> report folder (default "Downloads"), "Stop on first failure", <b>Rounds</b> 1–10,000 of the whole plan and an
 optional <b>End time</b>: no step starts after it, a running step is completed –
 handy for overnight runs until the start of work.
 <b>Background monitoring with safety stop</b> (default on) records temperatures,
@@ -1804,9 +1814,9 @@ file. The sudo password is asked once.</p>
 <h2>Tab: Long-term monitoring</h2>
 <p><b>Options:</b> sampling interval (default 10 s), duration in hours (0 = until
 stopped), temperature limit (default 100 °C), log folder (default
-"Hardwaretest-Berichte" in the home directory) and the option "Stop running app
+"Downloads") and the option "Stop running app
 stress tests on temperature limit / new uncorrectable ECC errors" (default on).
-"Start monitoring", "Stop and finalize log", "Open HTML log".
+"Start monitoring", "Stop and finalize log", "Open report".
 <b>Useful</b> alongside long individual tests, for overnight/weekend runs and for
 hunting sporadic temperature/ECC problems; <b>not useful</b> without adjusted limits –
 100 °C is too high for SSDs and chipsets.</p>
@@ -1892,9 +1902,9 @@ speichert ihn als Datei. Sudo-Passwort wird einmal abgefragt.</p>
 <h2>Tab: Langzeitmonitoring</h2>
 <p><b>Optionen:</b> Messintervall (Standard 10 s), Dauer in Stunden (0 = bis zum
 Stoppen), Temperaturgrenze (Standard 100 °C), Protokollordner (Standard
-„Hardwaretest-Berichte“ im Home) und die Option „Bei Temperaturgrenze/neuen
+„Downloads“) und die Option „Bei Temperaturgrenze/neuen
 unkorrigierbaren ECC-Fehlern laufende App-Stresstests stoppen“ (Standard an).
-„Monitoring starten“, „Stoppen und Protokoll abschließen“, „HTML-Protokoll öffnen“.
+„Monitoring starten“, „Stoppen und Protokoll abschließen“, „Bericht öffnen“.
 <b>Sinnvoll</b> parallel zu langen Einzeltests, für Nacht-/Wochenendläufe und zur
 Suche nach sporadischen Temperatur-/ECC-Problemen; <b>nicht sinnvoll</b> ohne
 angepasste Grenzen – 100 °C ist für SSDs und Chipsätze zu hoch.</p>

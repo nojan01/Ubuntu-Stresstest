@@ -347,7 +347,7 @@ def test_render_html_without_payload_is_a_datasheet():
 def test_report_path_in_downloads(tmp_path):
     path = nvidia_report.report_path("dcgm-diagnose", downloads=tmp_path)
     assert path.parent == tmp_path
-    assert path.name.startswith("dcgm-diagnose-") and path.suffix == ".html"
+    assert path.name.startswith("hwtest-dcgm-diagnose-") and path.suffix == ".html"
 
 
 def test_collect_gpu_specs_drops_unknown_fields_and_reports_them():

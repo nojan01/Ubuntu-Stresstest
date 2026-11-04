@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import tempfile
 
 from datetime import datetime
 from html import escape
@@ -22,7 +21,8 @@ from hardwaretest.core import hpe_raid, ipmi, privilege
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.system_info import read_edac_info
 from hardwaretest.ui.i18n import language_manager
-from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.core import report as hwreport
+from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 _CSS = {"ok": "color: #2e7d32; font-weight: bold;", "warn": "color: #e65100; font-weight: bold;",
@@ -242,19 +242,18 @@ class ProliantPanel(QWidget):
         buttons = QHBoxLayout()
         self.read_btn = QPushButton()
         self.read_btn.clicked.connect(self.start)
-        self.view_btn = QPushButton()
-        self.view_btn.clicked.connect(self.view_report)
-        self.view_btn.setEnabled(False)
         self.export_btn = QPushButton()
         self.export_btn.clicked.connect(self.export)
         self.export_btn.setEnabled(False)
         buttons.addWidget(self.read_btn, 1)
-        buttons.addWidget(self.view_btn)
         buttons.addWidget(self.export_btn)
         layout.addLayout(buttons)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
+        self.report_bar = ReportBar()
+        layout.addWidget(self.report_bar)
+        self._manual_read = False
 
         self.pages = QTabWidget()
         self.overview = QPlainTextEdit()
@@ -404,8 +403,7 @@ class ProliantPanel(QWidget):
             "voltages) and the complete event log (IPMI SEL), the Integrated Management Log (IML) via iLOrest, plus memory/ECC. On a ProLiant it reads automatically "
             "at startup and every 5 minutes (password asked once)."))
         self.read_btn.setText(_t("Jetzt auslesen", "Read now"))
-        self.view_btn.setText(_t("HTML-Bericht anzeigen", "Show HTML report"))
-        self.export_btn.setText(_t("Als HTML exportieren …", "Export as HTML …"))
+        self.export_btn.setText(_t("Bericht jetzt speichern", "Save report now"))
         self.ssaducli_btn.setText(_t("Diagnosebericht (ssaducli) speichern …", "Save diagnostic report (ssaducli) …"))
         self.ssaducli_btn.setToolTip(_t(
             "Vollständiger HPE-Smart-Storage-Diagnosebericht als ZIP (für den HPE-Support); nur mit ssaducli.",
@@ -459,6 +457,7 @@ class ProliantPanel(QWidget):
             return
         if self.sender() is self.read_btn:
             self._broker_failed = False
+            self._manual_read = True
         self.read_btn.setEnabled(False)
         if self._broker is None and os.geteuid() != 0:
             self.summary.setStyleSheet("")
@@ -479,7 +478,6 @@ class ProliantPanel(QWidget):
             self.summary.setText(data["exception"])
             return
         self._data = data
-        self.view_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         self.overview.setPlainText("\n".join(self._overview_lines(data)))
         sensors = data["sensors"] or []
@@ -488,6 +486,9 @@ class ProliantPanel(QWidget):
         self.show_iml()
         _ecc_state, ecc_summary, ecc_text = data["ecc"]
         self.ecc.setPlainText(ecc_summary + "\n\n" + ecc_text)
+        if self._manual_read:
+            self._manual_read = False
+            self.export()
         self.show_raid(data.get("raid"))
         state, text = self._summary(data)
         self.summary.setStyleSheet(_CSS.get(state, ""))
@@ -725,31 +726,16 @@ class ProliantPanel(QWidget):
         self.iml_count.setText(_t(f"{len(entries)} von {len(data.get('iml') or [])}",
                                   f"{len(entries)} of {len(data.get('iml') or [])}"))
 
-    def view_report(self):
+    def export(self):
         if not self._data:
             return
-        report_dir = Path(tempfile.gettempdir()) / "hardwaretest-proliant"
         try:
-            report_dir.mkdir(parents=True, exist_ok=True)
-            path = report_dir / f"proliant-info-{datetime.now():%Y%m%d-%H%M%S}.html"
+            path = hwreport.report_path("proliant")
             path.write_text(self.html_report(), encoding="utf-8")
         except OSError as exc:
             self.summary.setText(str(exc))
             return
-        open_html_report(str(path), self)
-
-    def export(self):
-        if not self._data:
-            return
-        default = Path.home() / "Downloads" / f"proliant-info-{datetime.now():%Y%m%d-%H%M%S}.html"
-        path, _ = QFileDialog.getSaveFileName(self, _t("Exportieren", "Export"), str(default), "HTML (*.html)")
-        if not path:
-            return
-        try:
-            Path(path).write_text(self.html_report(), encoding="utf-8")
-            self.summary.setText(self.summary.text() + "\n" + _t("Exportiert: ", "Exported: ") + path)
-        except OSError as exc:
-            self.summary.setText(str(exc))
+        self.report_bar.set_path(path)
 
     def html_report(self) -> str:
         data = self._data
@@ -775,25 +761,31 @@ class ProliantPanel(QWidget):
             findings = "".join(f'<li style="color:{color.get(f.severity, "")}">{escape(f.target)}: {escape(f.text(lang))}</li>'
                                for f in raid.findings())
             findings += "".join(f"<li>{escape(error)}</li>" for error in raid.errors)
-            raid_html = (f"<h2>{_t('RAID-Controller', 'RAID controllers')}</h2>"
-                         f"<p><b>{escape(hpe_raid.summary_line(raid, lang))}</b></p><ul>{findings}</ul>"
+            raid_html = (f"<p><b>{escape(hpe_raid.summary_line(raid, lang))}</b></p><ul>{findings}</ul>"
                          f"<table>{head([_t('Controller', 'Controller'), 'Slot', 'Firmware', _t('Seriennummer', 'Serial'), 'Status', 'Cache', _t('Akku/Kondensator', 'Battery/capacitor'), '°C', _t('Bewertung', 'Rating')])}{rows(ctrl_rows)}</table>"
                          f"<h3>{_t('Logische Laufwerke', 'Logical drives')}</h3>"
                          f"<table>{head([_t('Controller', 'Controller'), 'LD', 'RAID', _t('Größe', 'Size'), 'Status', 'Stripe', _t('OS-Gerät', 'OS device'), _t('Bewertung', 'Rating')])}{rows(ld_rows)}</table>"
                          f"<h3>{_t('Physische Laufwerke', 'Physical drives')}</h3>"
                          f"<table>{head([_t('Controller', 'Controller'), _t('Position', 'Position'), _t('Typ', 'Type'), _t('Größe', 'Size'), 'Status', _t('Modell', 'Model'), _t('Seriennummer', 'Serial'), 'Firmware', '°C', _t('Stunden', 'Hours'), 'SSD %', 'Link', _t('Bewertung', 'Rating')])}{rows(pd_rows)}</table>"
                          f"<details><summary>{_t('Rohausgabe', 'Raw output')}</summary><pre>{escape(raid.raw_text())}</pre></details>")
-        style = "<style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:2px 6px}</style>"
-        return ('<!doctype html><meta charset="utf-8"><title>ProLiant Info</title>' + style +
-                f"<h1>ProLiant Info</h1><p><b>{escape(self._summary(data)[1])}</b></p>"
-                f"<h2>{_t('Übersicht', 'Overview')}</h2><pre>{escape(chr(10).join(self._overview_lines(data)))}</pre>"
-                f"<h2>{_t('Sensoren', 'Sensors')}</h2><table><tr><th>Sensor</th><th>{_t('Wert', 'Reading')}</th>"
-                f"<th>Status</th><th>Entity</th><th>{_t('Bewertung', 'Rating')}</th></tr>{rows(sensors)}</table>"
-                f"<h2>{_t('iLO-Ereignisprotokoll', 'iLO event log')}</h2><table><tr><th>#</th><th>{_t('Datum', 'Date')}</th>"
-                f"<th>{_t('Zeit', 'Time')}</th><th>Sensor</th><th>{_t('Ereignis', 'Event')}</th><th></th>"
-                f"<th>{_t('Bewertung', 'Rating')}</th></tr>{rows(events)}</table>"
-                f"<h2>Integrated Management Log (IML)</h2><table><tr><th>#</th><th>{_t('Erstellt', 'Created')}</th>"
-                f"<th>{_t('Aktualisiert', 'Updated')}</th><th>{_t('Anzahl', 'Count')}</th><th>{_t('Kategorie', 'Category')}</th>"
-                f"<th>{_t('Meldung', 'Message')}</th><th>{_t('Bewertung', 'Rating')}</th></tr>{rows(iml)}</table>"
-                f"<h2>{_t('Speicher / ECC', 'Memory / ECC')}</h2><pre>{escape(data['ecc'][1] + chr(10) + chr(10) + data['ecc'][2])}</pre>"
-                + raid_html)
+        state, summary = self._summary(data)
+        status = {"error": hwreport.STATUS_FAILED, "warn": hwreport.STATUS_WARNING,
+                  "ok": hwreport.STATUS_PASSED}.get(state, hwreport.STATUS_INFO)
+        doc = hwreport.Report(test="proliant", title=_t("ProLiant – iLO/IPMI, IML, ECC und RAID", "ProLiant – iLO/IPMI, IML, ECC and RAID"),
+                              status=status, summary=summary, language=language_manager.language,
+                              finished=data.get("time"))
+        doc.add_section(_t("Übersicht", "Overview"), "text", text="\n".join(self._overview_lines(data)))
+        doc.add_section(_t("Sensoren", "Sensors"), "html", text=(
+            f"<table><tr><th>Sensor</th><th>{_t('Wert', 'Reading')}</th><th>Status</th><th>Entity</th>"
+            f"<th>{_t('Bewertung', 'Rating')}</th></tr>{rows(sensors)}</table>"))
+        doc.add_section(_t("iLO-Ereignisprotokoll", "iLO event log"), "html", text=(
+            f"<table><tr><th>#</th><th>{_t('Datum', 'Date')}</th><th>{_t('Zeit', 'Time')}</th><th>Sensor</th>"
+            f"<th>{_t('Ereignis', 'Event')}</th><th></th><th>{_t('Bewertung', 'Rating')}</th></tr>{rows(events)}</table>"))
+        doc.add_section("Integrated Management Log (IML)", "html", text=(
+            f"<table><tr><th>#</th><th>{_t('Erstellt', 'Created')}</th><th>{_t('Aktualisiert', 'Updated')}</th>"
+            f"<th>{_t('Anzahl', 'Count')}</th><th>{_t('Kategorie', 'Category')}</th><th>{_t('Meldung', 'Message')}</th>"
+            f"<th>{_t('Bewertung', 'Rating')}</th></tr>{rows(iml)}</table>"))
+        doc.add_section(_t("Speicher / ECC", "Memory / ECC"), "text", text=data["ecc"][1] + "\n\n" + data["ecc"][2])
+        if raid_html:
+            doc.add_section(_t("RAID-Controller", "RAID controllers"), "html", text=raid_html)
+        return hwreport.render_html(doc)

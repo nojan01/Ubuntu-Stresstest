@@ -72,14 +72,14 @@ def test_html_report_is_self_contained_and_escapes_details():
     assert "<!doctype html>" in report
     assert "@media print" in report
     assert "Modell &lt;kritisch&gt; &amp; Seriennummer" in report
-    assert "class=\"step failed\"" in report
+    assert "FEHLGESCHLAGEN" in report and "CPU-Stresstest" in report
 
 
 def test_report_writer_creates_text_and_html(tmp_path: Path):
     text_path, html_path = write_test_plan_reports(_result(), tmp_path)
     assert text_path.exists() and text_path.suffix == ".txt"
     assert html_path.exists() and html_path.suffix == ".html"
-    assert "proliant-test" in text_path.name
+    assert text_path.name.startswith("hwtest-gesamttest-")
     assert "Gesamtergebnis" in text_path.read_text(encoding="utf-8")
 
 

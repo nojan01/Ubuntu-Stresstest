@@ -3,7 +3,6 @@
 import csv
 from contextlib import suppress
 from datetime import datetime
-from html import escape
 from pathlib import Path
 import uuid
 
@@ -16,7 +15,8 @@ from PySide6.QtWidgets import (
 from hardwaretest.core import privilege
 from hardwaretest.core.zfs import list_pools, read_status, worker_command
 from hardwaretest.ui.i18n import language_manager
-from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.core.report import STATUS_CANCELLED, STATUS_FAILED, STATUS_INFO, STATUS_PASSED, STATUS_WARNING, Report, render_html, report_path
+from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
@@ -46,6 +46,7 @@ class ZfsPanel(QWidget):
         self._html = self._csv_file = self._base = None
         self._initial = ""
         self._samples = self._waits = 0
+        self._started_at = None
         self._report_language = "de"
         self._labels = []
         self._timer = QTimer(self)
@@ -66,7 +67,7 @@ class ZfsPanel(QWidget):
         self.pools.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.pools.setMinimumContentsLength(30)
         layout.addWidget(self.pools)
-        self.directory = QLineEdit(str(Path.home() / "Hardwaretest-Berichte"))
+        self.directory = QLineEdit(str(Path.home() / "Downloads"))
         self.choose = QPushButton()
         self.bind(self.choose, "Protokollordner …", "Report folder …")
         row = QHBoxLayout()
@@ -89,16 +90,15 @@ class ZfsPanel(QWidget):
         layout.addLayout(row)
         row = QHBoxLayout()
         self.detach = QPushButton()
-        self.open_btn = QPushButton()
         self.bind(self.detach, "Nur Überwachung beenden", "Stop monitoring only")
-        self.bind(self.open_btn, "HTML-Protokoll öffnen", "Open HTML report")
         self.detach.setToolTip(self.text("Der Scrub läuft im ZFS-Kernel weiter.", "The scrub continues in the ZFS kernel."))
         row.addWidget(self.detach)
-        row.addWidget(self.open_btn)
         layout.addLayout(row)
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.report_bar = ReportBar()
+        layout.addWidget(self.report_bar)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -114,7 +114,6 @@ class ZfsPanel(QWidget):
         self.detach.clicked.connect(lambda: self.finish_monitoring(self.text(
             "Überwachung beendet. Der Scrub wurde nicht gestoppt; noch kein abschließendes Testergebnis.",
             "Monitoring ended. The scrub was not stopped; no final test result yet.")))
-        self.open_btn.clicked.connect(lambda: open_html_report(self._html, self) if self._html else None)
         self.choose.clicked.connect(self.choose_directory)
         self.pools.currentIndexChanged.connect(self.selection)
         language_manager.language_changed.connect(self.retranslate)
@@ -155,7 +154,6 @@ class ZfsPanel(QWidget):
         # A paused scrub can be resumed explicitly after ending monitoring.
         self.stop_btn.setEnabled(bool(self._last and self._last.scan_result in {"running", "paused"}) and not querying)
         self.detach.setEnabled(self._monitoring and not querying)
-        self.open_btn.setEnabled(self._html is not None)
 
     def selection(self, *_):
         self._last = None
@@ -250,6 +248,7 @@ class ZfsPanel(QWidget):
         self._baseline_scan = self._last.scan if self._last else ""
         self._samples = self._waits = 0
         self._report_language = language_manager.language
+        self._started_at = datetime.now()
         try:
             self._base = self.new_base()
             self._csv_file = self._base.with_suffix(".csv").open("x", encoding="utf-8", newline="")
@@ -353,7 +352,42 @@ class ZfsPanel(QWidget):
     def new_base(self):
         directory = Path(self.directory.text()).expanduser()
         directory.mkdir(parents=True, exist_ok=True)
-        return directory / f"zfs-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}"
+        base = report_path("zfs", directory, suffix="")
+        if base.with_suffix(".txt").exists() or base.with_suffix(".csv").exists():
+            base = base.with_name(f"{base.name}-{uuid.uuid4().hex[:6]}")
+        return base
+
+    def _build_report(self, summary, raw, base):
+        status = STATUS_INFO
+        last = self._last
+        if self._samples:
+            if last is not None and last.scan_result == "cancelled":
+                status = STATUS_CANCELLED
+            elif last is not None and last.scan_result == "passed" and not last.has_errors:
+                status = STATUS_PASSED
+            elif last is not None and last.scan_result == "failed" or (last is not None and last.has_errors):
+                status = STATUS_FAILED
+            else:
+                status = STATUS_WARNING
+        elif last is not None and last.has_errors:
+            status = STATUS_WARNING
+        params = []
+        if self._pool:
+            params += [("Pool", self._pool.name), ("GUID", str(self._pool.guid))]
+        if last is not None:
+            params += [(self.text("Zustand", "State"), str(last.state)),
+                       (self.text("Scan", "Scan"), str(last.scan_result or "–"))]
+        params.append((self.text("Messungen", "Samples"), str(self._samples)))
+        report = Report(test="zfs", title=self.text("ZFS – Scrub/Pool-Status", "ZFS – scrub/pool status"), status=status,
+                        summary=summary, started=getattr(self, "_started_at", None) if self._samples else None,
+                        finished=datetime.now(), parameters=params, language=self._report_language)
+        if self._initial:
+            report.add_section(self.text("Pool-Status zu Beginn", "Pool status at start"), "text",
+                               text=self._initial[:24000], collapsed=True)
+        report.add_section(self.text("Pool-Status (zpool status)", "Pool status (zpool status)"), "text", text=raw[:24000])
+        report.hints.append(self.text("Protokolldateien: ", "Log files: ") + base.with_suffix(".txt").name
+                            + (", " + base.with_suffix(".csv").name if self._samples else ""))
+        return report
 
     def save_report(self, summary, raw, base=None):
         try:
@@ -364,11 +398,9 @@ class ZfsPanel(QWidget):
             report += f"{self._samples} samples\n\n{self._initial[:24000]}\n\n{raw[:24000]}\n"
             base.with_suffix(".txt").write_text(report, encoding="utf-8")
             self._html = base.with_suffix(".html")
-            self._html.write_text('<!doctype html><meta charset="utf-8"><title>Hardwaretest ZFS</title>'
-                                  '<h1>Hardwaretest ZFS</h1><pre style="white-space:pre-wrap;overflow-wrap:anywhere">'
-                                  + escape(report) + '</pre>', encoding="utf-8")
-            self.open_btn.setEnabled(True)
+            self._html.write_text(render_html(self._build_report(summary, raw, base)), encoding="utf-8")
+            self.report_bar.set_path(self._html)
         except OSError as exc:
             self._html = None
-            self.open_btn.setEnabled(False)
+            self.report_bar.set_path(None)
             self.details.appendPlainText(self.text("Protokollfehler: ", "Report error: ") + str(exc))

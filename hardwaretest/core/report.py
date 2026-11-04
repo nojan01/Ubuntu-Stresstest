@@ -22,6 +22,7 @@ STATUS_FAILED = "failed"
 STATUS_WARNING = "warning"
 STATUS_CANCELLED = "cancelled"
 STATUS_INFO = "info"
+STATUS_SKIPPED = "skipped"
 
 _STATUS_LABEL = {
     STATUS_PASSED: ("BESTANDEN", "PASSED"),
@@ -29,6 +30,7 @@ _STATUS_LABEL = {
     STATUS_WARNING: ("WARNUNG", "WARNING"),
     STATUS_CANCELLED: ("ABGEBROCHEN", "CANCELLED"),
     STATUS_INFO: ("INFORMATION", "INFORMATION"),
+    STATUS_SKIPPED: ("ÜBERSPRUNGEN", "SKIPPED"),
 }
 _STATUS_COLOR = {
     STATUS_PASSED: "#2e7d32",
@@ -36,6 +38,7 @@ _STATUS_COLOR = {
     STATUS_WARNING: "#e65100",
     STATUS_CANCELLED: "#6d4c41",
     STATUS_INFO: "#1565c0",
+    STATUS_SKIPPED: "#757575",
 }
 _TEXT = {
     "Erstellt": "Created", "Rechner": "Host", "Kernel": "Kernel", "Programm": "Program",
@@ -164,6 +167,7 @@ table{border-collapse:collapse;margin:8px 0;max-width:100%}td,th{border:1px soli
 thead th,table.pairs th{background:var(--head);font-weight:600}table.pairs th{width:32%}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f6f8;padding:10px;border-radius:6px;font-size:.9em}
 details{margin:18px 0}summary{cursor:pointer;color:var(--accent);font-weight:600;font-size:1.1em}.dim{color:var(--dim)}
+.step{border-left:6px solid var(--step);border-radius:6px;padding:8px 14px;margin:10px 0;background:#fafbfc;break-inside:avoid}.step h3{margin:0 0 4px;font-size:1.05em}.step .meta{margin:0 0 6px}.step p{margin:4px 0}
 ul{margin:6px 0}footer{margin-top:36px;color:var(--dim);font-size:.85em;border-top:1px solid var(--line);padding-top:8px}
 @media print{main{padding:0}details{display:block}details>summary{display:none}pre{font-size:.8em}}
 </style>"""

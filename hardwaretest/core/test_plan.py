@@ -27,6 +27,7 @@ from hardwaretest.core.block_disks import (
     BlockDisk, list_block_disks, read_disk_smart, smart_lines, smart_regressions, smartctl_available,
 )
 from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices, read_nvme_smart
+from hardwaretest.core import report as hwreport
 from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.system_info import read_system_info
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
@@ -254,7 +255,9 @@ class TestPlanExecutor:
         aggregates: dict[str, _StepAggregate] = {}
         directory = self.config.output_dir.expanduser()
         directory.mkdir(parents=True, exist_ok=True)
-        csv_path = directory / f"testplan-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}.csv"
+        csv_path = hwreport.report_path("gesamttest", directory, datetime.fromisoformat(started), suffix=".csv")
+        if csv_path.exists():
+            csv_path = csv_path.with_name(f"{csv_path.stem}-{uuid.uuid4().hex[:6]}.csv")
         handlers = {
             "cpu": self._run_cpu,
             "opendcdiag": self._run_opendcdiag,
@@ -1081,11 +1084,15 @@ def write_test_plan_reports(
 ) -> tuple[Path, Path]:
     output_dir = Path(output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = _filename_timestamp(result.started_at)
-    safe_host = "".join(c if c.isalnum() or c in "-_" else "_" for c in result.hostname)
-    stem = f"hardwaretest-{safe_host}-{timestamp}-{uuid.uuid4().hex[:8]}"
+    if result.csv_report is not None:
+        stem = Path(result.csv_report).stem
+    else:
+        stem = f"hwtest-gesamttest-{_filename_timestamp(result.started_at)}"
     text_path = output_dir / f"{stem}.txt"
     html_path = output_dir / f"{stem}.html"
+    if text_path.exists() or html_path.exists():
+        stem = f"{stem}-{uuid.uuid4().hex[:6]}"
+        text_path, html_path = output_dir / f"{stem}.txt", output_dir / f"{stem}.html"
     text_path.write_text(render_text_report(result, language), encoding="utf-8")
     html_path.write_text(render_html_report(result, language), encoding="utf-8")
     return text_path, html_path
@@ -1125,41 +1132,43 @@ def render_text_report(result: TestPlanResult, language: str = "de") -> str:
 
 def render_html_report(result: TestPlanResult, language: str = "de") -> str:
     title = "Hardwaretest – Gesamtprotokoll" if language == "de" else "Hardware Test – Full Report"
-    cards: list[str] = []
+    report = hwreport.Report(
+        test="gesamttest", title=title, status=result.status, language=language,
+        summary=f"{_text('Durchläufe vollständig', language)}: {result.completed_rounds}/{result.requested_rounds}"
+        + _end_time_note(result, language),
+        started=_parse_time(result.started_at), finished=_parse_time(result.finished_at),
+        parameters=[(_text("Rechner", language), result.hostname),
+                    (_text("Durchläufe", language), f"{result.completed_rounds}/{result.requested_rounds}"),
+                    ("CSV", str(result.csv_report or "–"))],
+    )
     if result.system_info:
-        cards.append(f'<section class="step system"><h2>System</h2><pre>{escape(chr(10).join(result.system_info))}</pre></section>')
+        report.add_section("System", "text", text="\n".join(result.system_info), collapsed=True)
+    overview = [[_status_label(step.status, language), step.name, f"{step.duration_seconds:.1f} s", step.summary]
+                for step in result.steps]
+    report.add_section(_text("Übersicht", language), "table", overview,
+                       header=[_text("Ergebnis", language), _text("Schritt", language), _text("Dauer", language),
+                               _text("Zusammenfassung", language)])
+    cards: list[str] = []
     for step in result.steps:
         details = ""
         if step.details:
-            details = f"<details open><summary>{escape(_text('Details', language))}</summary><pre>{escape(chr(10).join(step.details))}</pre></details>"
+            details = (f"<details open><summary>{escape(_text('Details', language))}</summary>"
+                       f"<pre>{escape(chr(10).join(step.details))}</pre></details>")
         cards.append(
-            f'<section class="step {escape(step.status)}">'
-            f'<h2><span>{escape(_status_symbol(step.status))}</span> {escape(step.name)}</h2>'
-            f'<div class="meta">{escape(step.started_at)} – {escape(step.finished_at)} · '
-            f'{step.duration_seconds:.1f} s</div>'
+            f'<section class="step" style="--step:{hwreport.status_color(step.status)}">'
+            f'<h3>{escape(_status_symbol(step.status))} {escape(step.name)} – {escape(_status_label(step.status, language))}</h3>'
+            f'<div class="meta">{escape(step.started_at)} – {escape(step.finished_at)} · {step.duration_seconds:.1f} s</div>'
             f'<p>{escape(step.summary)}</p>{details}</section>'
         )
-    return f"""<!doctype html>
-<html lang="{escape(language)}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{escape(title)} – {escape(result.hostname)}</title>
-<style>
-:root{{--bg:#17191d;--panel:#24272d;--text:#edf1f5;--dim:#aeb6c2;--ok:#42d66b;--bad:#ff5c5c;--skip:#e5ad3d;--accent:#69a7ff}}
-*{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Ubuntu,Arial,sans-serif}}
-main{{max-width:1050px;margin:auto;padding:28px}} header{{padding:22px;background:var(--panel);border-radius:10px;margin-bottom:20px}}
-h1{{margin:0 0 10px;color:var(--accent)}} .summary{{font-size:18px;font-weight:bold}} .meta{{color:var(--dim);font-size:13px;margin-bottom:8px}}
-.step{{background:var(--panel);border-left:6px solid var(--skip);border-radius:8px;padding:14px 18px;margin:12px 0;break-inside:avoid}}
-.step.system{{border-color:var(--accent)}} .step.passed{{border-color:var(--ok)}} .step.failed{{border-color:var(--bad)}} .step.cancelled{{border-color:var(--bad)}}
-.step h2{{font-size:18px;margin:0 0 5px}} .step p{{margin:8px 0}} details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent)}}
-pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#111318;padding:12px;border-radius:6px;color:#d9e1ea}}
-@media print{{:root{{--bg:#fff;--panel:#fff;--text:#111;--dim:#555}} main{{padding:0}} header,.step{{border:1px solid #bbb;border-left-width:6px}} details{{display:block}} details>summary{{display:none}}}}
-</style></head><body><main><header><h1>{escape(title)}</h1>
-<div>{escape(result.hostname)} · Hardwaretest {escape(__version__)} · Kernel {escape(platform.release())}</div>
-<div class="meta">{escape(result.started_at)} – {escape(result.finished_at)}</div>
-<div>{escape(_text('Durchläufe vollständig', language))}: {result.completed_rounds}/{result.requested_rounds}{escape(_end_time_note(result, language))}</div>
-<div>CSV: {escape(str(result.csv_report or '–'))}</div>
-<div class="summary">{escape(_text('Gesamtergebnis', language))}: {escape(_status_label(result.status, language))}</div>
-</header>{''.join(cards)}</main></body></html>"""
+    report.add_section(_text("Testschritte", language), "html", text="".join(cards))
+    return hwreport.render_html(report)
+
+
+def _parse_time(value: str) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _overall_status(results: list[TestPlanStepResult], cancelled: bool) -> str:
@@ -1334,6 +1343,12 @@ def _text(source: str, language: str) -> str:
         "Dauer": "Duration",
         "Zusammenfassung": "Summary",
         "Details": "Details",
+        "Rechner": "Host",
+        "Durchläufe": "Rounds",
+        "Übersicht": "Overview",
+        "Ergebnis": "Result",
+        "Schritt": "Step",
+        "Testschritte": "Test steps",
         "Testplan wurde manuell abgebrochen.": "The test plan was cancelled manually.",
         "Root-Berechtigung für den gesamten Testplan wird angefordert …":
             "Requesting root permission for the whole test plan …",

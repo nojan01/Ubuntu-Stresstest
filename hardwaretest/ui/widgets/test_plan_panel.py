@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QDateTime, QStandardPaths, QThread, Signal, Qt
+from PySide6.QtCore import QDateTime, QThread, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -50,7 +50,7 @@ from hardwaretest.core.block_disks import BlockDisk, list_block_disks
 from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
-from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.sensor_limits import edit_sensor_limits, load_sensor_limits
 
 
@@ -206,11 +206,7 @@ class TestPlanPanel(QWidget):
         network_group.setLayout(network_form)
 
         self.stop_on_error = QCheckBox("Bei erstem Fehler abbrechen")
-        documents = QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.DocumentsLocation
-        )
-        report_root = Path(documents) if documents else Path.home()
-        self.output_dir = QLineEdit(str(report_root / "Hardwaretest-Berichte"))
+        self.output_dir = QLineEdit(str(Path.home() / "Downloads"))
         self.choose_dir_btn = QPushButton("Ordner wählen …")
         output_row = QHBoxLayout()
         output_row.addWidget(self.output_dir, 1)
@@ -256,12 +252,10 @@ class TestPlanPanel(QWidget):
         self.start_btn = QPushButton("Gesamttest starten")
         self.stop_btn = QPushButton("Gesamttest abbrechen")
         self.stop_btn.setEnabled(False)
-        self.open_html_btn = QPushButton("HTML-Protokoll öffnen")
-        self.open_html_btn.setEnabled(False)
+        self.report_bar = ReportBar()
         buttons = QHBoxLayout()
         buttons.addWidget(self.start_btn)
         buttons.addWidget(self.stop_btn)
-        buttons.addWidget(self.open_html_btn)
 
         self.result = QLabel("Bereit")
         self.result.setWordWrap(True)
@@ -310,6 +304,7 @@ class TestPlanPanel(QWidget):
         layout.addWidget(self.result)
         layout.addWidget(self.progress)
         layout.addWidget(self.current_step)
+        layout.addWidget(self.report_bar)
         layout.addWidget(self.step_progress)
         layout.addWidget(self.results)
         layout.addWidget(self.log_view, 1)
@@ -317,7 +312,6 @@ class TestPlanPanel(QWidget):
         self.start_btn.clicked.connect(self._start)
         self.stop_btn.clicked.connect(self._stop)
         self.choose_dir_btn.clicked.connect(self._choose_output_dir)
-        self.open_html_btn.clicked.connect(self._open_html)
         self.dcgm_check.toggled.connect(self.nvidia_check.setChecked)
         self.drive_scan_btn.clicked.connect(self._scan_drives)
         self.select_all_btn.clicked.connect(self._select_all_drives)
@@ -468,7 +462,7 @@ class TestPlanPanel(QWidget):
         self._last_result = None
         self.results.setRowCount(0)
         self.log_view.clear()
-        self.open_html_btn.setEnabled(False)
+        self.report_bar.set_path(None)
         self.progress.setValue(0)
         self.step_progress.setValue(0)
         self._set_runtime_text(self.result, "⌛ Gesamttest läuft")
@@ -527,7 +521,7 @@ class TestPlanPanel(QWidget):
         else:
             self._set_runtime_text(self.result, "✗ Gesamttest FEHLGESCHLAGEN")
             self.result.setStyleSheet("color: #ff4444; font-weight: bold;")
-        self.open_html_btn.setEnabled(value.html_report is not None)
+        self.report_bar.set_path(value.html_report)
 
     def _failed(self, message: str) -> None:
         self._set_runtime_text(self.result, "✗ Gesamttest konnte nicht abgeschlossen werden")
@@ -559,11 +553,6 @@ class TestPlanPanel(QWidget):
                 self.results.setItem(row, column, item)
         self.results.resizeColumnsToContents()
         self.results.horizontalHeader().setStretchLastSection(True)
-
-    def _open_html(self) -> None:
-        if not self._last_result or not self._last_result.html_report:
-            return
-        open_html_report(self._last_result.html_report, self)
 
     def _config(self) -> TestPlanConfig:
         return TestPlanConfig(

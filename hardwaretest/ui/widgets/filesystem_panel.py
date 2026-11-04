@@ -1,7 +1,6 @@
 """Explicit read-only filesystem checks, outside unattended test plans. No repairs."""
 
 from datetime import datetime
-from html import escape
 from pathlib import Path
 import uuid
 
@@ -13,7 +12,8 @@ from PySide6.QtWidgets import (
 from hardwaretest.core import privilege
 from hardwaretest.core.filesystem_check import NTFS_TYPES, VMFS_TYPES, list_filesystems, result_text, worker_command
 from hardwaretest.ui.i18n import language_manager
-from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.core.report import STATUS_FAILED, STATUS_INFO, STATUS_PASSED, STATUS_WARNING, Report, render_html, report_path
+from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
@@ -57,7 +57,7 @@ class FilesystemPanel(QWidget):
         self.reason = QLabel()
         self.reason.setWordWrap(True)
         layout.addWidget(self.reason)
-        self.output_dir = QLineEdit(str(Path.home() / "Hardwaretest-Berichte"))
+        self.output_dir = QLineEdit(str(Path.home() / "Downloads"))
         self.choose = QPushButton()
         self.bind(self.choose, "Protokollordner …", "Report folder …")
         row = QHBoxLayout()
@@ -76,14 +76,11 @@ class FilesystemPanel(QWidget):
             self.bind(button, de, en)
             row.addWidget(button)
         layout.addLayout(row)
-        self.open_html = QPushButton()
-        self.bind(self.open_html, "HTML-Protokoll öffnen", "Open HTML report")
-        self.open_html.setEnabled(False)
-        self.open_html.clicked.connect(lambda: open_html_report(self._html, self) if self._html else None)
-        layout.addWidget(self.open_html)
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.report_bar = ReportBar()
+        layout.addWidget(self.report_bar)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -215,16 +212,20 @@ class FilesystemPanel(QWidget):
                 return
             command[:0] = privilege.command_prefix(self.text("Dateisystem prüfen", "Check file system"))
         try:
-            directory = Path(self.output_dir.text()).expanduser()
-            directory.mkdir(parents=True, exist_ok=True)
-            self._report_path = directory / f"filesystem-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}.txt"
+            self._started_at = datetime.now()
+            self._report_path = report_path("dateisystem", Path(self.output_dir.text()).expanduser(),
+                                            self._started_at, suffix=".txt")
+            if self._report_path.exists():
+                self._report_path = self._report_path.with_name(
+                    f"{self._report_path.stem}-{uuid.uuid4().hex[:6]}.txt")
             self._report = self._report_path.open("x", encoding="utf-8")
         except OSError as exc:
             self.status.setText(str(exc))
             return
         self._action = action
+        self._device = device
         self._html = None
-        self.open_html.setEnabled(False)
+        self.report_bar.set_path(None)
         self._language = language_manager.language
         self.log.clear()
         self._write(f"{datetime.now().astimezone().isoformat()}\n{action}: {device.path}\nUUID: {device.uuid}\n")
@@ -239,6 +240,29 @@ class FilesystemPanel(QWidget):
         self.busy_changed.emit(True)
         self.selection()
         process.start(command[0], command[1:])
+
+    def _build_report(self, code, summary, excerpt):
+        device = self._device
+        if code == 0:
+            status = STATUS_INFO if self._action == "status" else STATUS_PASSED
+        elif 0 <= code < 8 and code & 4:
+            status = STATUS_FAILED
+        elif 0 <= code < 8:
+            status = STATUS_WARNING
+        else:
+            status = STATUS_FAILED
+        title = self.text("Dateisystem – Statusdiagnose", "File system – status diagnosis") if self._action == "status" \
+            else self.text("Dateisystem – Strukturprüfung", "File system – integrity check")
+        report = Report(test="dateisystem", title=title, status=status, summary=summary,
+                        started=self._started_at, finished=datetime.now(), language=self._language,
+                        parameters=[(self.text("Gerät", "Device"), device.path),
+                                    (self.text("Dateisystem", "File system"), device.fstype or "–"),
+                                    ("UUID", device.uuid or "–"),
+                                    (self.text("Eingehängt", "Mounted"), ", ".join(device.mounts) or "–"),
+                                    ("Exit-Code", str(code))],
+                        raw_output=excerpt)
+        report.hints.append(self.text("Vollständiges Protokoll: ", "Full log: ") + self._report_path.name)
+        return report
 
     def _write(self, text):
         self.log.insertPlainText(text)
@@ -278,10 +302,10 @@ class FilesystemPanel(QWidget):
             try:
                 with self._report_path.open(encoding="utf-8") as source:
                     excerpt = source.read(64_000)
-                html = '<!doctype html><meta charset="utf-8"><title>Filesystem</title><h1>' + escape(summary) + '</h1><pre style="white-space:pre-wrap">' + escape(excerpt) + '</pre><p>Details: ' + escape(self._report_path.name) + '</p>'
-                self._report_path.with_suffix(".html").write_text(html, encoding="utf-8")
+                self._report_path.with_suffix(".html").write_text(
+                    render_html(self._build_report(code, summary, excerpt)), encoding="utf-8")
                 self._html = self._report_path.with_suffix(".html")
-                self.open_html.setEnabled(True)
+                self.report_bar.set_path(self._html)
                 summary += f"\n{self._report_path}"
             except OSError as exc:
                 summary += f"\nReport error / Protokollfehler: {exc}"

@@ -810,6 +810,8 @@ def parse_storcli(text: str, details_text: Optional[str] = None) -> list[RaidCon
 
 _OK_STATES = {"ok", "optimal", "online", "onln", "optl", "good", "unconfigured good", "ugood", "jbod",
               "global hot spare", "dedicated hot spare", "ghs", "dhs", "hba mode", ""}
+_CACHE_OFF_BY_SETTING = re.compile(r"not configured|not enabled|disabled|off", re.I)
+_CACHE_FAULT = re.compile(r"temporar|permanent|fail|error|batter|low|charg", re.I)
 _LD_WARN = re.compile(r"recover|rebuild|interim|degraded|transforming|expanding|migrat|queued|ready for recovery|"
                       r"partially|not configured|unknown", re.I)
 _PD_REBUILD = re.compile(r"rebuild|copyback|replacement|erase|recover", re.I)
@@ -889,7 +891,12 @@ def rate_controller(controller: RaidController) -> tuple[str, list[Finding]]:
                                 "Cache present but no battery/capacitor – write-back cache is unprotected.",
                                 "Controller"))
     cache = controller.cache_status.lower()
-    if cache and cache not in _OK_STATES:
+    if cache and _CACHE_OFF_BY_SETTING.search(cache) and not _CACHE_FAULT.search(cache):
+        # Abgeschalteter Controller-Cache ist eine Konfiguration, kein Defekt.
+        findings.append(Finding("info", f"Controller-Cache nicht aktiviert („{controller.cache_status}“) – Einstellung, kein Fehler.",
+                                f"Controller cache not enabled (“{controller.cache_status}”) – a setting, not a fault.",
+                                "Controller"))
+    elif cache and cache not in _OK_STATES:
         findings.append(Finding("warn", f"Cache-Status „{controller.cache_status}“.",
                                 f"Cache status “{controller.cache_status}”.", "Controller"))
     if controller.temperature is not None and controller.temperature >= CONTROLLER_TEMPERATURE_WARN:

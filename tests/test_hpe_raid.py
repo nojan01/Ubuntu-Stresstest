@@ -600,3 +600,14 @@ def test_disk_panel_raid_button_emits_signal(monkeypatch):
     monkeypatch.setattr(disk_panel, "_show_info_dialog", lambda parent, title, content: received.append(content))
     panel._show_raid_info()
     assert len(received) == 2 and "ssacli" in received[1]
+
+
+def test_disabled_cache_is_a_setting_not_a_warning():
+    for status in ("Not Configured", "Disabled", "Not Enabled"):
+        c = _simple_controller(cache_status=status)
+        severity, findings = hpe_raid.rate_controller(c)
+        assert severity == "ok", status
+        assert any(f.severity == "info" and "Einstellung" in f.de for f in findings), status
+    for status in ("Temporarily Disabled", "Permanently Disabled", "Disabled - low battery"):
+        c = _simple_controller(cache_status=status)
+        assert hpe_raid.rate_controller(c)[0] == "warn", status

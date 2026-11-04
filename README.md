@@ -13,6 +13,9 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations 
   Datenblatt ohne Diagnose (`gpu-datenblatt-DATUM.html`).
 - **DCGM-Diagnose:** „PCIe-Peer-to-Peer-Test überspringen“ ist nicht mehr auf HPE Synergy
   vorbelegt; der P2P-Test läuft standardmäßig mit (mit `iommu=pt` funktionsfähig).
+- **ProLiant Info – RAID:** Ein nicht aktivierter Controller-Cache („Not Configured“,
+  „Disabled“) wird nur noch als Hinweis gemeldet, nicht mehr als Warnung – das ist eine
+  Einstellung, kein Fehler. „Temporarily/Permanently Disabled“ bleibt eine Warnung.
 
 ### Neu in 0.2.66
 

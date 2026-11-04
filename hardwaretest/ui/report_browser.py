@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QMessageBox
 from hardwaretest.ui.i18n import language_manager
 
 
+FILE_MANAGERS = ("xdg-open", "nautilus", "dolphin", "thunar", "pcmanfm-qt", "pcmanfm", "nemo", "caja")
 BROWSERS = ("firefox", "google-chrome", "chromium", "chromium-browser", "brave-browser", "microsoft-edge", "vivaldi")
 
 
@@ -67,4 +68,25 @@ def open_html_report(path, parent=None):
     message = ("Bitte die Datei manuell in einem Browser öffnen:\n{path}" if path.is_file()
                else "HTML-Protokoll nicht gefunden")
     QMessageBox.warning(parent, language_manager.tr(title), language_manager.tr(message, path=path))
+    return False
+
+
+def open_folder(path, parent=None):
+    """Öffnet einen Ordner im Dateimanager (bereinigte Umgebung), notfalls als Verzeichnisliste im Browser."""
+    path = Path(path).expanduser()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    for name in FILE_MANAGERS:
+        executable = shutil.which(name)
+        if executable and start_browser(executable, str(path), path):
+            return True
+    url = QUrl.fromLocalFile(str(path)).toString()
+    for browser in browser_candidates():
+        executable = shutil.which(browser)
+        if executable and start_browser(executable, url, path):
+            return True
+    QMessageBox.information(parent, language_manager.tr("Berichtsordner"),
+                            language_manager.tr("Berichtsordner: {path}", path=path))
     return False

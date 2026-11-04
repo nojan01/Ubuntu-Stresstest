@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence
@@ -11,7 +10,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from hardwaretest.core.report import STATUS_CANCELLED, STATUS_FAILED, STATUS_PASSED, Report, write_report
 from hardwaretest.ui.i18n import language_manager
-from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.ui.report_browser import open_folder, open_html_report
 
 
 class ReportBar(QWidget):
@@ -68,13 +67,7 @@ class ReportBar(QWidget):
             open_html_report(self.last_path, self)
 
     def open_folder(self) -> None:
-        folder = Path.home() / "Downloads"
-        folder.mkdir(parents=True, exist_ok=True)
-        try:
-            subprocess.Popen(["xdg-open", str(folder)], stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        except OSError:
-            self.label.setText(language_manager.tr("Berichtsordner: {path}", path=folder))
+        open_folder(Path.home() / "Downloads", self)
 
 
 def runner_report(test: str, title: str, result, *, started: Optional[datetime], parameters: Sequence[tuple[str, str]],

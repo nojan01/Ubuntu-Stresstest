@@ -607,8 +607,15 @@ class NetworkPanel(QWidget):
         if result.passed:
             self._show_ethtool("✓ Selbsttest auf {interface} bestanden ({details})", "#55ff55", interface=name,
                                details=details or language_manager.tr("keine Einzelergebnisse"))
+        elif result.inconclusive:
+            self._show_ethtool(
+                "? Selbsttest auf {interface} nicht aussagekräftig: Treiber meldet FAIL, aber alle Einzeltests sind 0 "
+                "({details}). Der Test konnte nicht ausgeführt werden – bei bnxt_en z. B. Offline-Test auf "
+                "NPAR-/geteilter PF oder mit aktiven VFs, oder Schnittstelle nicht aktiv (Grund in dmesg). "
+                "Kein Hinweis auf einen Hardwarefehler; ggf. Online-Test versuchen.",
+                "#ffaa00", interface=name, details=details)
         else:
-            failed = "; ".join(f"{test}: {code}" for test, code in result.failed_entries) or details
+            failed = "; ".join(f"{test}: {code}" for test, code in result.failed_entries)
             self._show_ethtool("✗ Selbsttest auf {interface} fehlgeschlagen – {details}", "#ff5555", interface=name,
                                details=failed)
         for line in (details.split("; ") if details else []):

@@ -2,6 +2,17 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.66
+
+- **DCGM-Diagnose:** Die Option „PCIe-Peer-to-Peer-Test überspringen“ verwendet jetzt den
+  korrekten DCGM-Parameter `pcie.test_p2p_on=false` (DCGM 4.x kennt kein `test_p2p`) und
+  wird nur noch ab Stufe 2 übergeben – zuvor brach `dcgmi` mit „Invalid Parameter String“ ab.
+- **DCGM-Diagnose:** Ein `runtime_error` von DCGM wird jetzt als Fehlermeldung im Bericht und
+  in der Statuszeile angezeigt statt als „0 fehlgeschlagene Prüfung(en)“.
+- **Netzwerk-Selbsttest (ethtool):** Setzt der Treiber nur das FAIL-Flag, ohne dass ein
+  Einzeltest ≠ 0 ist (z. B. bnxt_en auf NPAR/geteilter PF oder mit aktiven VFs), gilt das
+  Ergebnis als „nicht aussagekräftig“ (gelb) statt als Fehler.
+
 ### Neu in 0.2.65
 
 - **ethtool-Selbsttest (Tab Netzwerk):** `ethtool -t` online/offline für physische Adapter über den Root-Broker; Fehlerzähler aus `ethtool -S` (CRC, rx/tx errors, dropped) werden vor/nach dem Test verglichen und Zuwächse als Warnung gemeldet. „SFP-Modul lesen“ (`ethtool -m`) zeigt Hersteller, Typ, Seriennummer, Temperatur, Spannung, Rx-/Tx-Leistung. **Mellanox Link-Diagnose** (`mstlink` aus `mstflint`, nur bei mlx4/mlx5-Adaptern und installiertem Paket sichtbar): Link-Zustand, FEC, Empfehlung, physische Fehler/BER, Link-Down-Zähler, Moduldaten mit Grenzwertprüfung.

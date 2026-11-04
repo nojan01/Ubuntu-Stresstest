@@ -55,7 +55,8 @@ class DcgmDiagnosticRunner(BaseTestRunner):
             str(self.run_level),
             "--entity-id",
             entities,
-            *(["--parameters", "pcie.test_p2p=false"] if self.skip_p2p else []),
+            # pcie laeuft erst ab Stufe 2; Parametername laut DCGM-Handbuch "test_p2p_on"
+            *(["--parameters", "pcie.test_p2p_on=false"] if self.skip_p2p and self.run_level >= 2 else []),
             "--json",
         ]
 
@@ -88,6 +89,9 @@ class DcgmDiagnosticRunner(BaseTestRunner):
         payload = self.parsed_payload()
         if payload is None:
             return "dcgmi lieferte kein auswertbares JSON"
+        runtime_error = _lookup(payload, ("runtime_error",))
+        if isinstance(runtime_error, str) and runtime_error.strip():
+            return "DCGM: " + " ".join(runtime_error.split())
         counts = self.status_counts()
         if sum(counts.values()) == 0:
             return "dcgmi-JSON enthält keinen Teststatus"
@@ -296,7 +300,11 @@ def format_dcgm_report(payload: object, language: str = "de") -> list[str]:
             lines.append(("Fehler:" if key_name == "errors" else "Warnungen:") if de else key_name.capitalize() + ":")
             lines.extend("  " + t for t in texts)
 
-    if not categories:
+    runtime_error = _lookup(payload, ("runtime_error",))
+    if isinstance(runtime_error, str) and runtime_error.strip():
+        lines.append("")
+        lines.append(("DCGM-Fehler: " if de else "DCGM error: ") + " ".join(runtime_error.split()))
+    if not categories and not runtime_error:
         lines.append("")
         lines.append("Unbekanntes Ergebnisformat – Rohdaten:" if de else "Unknown result format – raw data:")
         lines.append(json.dumps(payload, indent=2, ensure_ascii=False))

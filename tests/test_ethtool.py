@@ -68,6 +68,21 @@ def test_parse_selftest():
     assert unsupported.passed is None and unsupported.error == "Cannot test: Operation not supported"
 
 
+def test_selftest_fail_flag_without_failed_entries_is_inconclusive():
+    # bnxt_en auf NPAR-/geteilter PF: Kernel setzt nur das FAIL-Flag, alle Einzeltests bleiben 0
+    text = ("The test result is FAIL\n"
+            "NVM test (online)         0\n"
+            "Link test (online)        0\n"
+            "Register test (offline)   0\n"
+            "Ext loopback test (offline) 0\n")
+    result = network.parse_ethtool_selftest(text, returncode=1)
+    assert result.passed is False and not result.failed_entries
+    assert result.inconclusive
+    failed = network.parse_ethtool_selftest("The test result is FAIL\nLink test (online)   1\n", 1)
+    assert failed.inconclusive is False
+    assert network.parse_ethtool_selftest("The test result is PASS\nLink test (online)   0\n").inconclusive is False
+
+
 def test_run_selftest_command():
     calls = []
 

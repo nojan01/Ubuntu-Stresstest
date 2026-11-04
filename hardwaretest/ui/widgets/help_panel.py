@@ -570,7 +570,11 @@ ausgewählt, bindet Hardwaretest Ping und iperf3 gezielt an diese Schnittstelle.
       laufende Verbindungen. Nicht jeder Treiber unterstützt den Test („Operation not
       supported“ ist kein Hardwarefehler). Vor und nach dem Test werden die Fehlerzähler
       aus <code>ethtool -S</code> (CRC, rx/tx errors, dropped) verglichen; ein Zuwachs
-      wird im Ergebnis als Warnung angezeigt.</li>
+      wird im Ergebnis als Warnung angezeigt. Meldet der Treiber FAIL, obwohl alle
+      Einzeltests 0 sind, konnte der Test nicht laufen (gelb, „nicht aussagekräftig“):
+      <code>bnxt_en</code> (Broadcom NetXtreme‑E, z. B. HPE 25G) verweigert den Offline‑Test
+      auf NPAR‑/geteilten PFs oder mit aktiven VFs, ebenso bei nicht aktiver Schnittstelle –
+      der Grund steht in <code>dmesg</code>. Dann den Online‑Test verwenden.</li>
   <li><b>SFP-Modul lesen</b> (<code>ethtool -m</code>): Hersteller, Typ, Seriennummer,
       Temperatur, Spannung sowie Rx-/Tx-Leistung des Transceivers. Bei RJ45-Adaptern
       ohne Modul erscheint ein Hinweis.</li>
@@ -615,7 +619,7 @@ Schlägt bei zwei oder mehr GPUs nur der <b>pcie</b>-Test mit „P2P write verif
 failed: buffer mismatch“ (ID 86/87) fehl, ist das kein GPU-Defekt: Der Peer-to-Peer-Teil
 kopiert direkt zwischen zwei GPUs und scheitert bei aktivem IOMMU/VT-d mit PCIe-ACS oder
 GPUs an verschiedenen CPU-Sockeln. Abhilfe: „PCIe-Peer-to-Peer-Test überspringen“
-ankreuzen (auf HPE Synergy automatisch vorbelegt, auf ProLiant DL aus) (<code>pcie.test_p2p=false</code>).
+ankreuzen (auf HPE Synergy automatisch vorbelegt, auf ProLiant DL aus) (<code>pcie.test_p2p_on=false</code>).
 Soll P2P wirklich funktionieren, gibt es drei Stellschrauben: (1) Kernelparameter
 <code>iommu=pt</code> (notfalls <code>intel_iommu=off</code> bzw. <code>amd_iommu=off</code>) in <code>GRUB_CMDLINE_LINUX_DEFAULT</code>,
 dann <code>update-grub</code> und Neustart; (2) im BIOS/RBSU unter „Advanced Options“
@@ -1405,7 +1409,11 @@ Linux chooses the route. Selecting an adapter binds ping and iperf3 to that inte
       (thorough, briefly drops the link)" tests more but interrupts running connections.
       Not every driver supports the test ("Operation not supported" is not a hardware
       fault). Error counters from <code>ethtool -S</code> (CRC, rx/tx errors, dropped)
-      are compared before and after the test; an increase is shown as a warning.</li>
+      are compared before and after the test; an increase is shown as a warning. If the
+      driver reports FAIL although every individual test is 0, the test could not run
+      (amber, "inconclusive"): <code>bnxt_en</code> (Broadcom NetXtreme-E, e.g. HPE 25G)
+      refuses the offline test on NPAR/shared PFs or with active VFs, as well as on an
+      interface that is not up – the reason is in <code>dmesg</code>. Use the online test then.</li>
   <li><b>Read SFP module</b> (<code>ethtool -m</code>): vendor, type, serial number,
       temperature, voltage and Rx/Tx power of the transceiver. RJ45 adapters without a
       module show a note.</li>
@@ -1450,7 +1458,7 @@ If, with two or more GPUs, only the <b>pcie</b> test fails with “P2P write ver
 failed: buffer mismatch” (ID 86/87), this is not a GPU defect: the peer-to-peer part copies
 directly between two GPUs and fails with IOMMU/VT-d plus PCIe ACS enabled or GPUs on
 different CPU sockets. Remedy: tick “Skip PCIe peer-to-peer test” (pre-selected on HPE Synergy, off on ProLiant DL)
-(<code>pcie.test_p2p=false</code>). If P2P really has to work, there are three knobs:
+(<code>pcie.test_p2p_on=false</code>). If P2P really has to work, there are three knobs:
 (1) kernel parameter <code>iommu=pt</code> (or, if needed, <code>intel_iommu=off</code>/<code>amd_iommu=off</code>) in
 <code>GRUB_CMDLINE_LINUX_DEFAULT</code>, then <code>update-grub</code> and reboot;
 (2) in the BIOS/RBSU under “Advanced Options” disable PCIe Access Control Services (ACS)

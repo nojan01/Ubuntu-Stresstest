@@ -183,7 +183,7 @@ class NvidiaPanel(QWidget):
         self.skip_p2p_box.setToolTip(
             "Der P2P-Teil des DCGM-pcie-Tests kopiert direkt zwischen zwei GPUs. Bei aktivem IOMMU/VT-d mit PCIe-ACS "
             "oder GPUs an verschiedenen CPU-Sockeln scheitert er mit „buffer mismatch“ (ID 86/87) – kein GPU-Defekt. "
-            "Entspricht dcgmi diag -p pcie.test_p2p=false."
+            "Entspricht dcgmi diag -p pcie.test_p2p_on=false."
         )
         # Synergy: GPUs auf dem Grafikmodul hinter PCIe-Switch -> P2P scheitert ohne Defekt.
         # ProLiant DL und andere Systeme: P2P-Test läuft mit.
@@ -644,7 +644,7 @@ class NvidiaPanel(QWidget):
             "--- " + tr("Hinweis zum PCIe-Peer-to-Peer-Fehler") + " ---",
             tr("Der pcie-Test scheitert am P2P-Teil (ID 86/87) – meist kein GPU-Defekt, sondern IOMMU/VT-d mit PCIe-ACS "
                "oder GPUs hinter PCIe-Switches (HPE Synergy Grafikmodul)."),
-            tr("Abhilfe 1: Checkbox „PCIe-Peer-to-Peer-Test überspringen“ setzen (dcgmi diag -p pcie.test_p2p=false)."),
+            tr("Abhilfe 1: Checkbox „PCIe-Peer-to-Peer-Test überspringen“ setzen (dcgmi diag -p pcie.test_p2p_on=false)."),
             tr("Abhilfe 2: Kernelparameter iommu=pt (notfalls intel_iommu=off/amd_iommu=off) in /etc/default/grub, update-grub, Neustart."),
             tr("Abhilfe 3: BIOS/RBSU → Advanced Options → PCIe Access Control Services (ACS) bzw. VT-d/IOMMU deaktivieren "
                "(nur wenn kein SR-IOV benötigt wird)."),

@@ -85,7 +85,10 @@ def test_dcgm_command_targets_every_selected_gpu(monkeypatch=None):
             "dcgmi", "diag", "--run", "2", "--entity-id", "gpu:0,gpu:1,gpu:3", "--json"
         ]
         assert DcgmDiagnosticRunner(TestParameters(0), [0], 2, skip_p2p=True).build_command() == [
-            "dcgmi", "diag", "--run", "2", "--entity-id", "gpu:0", "--parameters", "pcie.test_p2p=false", "--json"
+            "dcgmi", "diag", "--run", "2", "--entity-id", "gpu:0", "--parameters", "pcie.test_p2p_on=false", "--json"
+        ]
+        assert DcgmDiagnosticRunner(TestParameters(0), [0], 1, skip_p2p=True).build_command() == [
+            "dcgmi", "diag", "--run", "1", "--entity-id", "gpu:0", "--json"
         ]
     finally:
         module.dcgmi_available = original
@@ -242,3 +245,16 @@ def test_p2p_hint_only_without_skip_and_with_p2p_failure():
     hints = NvidiaPanel._p2p_hint_lines()
     assert any("iommu=pt" in line for line in hints)
     assert any("ForceP2P=1" in line for line in hints)
+
+
+def test_dcgm_runtime_error_is_reported_as_evaluation_error():
+    runner = DcgmDiagnosticRunner(TestParameters(0), [0], 1)
+    runner.output_lines = [
+        '{ "DCGM Diagnostic": { "runtime_error": "Error: Unable to complete diagnostic for entities gpu:0.'
+        ' Return: (-30)\\nInvalid Parameter String: test \'pcie\' has no parameter \'test_p2p\'.\\n",'
+        ' "version": "4.7.1" } }'
+    ]
+    error = runner.evaluation_error()
+    assert error is not None and "has no parameter" in error and "\n" not in error
+    report = "\n".join(runner.report_lines("de"))
+    assert "DCGM-Fehler:" in report and "Unbekanntes Ergebnisformat" not in report

@@ -137,6 +137,12 @@ class SelfTestResult:
     def failed_entries(self) -> list[tuple[str, int]]:
         return [(name, code) for name, code in self.entries if code != 0]
 
+    @property
+    def inconclusive(self) -> bool:
+        """Treiber meldet FAIL, aber kein Einzeltest ist ungleich 0: Der Test konnte nicht laufen
+        (bnxt_en: NPAR/geteilte PF oder aktive VFs, Schnittstelle nicht aktiv) – kein Hardwarefehler."""
+        return self.passed is False and bool(self.entries) and not self.failed_entries
+
 
 def parse_ethtool_selftest(text: str, returncode: int = 0, stderr: str = "") -> SelfTestResult:
     """Ausgabe wie ``The test result is PASS`` gefolgt von ``Register test  (offline)   0``-Zeilen."""

@@ -597,7 +597,8 @@ NVIDIA DCGM 4 mit dem zur Treiberversion passenden Paket
 <code>datacenter-gpu-manager-4-cuda12</code> oder <code>-cuda13</code> sowie den
 gestarteten Dienst <code>nvidia-dcgm</code>. CUDA Toolkit, PyTorch und Docker sind
 nicht erforderlich. DCGM-Stufe 1 ist ein kurzer Bereitschaftstest; die Stufen 2–4
-prüfen zunehmend Speicher, PCIe, Rechenlast und weitere Hardwarefunktionen.
+prüfen zunehmend Speicher, PCIe, Rechenlast und weitere Hardwarefunktionen – Stufe 3
+(ca. 30 min) bzw. 4 (länger) führt alle DCGM-Tests nacheinander aus (Gesamttest der GPU).
 Das Inventar zeigt außerdem aktuelle GPU-/SM-/Speichertakte sowie die aktuelle
 und maximal mögliche PCIe-Generation und Linkbreite. Die Liveüberwachung liest
 im gewählten Intervall Auslastung, Temperatur, VRAM, Leistungsaufnahme und Takte
@@ -1442,7 +1443,8 @@ DCGM 4 using the package matching the driver, such as
 <code>datacenter-gpu-manager-4-cuda12</code> or <code>-cuda13</code>, with the
 <code>nvidia-dcgm</code> service running. CUDA Toolkit, PyTorch and Docker are not
 required. DCGM level 1 is a quick readiness check; levels 2–4 increasingly test
-memory, PCIe, compute load and other hardware functions.
+memory, PCIe, compute load and other hardware functions – level 3 (about 30 min)
+or 4 (longer) runs all DCGM tests in sequence (full GPU test).
 The inventory also shows current GPU/SM/memory clocks and the current and maximum
 PCIe generation and link width. Live monitoring samples utilization, temperature,
 VRAM, power and clocks of the selected GPUs at the configured interval. It starts

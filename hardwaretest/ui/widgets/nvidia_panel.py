@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardwaretest.core import ipmi, privilege
+from hardwaretest.core import privilege
 from hardwaretest.core.nvidia import (
     LinuxNvidiaStatus,
     NvidiaGpu,
@@ -185,9 +185,9 @@ class NvidiaPanel(QWidget):
             "oder GPUs an verschiedenen CPU-Sockeln scheitert er mit „buffer mismatch“ (ID 86/87) – kein GPU-Defekt. "
             "Entspricht dcgmi diag -p pcie.test_p2p_on=false."
         )
-        # Synergy: GPUs auf dem Grafikmodul hinter PCIe-Switch -> P2P scheitert ohne Defekt.
-        # ProLiant DL und andere Systeme: P2P-Test läuft mit.
-        self.skip_p2p_box.setChecked(ipmi.is_synergy())
+        # Standardmaessig aus: mit iommu=pt (Live-ISO) funktioniert P2P auch auf Synergy;
+        # nur bei "buffer mismatch" (ID 86/87) manuell setzen.
+        self.skip_p2p_box.setChecked(False)
         diag_form.addRow("", self.skip_p2p_box)
         diag_buttons = QHBoxLayout()
         diag_buttons.addWidget(self.start_btn)

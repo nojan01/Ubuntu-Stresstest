@@ -619,7 +619,7 @@ Schlägt bei zwei oder mehr GPUs nur der <b>pcie</b>-Test mit „P2P write verif
 failed: buffer mismatch“ (ID 86/87) fehl, ist das kein GPU-Defekt: Der Peer-to-Peer-Teil
 kopiert direkt zwischen zwei GPUs und scheitert bei aktivem IOMMU/VT-d mit PCIe-ACS oder
 GPUs an verschiedenen CPU-Sockeln. Abhilfe: „PCIe-Peer-to-Peer-Test überspringen“
-ankreuzen (auf HPE Synergy automatisch vorbelegt, auf ProLiant DL aus) (<code>pcie.test_p2p_on=false</code>).
+ankreuzen (standardmäßig aus) (<code>pcie.test_p2p_on=false</code>).
 Soll P2P wirklich funktionieren, gibt es drei Stellschrauben: (1) Kernelparameter
 <code>iommu=pt</code> (notfalls <code>intel_iommu=off</code> bzw. <code>amd_iommu=off</code>) in <code>GRUB_CMDLINE_LINUX_DEFAULT</code>,
 dann <code>update-grub</code> und Neustart; (2) im BIOS/RBSU unter „Advanced Options“
@@ -1457,7 +1457,7 @@ If <code>dcgmi</code> is not installed, the “DCGM diagnostics” section is hi
 If, with two or more GPUs, only the <b>pcie</b> test fails with “P2P write verification
 failed: buffer mismatch” (ID 86/87), this is not a GPU defect: the peer-to-peer part copies
 directly between two GPUs and fails with IOMMU/VT-d plus PCIe ACS enabled or GPUs on
-different CPU sockets. Remedy: tick “Skip PCIe peer-to-peer test” (pre-selected on HPE Synergy, off on ProLiant DL)
+different CPU sockets. Remedy: tick “Skip PCIe peer-to-peer test” (off by default)
 (<code>pcie.test_p2p_on=false</code>). If P2P really has to work, there are three knobs:
 (1) kernel parameter <code>iommu=pt</code> (or, if needed, <code>intel_iommu=off</code>/<code>amd_iommu=off</code>) in
 <code>GRUB_CMDLINE_LINUX_DEFAULT</code>, then <code>update-grub</code> and reboot;

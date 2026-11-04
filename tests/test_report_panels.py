@@ -99,3 +99,38 @@ def test_memory_panels_write_reports(tmp_path):
     names = sorted(p.name for p in (tmp_path / "Downloads").glob("hwtest-*.html"))
     assert len(names) == 2
     assert names[0].startswith("hwtest-ram-fuelltest-") and names[1].startswith("hwtest-speichercontroller-")
+
+
+def test_disk_panels_write_reports(tmp_path):
+    from hardwaretest.ui.widgets import disk_panel
+
+    panels = [disk_panel.FileDiskPanel(system_info_provider=_system_info), disk_panel.DeviceDiskPanel(),
+              disk_panel.DestructiveDiskPanel()]
+    for panel in panels:
+        panel.runner = _FakeRunner(TestResult(passed=True, errors=[], duration_actual=9.0, exit_code=0))
+        panel._run_params = [("Datenträger", "/dev/sdz")]
+        panel.runner._running = False
+        panel._update_progress()
+        assert panel.runner is None
+        assert panel.report_bar.last_path is not None
+    names = sorted(p.name for p in (tmp_path / "Downloads").glob("hwtest-*.html"))
+    assert [n.split("-2")[0] for n in names] == ["hwtest-disk-datei", "hwtest-disk-destruktiv", "hwtest-disk-geraete"]
+    html = (tmp_path / "Downloads" / names[0]).read_text(encoding="utf-8")
+    assert "/dev/sdz" in html and "BESTANDEN" in html
+
+
+def test_nvme_panel_writes_io_and_self_test_reports(tmp_path, monkeypatch):
+    from hardwaretest.core.nvme import NvmeSelfTestStatus
+    from hardwaretest.ui.widgets import nvme_panel
+
+    monkeypatch.setattr(nvme_panel, "list_nvme_devices", lambda **_: [])
+    panel = nvme_panel.NvmePanel()
+    panel._io_runner = _FakeRunner(TestResult(passed=True, errors=[], duration_actual=5.0, exit_code=0))
+    panel._io_runner._running = False
+    panel._io_params = [("Test", "NVMe-Lese-Benchmark")]
+    panel._finish_io_test()
+    assert panel.report_bar.last_path is not None and "hwtest-nvme-lesetest-" in panel.report_bar.last_path.name
+    panel._show_self_test_status(NvmeSelfTestStatus(active=False, result_code=0, raw_log="log"))
+    assert "hwtest-nvme-selbsttest-" in panel.report_bar.last_path.name
+    html = panel.report_bar.last_path.read_text(encoding="utf-8")
+    assert "BESTANDEN" in html

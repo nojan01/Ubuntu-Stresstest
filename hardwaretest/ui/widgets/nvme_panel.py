@@ -36,10 +36,12 @@ from hardwaretest.core.nvme import (
     start_nvme_self_test,
 )
 from hardwaretest.core import privilege
+from hardwaretest.core.report import STATUS_FAILED, STATUS_PASSED, STATUS_WARNING, Report
 from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.fio_runner import FioNvmeFullReadRunner, FioNvmeReadBenchmarkRunner
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.report_bar import ReportBar, runner_report
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
@@ -70,6 +72,10 @@ class NvmePanel(QWidget):
         self._io_timed = False
         self._last_health: Optional[NvmeHealth] = None
         self._last_health_device = NvmeDevice("", "", "", "", "", 0)
+        self._io_started_at: Optional[datetime] = None
+        self._io_params: list[tuple[str, str]] = []
+        self._self_test_started_at: Optional[datetime] = None
+        self.report_bar = ReportBar()
 
         self.device_box = QComboBox()
         self.device_box.setProperty("hardwaretest_dynamic", True)
@@ -162,6 +168,7 @@ class NvmePanel(QWidget):
         layout.addWidget(self.status)
         layout.addWidget(self.self_test_progress)
         layout.addWidget(io_group)
+        layout.addWidget(self.report_bar)
         layout.addWidget(self.details)
         self.setLayout(layout)
 
@@ -351,6 +358,10 @@ class NvmePanel(QWidget):
         self._set_runtime_text(self.status, "NVMe-Gesundheitsdaten aktualisiert.")
 
     def _render_health_details(self, health: NvmeHealth, device: NvmeDevice) -> None:
+        self.details.setPlainText(self._health_text(health, device))
+
+    @staticmethod
+    def _health_text(health: NvmeHealth, device: NvmeDevice) -> str:
         if health.critical_warning is None:
             warning = language_manager.tr("UNBEKANNT")
         elif health.critical_warning == 0:
@@ -380,9 +391,10 @@ class NvmePanel(QWidget):
             language_manager.tr("Gelesene Dateneinheiten: {value}", value=_number(health.data_units_read)),
             language_manager.tr("Geschriebene Dateneinheiten: {value}", value=_number(health.data_units_written)),
         ]
-        self.details.setPlainText("\n".join(lines))
+        return "\n".join(lines)
 
     def _self_test_started(self, _value: object) -> None:
+        self._self_test_started_at = datetime.now()
         self._set_self_test_active(None)
 
     def _poll_self_test_status(self) -> None:
@@ -407,6 +419,7 @@ class NvmePanel(QWidget):
             self._status_timer.stop()
             self.self_test_progress.setVisible(False)
             self._show_self_test_result(value)
+            self._write_self_test_report(value)
 
     def _render_self_test_log(self, status: NvmeSelfTestStatus) -> None:
         """Show a visible, durable result instead of only changing a label."""
@@ -471,6 +484,10 @@ class NvmePanel(QWidget):
         if not self._fio_available():
             return
         rw = str(self.benchmark_mode.currentData() or "read")
+        self._io_params = [(language_manager.tr("Test"), language_manager.tr("NVMe-Lese-Benchmark")),
+                           (language_manager.tr("Modus"), self.benchmark_mode.currentText()),
+                           (language_manager.tr("Dauer (geplant)"), f"{self.benchmark_duration.value()} s")]
+        self._io_params += [(d.namespace_path, self._device_label(d)) for d in devices]
         self._start_io_runner(
             FioNvmeReadBenchmarkRunner(
                 TestParameters(duration_seconds=self.benchmark_duration.value()),
@@ -515,6 +532,8 @@ class NvmePanel(QWidget):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        self._io_params = [(language_manager.tr("Test"), language_manager.tr("Vollständiger NVMe-Lese-Test"))]
+        self._io_params += [(d.namespace_path, self._device_label(d)) for d in devices]
         self._start_io_runner(
             FioNvmeFullReadRunner(
                 TestParameters(duration_seconds=0),
@@ -555,6 +574,7 @@ class NvmePanel(QWidget):
             return
         self._io_runner = runner
         self._io_timed = timed
+        self._io_started_at = datetime.now()
         self._io_status_text = status
         self._io_waiting_for_auth = not getattr(runner, "authorized", True)
         self._set_runtime_text(self.io_result, "⌛ NVMe-Lese-Test läuft")
@@ -641,6 +661,8 @@ class NvmePanel(QWidget):
         self._io_timer.stop()
         result = runner.get_result()
         self._io_runner = None
+        if aborted or getattr(runner, "authorized", True):
+            self._write_io_report(runner, result, aborted)
         self.io_progress.setVisible(False)
         self._set_io_actions_enabled(self.device_box.count() > 0)
         self.stop_io_btn.setEnabled(False)
@@ -695,6 +717,41 @@ class NvmePanel(QWidget):
                 count=len(getattr(runner, "devices", [])),
             )
         self.io_result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+
+    def _write_io_report(self, runner: BaseTestRunner, result, aborted: bool) -> None:
+        tr = language_manager.tr
+        report = runner_report("nvme-lesetest", tr("NVMe – Lesetest (fio)"), result, started=self._io_started_at,
+                               parameters=self._io_params, log_text=self.details.toPlainText(), cancelled=aborted)
+        if isinstance(runner, FioNvmeReadBenchmarkRunner) and result is not None:
+            rows = [[item["device"], f"{float(item['throughput_mib_s']):.1f}", f"{float(item['iops']):.0f}",
+                     f"{float(item['latency_ms']):.3f}"] for item in runner.device_summaries()]
+            if rows:
+                report.add_section(tr("Durchsatz je Laufwerk"), "table", rows,
+                                   header=[tr("Laufwerk"), "MiB/s", "IOPS", tr("Ø-Latenz (ms)")])
+        if self._last_health is not None:
+            report.add_section(tr("Gesundheitsdaten ({device})", device=self._last_health.device), "text",
+                               text=self._health_text(self._last_health, self._last_health_device))
+        self.report_bar.publish(report)
+
+    def _write_self_test_report(self, status: NvmeSelfTestStatus) -> None:
+        tr = language_manager.tr
+        device = self._selected_device_info()
+        if status.passed is True:
+            state, summary = STATUS_PASSED, tr("NVMe-Selbsttest bestanden.")
+        elif status.passed is False:
+            state, summary = STATUS_FAILED, tr("NVMe-Selbsttest fehlgeschlagen (Code {code}).", code=status.result_code)
+        else:
+            state, summary = STATUS_WARNING, tr("Selbsttest abgeschlossen, Ergebnis nicht auswertbar.")
+        report = Report(test="nvme-selbsttest", title=tr("NVMe – Geräteselbsttest"), status=state, summary=summary,
+                        started=self._self_test_started_at, finished=datetime.now(),
+                        parameters=[(tr("Gerät"), device.namespace_path or self._selected_device()),
+                                    (tr("Modell"), device.model or "–"), (tr("Seriennummer"), device.serial or "–"),
+                                    (tr("Firmware"), device.firmware or "–")])
+        if self._last_health is not None:
+            report.add_section(tr("Gesundheitsdaten ({device})", device=self._last_health.device), "text",
+                               text=self._health_text(self._last_health, self._last_health_device))
+        report.raw_output = status.raw_log
+        self.report_bar.publish(report)
 
     def _worker_finished(self, worker=None) -> None:
         # Einziger Ort für Referenzfreigabe und Re-Enable (Thread ist hier beendet).

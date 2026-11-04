@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, ClassVar, List, Optional, Tuple
 
@@ -50,6 +51,7 @@ from hardwaretest.tests.fio_runner import (
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.system_events import system_events
+from hardwaretest.ui.widgets.report_bar import ReportBar, runner_report
 
 
 RAM_BACKED_FSTYPES = frozenset({"tmpfs", "ramfs", "overlay", "squashfs", "devtmpfs"})
@@ -388,6 +390,8 @@ class DeviceSelectionMixin:
 
 
 class FileDiskPanel(QWidget):
+	_report_test = "disk-datei"
+	_report_title = "Disk (Datei) – fio-Dateitest"
 	"""Runs fio against a temporary file."""
 
 	log_signal = Signal(str)
@@ -410,6 +414,9 @@ class FileDiskPanel(QWidget):
 		super().__init__(parent)
 		self.system_info_provider = system_info_provider
 		self.runner: Optional[BaseTestRunner] = None
+		self._started_at: Optional[datetime] = None
+		self._run_params: list[tuple[str, str]] = []
+		self.report_bar = ReportBar()
 		self._system_info = self.system_info_provider()
 		self._reserved_core_limit = max(1, self._system_info.reserved_core_limit())
 
@@ -503,6 +510,8 @@ class FileDiskPanel(QWidget):
 		group_layout.addLayout(form)
 		group_layout.addWidget(safety_label)
 		group_layout.addLayout(btn_row)
+		group_layout.addWidget(self.result_label)
+		group_layout.addWidget(self.report_bar)
 		group_layout.addWidget(self.progress_bar)
 		group_layout.addWidget(self.progress_label)
 		group.setLayout(group_layout)
@@ -627,6 +636,16 @@ class FileDiskPanel(QWidget):
 		self.progress_label.setText(language_manager.tr("Fortschritt: 0%"))
 		self.result_label.setText("")
 		self.result_label.setStyleSheet("")
+		self._started_at = datetime.now()
+		self._run_params = [
+			(language_manager.tr("Testdatei"), str(path)),
+			(language_manager.tr("Lastprofil"), self.workload_box.currentText()),
+			(language_manager.tr("Dateigröße"), f"{size_mb} MB"),
+			(language_manager.tr("Blockgröße"), block_size),
+			(language_manager.tr("I/O-Tiefe"), str(self.io_depth.value())),
+			(language_manager.tr("Jobs"), str(usable_jobs)),
+			(language_manager.tr("Dauer (geplant)"), f"{duration_seconds} s"),
+		]
 		self.timer.start()
 		self._append_log("fio (Datei) gestartet...")
 
@@ -668,6 +687,8 @@ class FileDiskPanel(QWidget):
 		result = self.runner.get_result()
 		if result is None:
 			return
+		self.report_bar.publish(runner_report(self._report_test, language_manager.tr(self._report_title), result,
+			started=self._started_at, parameters=self._run_params, log_text=self.log_view.toPlainText(), cancelled=aborted))
 		if result.passed:
 			if aborted:
 				self.result_label.setText("✓ ABGEBROCHEN – Bis zum Abbruch keine Fehler erkannt")
@@ -752,6 +773,8 @@ class FileDiskPanel(QWidget):
 
 
 class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
+	_report_test = "disk-geraete"
+	_report_title = "Disk (Geräte) – vollständiger Lesetest"
 	"""Runs heuristic fio read sweeps across entire block devices."""
 
 	log_signal = Signal(str)
@@ -765,6 +788,9 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		super().__init__(parent)
 		self.system_info_provider = system_info_provider
 		self.runner: Optional[BaseTestRunner] = None
+		self._started_at: Optional[datetime] = None
+		self._run_params: list[tuple[str, str]] = []
+		self.report_bar = ReportBar()
 		self._system_info = self.system_info_provider()
 		self._init_device_selection()
 
@@ -847,6 +873,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		group_layout.addLayout(form)
 		group_layout.addLayout(btn_row)
 		group_layout.addWidget(self.result_label)
+		group_layout.addWidget(self.report_bar)
 		group_layout.addWidget(self.progress_bar)
 		group_layout.addWidget(self.progress_label)
 		group_layout.addWidget(device_hint)
@@ -916,6 +943,10 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 			return
 		joined = ", ".join(paths)
 		self._append_log(f"Rohgeräte-Read gestartet auf: {joined}")
+		self._started_at = datetime.now()
+		self._run_params = [(language_manager.tr("Datenträger"), joined),
+			(language_manager.tr("Blockgröße"), block_size), (language_manager.tr("I/O-Tiefe"), str(self.io_depth.value()))]
+		self._run_params += [(dev.path, f"{dev.model} {dev.display_size} {dev.serial}".strip()) for dev in selected]
 		self.start_btn.setEnabled(False)
 		self.stop_btn.setEnabled(True)
 		self.progress_bar.setValue(0)
@@ -965,6 +996,8 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 		result = self.runner.get_result()
 		if result is None:
 			return
+		self.report_bar.publish(runner_report(self._report_test, language_manager.tr(self._report_title), result,
+			started=self._started_at, parameters=self._run_params, log_text=self.log_view.toPlainText(), cancelled=aborted))
 		if result.passed:
 			if aborted:
 				self.result_label.setText("✓ ABGEBROCHEN – Bis zum Abbruch alle Blöcke fehlerfrei gelesen")
@@ -1062,6 +1095,8 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 
 
 class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
+	_report_test = "disk-destruktiv"
+	_report_title = "Disk (Destruktiv) – Schreib-/Lesetest"
 	"""Runs destructive write/read/verify passes across block devices."""
 
 	log_signal = Signal(str)
@@ -1075,6 +1110,9 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		super().__init__(parent)
 		self.system_info_provider = system_info_provider
 		self.runner: Optional[BaseTestRunner] = None
+		self._started_at: Optional[datetime] = None
+		self._run_params: list[tuple[str, str]] = []
+		self.report_bar = ReportBar()
 		self._system_info = self.system_info_provider()
 		self._init_device_selection()
 
@@ -1168,6 +1206,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		group_layout.addLayout(form)
 		group_layout.addLayout(ctrl_row)
 		group_layout.addWidget(self.result_label)
+		group_layout.addWidget(self.report_bar)
 		group_layout.addWidget(self.progress_bar)
 		group_layout.addWidget(self.progress_label)
 		group.setLayout(group_layout)
@@ -1278,6 +1317,10 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 			return
 		joined = ", ".join(paths)
 		self._append_log(f"Destruktiver Schreib-/Lesetest gestartet auf: {joined}")
+		self._started_at = datetime.now()
+		self._run_params = [(language_manager.tr("Datenträger"), joined), (language_manager.tr("Blockgröße"), block_size),
+			(language_manager.tr("I/O-Tiefe"), str(self.io_depth.value())), (language_manager.tr("Durchgänge"), str(self.passes_box.value()))]
+		self._run_params += [(dev.path, f"{dev.model} {dev.display_size} {dev.serial}".strip()) for dev in selected]
 		self.start_btn.setEnabled(False)
 		self.stop_btn.setEnabled(True)
 		self.progress_bar.setValue(0)
@@ -1337,6 +1380,8 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 		result = self.runner.get_result()
 		if result is None:
 			return
+		self.report_bar.publish(runner_report(self._report_test, language_manager.tr(self._report_title), result,
+			started=self._started_at, parameters=self._run_params, log_text=self.log_view.toPlainText(), cancelled=aborted))
 		if result.passed:
 			if aborted:
 				self.result_label.setText("✓ ABGEBROCHEN – Bis zum Abbruch keine Verifikationsfehler")

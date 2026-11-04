@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Callable, Optional
 
 from PySide6.QtCore import QThread, QTimer, Signal, Qt
@@ -30,6 +31,7 @@ from hardwaretest.tests.memory_fill import MemoryFillRunner
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.system_events import system_events
+from hardwaretest.ui.widgets.report_bar import ReportBar, runner_report
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
@@ -86,6 +88,9 @@ class MemoryFillPanel(QWidget):
         super().__init__(parent)
         self.system_info_provider = system_info_provider
         self.runner: Optional[BaseTestRunner] = None
+        self._started_at: Optional[datetime] = None
+        self._run_params: list[tuple[str, str]] = []
+        self.report_bar = ReportBar()
         self._system_info = self.system_info_provider()
         self._swap_worker: Optional[_SwapWorker] = None
         self._swap_on_worker: Optional[_SwapOnWorker] = None
@@ -225,6 +230,7 @@ class MemoryFillPanel(QWidget):
         layout.addLayout(util_row)
         layout.addLayout(btn_row)
         layout.addWidget(self.result_label)
+        layout.addWidget(self.report_bar)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.progress)
         layout.addWidget(self.log_view)
@@ -318,6 +324,14 @@ class MemoryFillPanel(QWidget):
             self.runner = None
             return
 
+        self._started_at = datetime.now()
+        self._run_params = [
+            (language_manager.tr("Dauer (geplant)"), f"{duration} s"),
+            (language_manager.tr("Arbeitsspeicher"), f"{mem} MB"),
+            (language_manager.tr("Reserve"), f"{reserve} MB"),
+            (language_manager.tr("Blockgröße"), f"{chunk} MB"),
+            (language_manager.tr("Pause"), f"{self.pause_seconds.value()} s"),
+        ]
         self.timer.start()
         self.temp_widget.start_monitoring()
         self.start_btn.setEnabled(False)
@@ -340,6 +354,7 @@ class MemoryFillPanel(QWidget):
         self.progress.setText(language_manager.tr("Manuell gestoppt"))
         self._show_result()
         self._append_log("Test manuell gestoppt.")
+        self._write_report(cancelled=True)
 
     # --------------------------------------------------------------------- #
     #  Log / Fortschritt / Ergebnis                                          #
@@ -365,6 +380,14 @@ class MemoryFillPanel(QWidget):
             self.progress_bar.setValue(100)
             self.progress.setText(language_manager.tr("Fertig"))
             self._show_result()
+            self._write_report()
+
+    def _write_report(self, cancelled: bool = False) -> None:
+        result = self.runner.get_result() if self.runner else None
+        report = runner_report("ram-fuelltest", language_manager.tr("RAM-Fülltest (zyklisch Schreiben/Prüfen)"), result,
+                               started=self._started_at, parameters=self._run_params,
+                               log_text=self.log_view.toPlainText(), cancelled=cancelled)
+        self.report_bar.publish(report)
 
     def _show_result(self) -> None:
         """Zeigt das Pass/Fail-Ergebnis an."""

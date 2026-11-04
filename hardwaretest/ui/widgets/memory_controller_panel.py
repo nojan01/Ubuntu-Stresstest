@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer, Signal, Qt
@@ -24,6 +25,7 @@ from hardwaretest.tests.memory_controller import MC_STRESSORS, MemoryControllerR
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.system_events import system_events
+from hardwaretest.ui.widgets.report_bar import ReportBar, runner_report
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 
 
@@ -43,6 +45,9 @@ class MemoryControllerPanel(QWidget):
         self.runner: Optional[BaseTestRunner] = None
         self._system_info = self.system_info_provider()
         self._reserved_core_limit = self._system_info.reserved_core_limit()
+        self._started_at: Optional[datetime] = None
+        self._run_params: list[tuple[str, str]] = []
+        self.report_bar = ReportBar()
 
         self.info_label = QLabel("Systemdaten werden ermittelt...")
         self.refresh_btn = QPushButton("Systemwerte aktualisieren")
@@ -123,6 +128,7 @@ class MemoryControllerPanel(QWidget):
         layout.addLayout(stressor_layout)
         layout.addLayout(btn_row)
         layout.addWidget(self.result_label)
+        layout.addWidget(self.report_bar)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.progress)
         layout.addWidget(self.log_view)
@@ -176,6 +182,13 @@ class MemoryControllerPanel(QWidget):
             self._append_log(f"Fehler beim Start: {exc}")
             self.runner = None
             return
+        self._started_at = datetime.now()
+        self._run_params = [
+            (language_manager.tr("Stressoren"), ", ".join(stressors)),
+            (language_manager.tr("Dauer (geplant)"), f"{duration_seconds} s"),
+            (language_manager.tr("CPU-Worker"), str(usable_threads)),
+            (language_manager.tr("Operationen"), str(self.operations.value())),
+        ]
         self.timer.start()
         self.temp_widget.start_monitoring()
         self.start_btn.setEnabled(False)
@@ -198,6 +211,7 @@ class MemoryControllerPanel(QWidget):
         self.progress.setText(language_manager.tr("Manuell gestoppt"))
         self._show_result()
         self._append_log("Test manuell gestoppt.")
+        self._write_report(cancelled=True)
 
     def _append_log(self, text: str) -> None:
         self.log_view.append(text)
@@ -219,6 +233,14 @@ class MemoryControllerPanel(QWidget):
             self.progress_bar.setValue(100)
             self.progress.setText(language_manager.tr("Fertig"))
             self._show_result()
+            self._write_report()
+
+    def _write_report(self, cancelled: bool = False) -> None:
+        result = self.runner.get_result() if self.runner else None
+        report = runner_report("speichercontroller", language_manager.tr("Speichercontroller-Test (stress-ng)"), result,
+                               started=self._started_at, parameters=self._run_params,
+                               log_text=self.log_view.toPlainText(), cancelled=cancelled)
+        self.report_bar.publish(report)
 
     def _show_result(self) -> None:
         """Zeigt das Pass/Fail-Ergebnis an."""

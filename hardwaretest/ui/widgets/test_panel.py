@@ -6,6 +6,7 @@ Pass/Fail-Bewertung und memtest86+-Hinweis.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Callable, Optional
 
 from PySide6.QtCore import QThread, QTimer, Signal, Qt
@@ -36,6 +37,7 @@ from hardwaretest.tests.stress_ng import STRESS_NG_MODES, StressNgRunner
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.system_events import system_events
+from hardwaretest.ui.widgets.report_bar import ReportBar, runner_report
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
@@ -111,6 +113,9 @@ class TestPanel(QWidget):
         self._swap_worker: Optional[_SwapWorker] = None
         self._swap_on_worker: Optional[_SwapOnWorker] = None
         self._system_info: SystemInfo = self.system_info_provider()
+        self._started_at: Optional[datetime] = None
+        self._run_params: list[tuple[str, str]] = []
+        self.report_bar = ReportBar()
 
         # --- Testmodus-Auswahl ---
         self.mode_box = QComboBox()
@@ -233,6 +238,7 @@ class TestPanel(QWidget):
         layout.addLayout(util_row)
         layout.addLayout(btn_row)
         layout.addWidget(self.result_label)
+        layout.addWidget(self.report_bar)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.progress)
         layout.addWidget(self.log_view)
@@ -314,6 +320,15 @@ class TestPanel(QWidget):
             self._handle_runner_log(f"Fehler beim Start: {exc}")
             self.runner = None
             return
+        self._started_at = datetime.now()
+        self._run_params = [
+            (language_manager.tr("Testmodus"), STRESS_NG_MODES.get(mode, {}).get("label", mode)),
+            (language_manager.tr("Dauer (geplant)"), f"{duration_seconds} s"),
+            (language_manager.tr("CPU-Worker"), str(usable_cores)),
+            (language_manager.tr("CPU-Maske"), cpu_mask or "–"),
+            (language_manager.tr("Arbeitsspeicher"), f"{self.memory_mb.value()} MB"),
+            (language_manager.tr("Swap"), language_manager.tr("aktiv" if self._system_info.swap_enabled else "deaktiviert")),
+        ]
         self.timer.start()
         self.temp_widget.start_monitoring()
         self.start_btn.setEnabled(False)
@@ -336,6 +351,7 @@ class TestPanel(QWidget):
         self.progress.setText(language_manager.tr("Manuell gestoppt"))
         self._show_result()
         self._append_log("Test manuell gestoppt.")
+        self._write_report(cancelled=True)
 
     def _append_log(self, text: str) -> None:
         self.log_view.append(text)
@@ -357,6 +373,7 @@ class TestPanel(QWidget):
             self.progress_bar.setValue(100)
             self.progress.setText(language_manager.tr("Fertig"))
             self._show_result()
+            self._write_report()
 
     def _show_result(self) -> None:
         """Zeigt das Pass/Fail-Ergebnis an."""
@@ -380,6 +397,14 @@ class TestPanel(QWidget):
             self.result_label.setStyleSheet(
                 "color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
             )
+
+    def _write_report(self, cancelled: bool = False) -> None:
+        """Schreibt den HTML-Bericht nach ~/Downloads (hwtest-stress-ng-…)."""
+        result = self.runner.get_result() if self.runner else None
+        report = runner_report(self._title, language_manager.tr("{title} – CPU-/RAM-Stresstest", title=self._title),
+                               result, started=self._started_at, parameters=self._run_params,
+                               log_text=self.log_view.toPlainText(), cancelled=cancelled)
+        self.report_bar.publish(report)
 
     def _disable_swap(self) -> None:
         """Deaktiviert Swap – prueft Sicherheit, dann im Hintergrund-Thread."""

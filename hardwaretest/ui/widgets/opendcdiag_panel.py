@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,7 @@ from hardwaretest.core.test_runner import TestParameters
 from hardwaretest.tests.opendcdiag import OpenDcDiagRunner, default_opendcdiag_path, runs_as_root
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.utils import build_mcelog_command, launch_command_in_terminal
+from hardwaretest.ui.widgets.report_bar import ReportBar, runner_report
 from hardwaretest.ui.widgets.temperature_widget import TemperatureWidget
 
 
@@ -35,6 +37,9 @@ class OpenDcDiagPanel(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.runner: Optional[OpenDcDiagRunner] = None
+        self._started_at: Optional[datetime] = None
+        self._run_params: list[tuple[str, str]] = []
+        self.report_bar = ReportBar()
 
         default_binary = default_opendcdiag_path()
         variant = ("generische Variante (CPU ohne AVX2)" if default_binary.endswith("-generic")
@@ -122,6 +127,7 @@ class OpenDcDiagPanel(QWidget):
         layout.addLayout(form)
         layout.addLayout(buttons)
         layout.addWidget(self.result_label)
+        layout.addWidget(self.report_bar)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.progress)
         layout.addWidget(self.log_view)
@@ -172,6 +178,12 @@ class OpenDcDiagPanel(QWidget):
             self.log_view.append(f"Fehler beim Start: {exc}")
             self.runner = None
             return
+        self._started_at = datetime.now()
+        self._run_params = [
+            (language_manager.tr("Programm"), str(binary)),
+            (language_manager.tr("CPU-Auswahl"), self.selected_cpuset() or language_manager.tr("Alle CPUs")),
+            (language_manager.tr("Dauer (geplant)"), f"{duration} s"),
+        ]
         self.timer.start()
         self.temp_widget.start_monitoring()
         self.start_btn.setEnabled(False)
@@ -192,6 +204,7 @@ class OpenDcDiagPanel(QWidget):
         self.progress_bar.setValue(0)
         self.progress.setText(language_manager.tr("Manuell gestoppt"))
         self._show_result()
+        self._write_report(cancelled=True)
 
     def _update_progress(self) -> None:
         if not self.runner:
@@ -207,6 +220,14 @@ class OpenDcDiagPanel(QWidget):
             self.progress_bar.setValue(100)
             self.progress.setText(language_manager.tr("Fertig"))
             self._show_result()
+            self._write_report()
+
+    def _write_report(self, cancelled: bool = False) -> None:
+        result = self.runner.get_result() if self.runner else None
+        report = runner_report("opendcdiag", language_manager.tr("OpenDCDiag – stille Datenfehler je Kern"), result,
+                               started=self._started_at, parameters=self._run_params,
+                               log_text=self.log_view.toPlainText(), cancelled=cancelled)
+        self.report_bar.publish(report)
 
     def _show_result(self) -> None:
         result = self.runner.get_result() if self.runner else None

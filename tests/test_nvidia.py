@@ -258,3 +258,93 @@ def test_dcgm_runtime_error_is_reported_as_evaluation_error():
     assert error is not None and "has no parameter" in error and "\n" not in error
     report = "\n".join(runner.report_lines("de"))
     assert "DCGM-Fehler:" in report and "Unbekanntes Ergebnisformat" not in report
+
+
+# --- HTML-Bericht / Datenblatt -------------------------------------------------
+
+from hardwaretest.core import nvidia_report  # noqa: E402
+
+_SPECS_CSV = (
+    "0, NVIDIA A100-PCIE-40GB, 1234567890, GPU-abc, 92.00.45.00.03, 00000000:17:00.0, 0x20F110DE, 0x145F10DE, "
+    "595.10, 8.0, 40960 MiB, Enabled, Enabled, 0, 0, No, 4, 4, 16, 16, 250.00 W, 250.00 W, 250.00 W, 1410 MHz, "
+    "1215 MHz, 1410 MHz, 45, [N/A], G001.0000.03.02, G001.0000.03.02, G001.0000.03.02, Enabled, Default\n"
+    "1, NVIDIA A100-PCIE-40GB, 1234567891, GPU-def, 92.00.45.00.03, 00000000:65:00.0, 0x20F110DE, 0x145F10DE, "
+    "595.10, 8.0, 40960 MiB, Enabled, Enabled, 0, 0, No, 4, 4, 16, 16, 250.00 W, 250.00 W, 250.00 W, 1410 MHz, "
+    "1215 MHz, 1410 MHz, 47, [N/A], G001.0000.03.02, G001.0000.03.02, G001.0000.03.02, Enabled, Default\n"
+)
+_REMAPPED_CSV = "00000000:17:00.0, 0, 0, No, No\n00000000:65:00.0, 2, 1, Yes, No\n"
+
+
+def _fake_run(stdout_by_arg):
+    def run(cmd, **_kwargs):
+        for key, out in stdout_by_arg.items():
+            if any(key in part for part in cmd):
+                return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+    return run
+
+
+def test_parse_specs_csv_cleans_unsupported_values():
+    specs = nvidia_report.parse_specs_csv(_SPECS_CSV)
+    assert len(specs) == 2
+    assert specs[0]["name"] == "NVIDIA A100-PCIE-40GB"
+    assert specs[0]["serial"] == "1234567890"
+    assert specs[0]["fan.speed"] == "–"
+    assert specs[1]["pci.bus_id"] == "00000000:65:00.0"
+
+
+def test_merge_remapped_rows_by_bus_id():
+    specs = nvidia_report.parse_specs_csv(_SPECS_CSV)
+    nvidia_report.merge_remapped_rows(specs, _REMAPPED_CSV)
+    assert specs[1]["remapped_rows.correctable"] == "2"
+    assert specs[1]["remapped_rows.pending"] == "Yes"
+    assert specs[0]["remapped_rows.uncorrectable"] == "0"
+
+
+def test_collect_gpu_specs_filters_indices_and_survives_missing_tool():
+    run = _fake_run({"--query-gpu": _SPECS_CSV, "--query-remapped-rows": _REMAPPED_CSV})
+    specs = nvidia_report.collect_gpu_specs([1], run=run)
+    assert [s["index"] for s in specs] == ["1"]
+    assert specs[0]["remapped_rows.correctable"] == "2"
+
+    def missing(cmd, **_kwargs):
+        raise FileNotFoundError("nvidia-smi")
+
+    assert nvidia_report.collect_gpu_specs(run=missing) == []
+
+
+def test_render_html_contains_specs_results_and_no_json():
+    specs = nvidia_report.parse_specs_csv(_SPECS_CSV)
+    payload = {
+        "DCGM Diagnostic": {
+            "test_categories": [
+                {"category": "Hardware", "tests": [
+                    {"name": "memory", "results": [
+                        {"gpu_id": "0", "status": "Pass"},
+                        {"gpu_id": "1", "status": "Fail", "warnings": [{"warning": "ECC error"}]},
+                    ]},
+                ]},
+            ],
+            "runtime_error": "Unable to complete test",
+        }
+    }
+    html = nvidia_report.render_html(
+        specs, "de", payload=payload, title_suffix="DCGM-Diagnose Stufe 2",
+        verdict="FEHLGESCHLAGEN", verdict_color="#c62828",
+        details=["1 Test fehlgeschlagen"], hints=["Hinweis A"], meta=[("DCGM-Stufe", "2")])
+    assert "<html" in html and "DCGM-Diagnose Stufe 2" in html
+    assert "NVIDIA A100-PCIE-40GB" in html and "1234567891" in html
+    assert "memory" in html and "ECC error" in html and "Unable to complete test" in html
+    assert "FEHLGESCHLAGEN" in html and "Hinweis A" in html and "DCGM-Stufe" in html
+    assert "test_categories" not in html and '"status"' not in html
+
+
+def test_render_html_without_payload_is_a_datasheet():
+    html = nvidia_report.render_html(nvidia_report.parse_specs_csv(_SPECS_CSV), "en", title_suffix="GPU data sheet")
+    assert "GPU data sheet" in html and "GPU-abc" in html
+
+
+def test_report_path_in_downloads(tmp_path):
+    path = nvidia_report.report_path("dcgm-diagnose", downloads=tmp_path)
+    assert path.parent == tmp_path
+    assert path.name.startswith("dcgm-diagnose-") and path.suffix == ".html"

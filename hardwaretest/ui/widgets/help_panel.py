@@ -615,6 +615,12 @@ DCGM-Diagnosen sind für Rechenzentrums-GPUs vorgesehen; bei Workstation-Karten
 laufen nur Teile, GeForce-Karten werden nicht unterstützt.
 Ist <code>dcgmi</code> nicht installiert, wird der Bereich „DCGM-Diagnose“
 ausgeblendet (ebenso die DCGM-Option im Gesamttest).
+Nach jeder DCGM-Diagnose wird ein <b>HTML-Bericht</b> in <code>~/Downloads</code>
+(<code>dcgm-diagnose-DATUM.html</code>) abgelegt: Gesamtergebnis, Datenblatt aller
+geprüften GPUs (Modell, Seriennummer, UUID, VBIOS, PCIe-Generation/-Breite, ECC,
+Retired/Remapped Pages, Leistungsgrenzen, Takte, Temperatur) sowie die Ergebnistabelle
+pro Test und GPU. „HTML-Bericht öffnen“ zeigt ihn im Browser. „GPU-Datenblatt (HTML)“
+erzeugt dasselbe Datenblatt ohne Diagnose (<code>gpu-datenblatt-DATUM.html</code>).
 Schlägt bei zwei oder mehr GPUs nur der <b>pcie</b>-Test mit „P2P write verification
 failed: buffer mismatch“ (ID 86/87) fehl, ist das kein GPU-Defekt: Der Peer-to-Peer-Teil
 kopiert direkt zwischen zwei GPUs und scheitert bei aktivem IOMMU/VT-d mit PCIe-ACS oder
@@ -1454,6 +1460,12 @@ DCGM diagnostics target data-center GPUs; on workstation cards only parts run,
 GeForce cards are not supported.
 If <code>dcgmi</code> is not installed, the “DCGM diagnostics” section is hidden
 (as is the DCGM option in the test plan).
+After every DCGM diagnostic an <b>HTML report</b> is written to <code>~/Downloads</code>
+(<code>dcgm-diagnose-DATE.html</code>): overall verdict, data sheet of all tested GPUs
+(model, serial number, UUID, VBIOS, PCIe generation/width, ECC, retired/remapped pages,
+power limits, clocks, temperature) and the result table per test and GPU.
+“Open HTML report” shows it in the browser. “GPU data sheet (HTML)” creates the same
+data sheet without running a diagnostic (<code>gpu-datenblatt-DATE.html</code>).
 If, with two or more GPUs, only the <b>pcie</b> test fails with “P2P write verification
 failed: buffer mismatch” (ID 86/87), this is not a GPU defect: the peer-to-peer part copies
 directly between two GPUs and fails with IOMMU/VT-d plus PCIe ACS enabled or GPUs on

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Signal
@@ -22,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardwaretest.core import privilege
+from hardwaretest.core import nvidia_report, privilege
 from hardwaretest.core.nvidia import (
     LinuxNvidiaStatus,
     NvidiaGpu,
@@ -38,6 +40,7 @@ from hardwaretest.tests.nvidia_runner import (
     failed_checks,
 )
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.report_browser import open_html_report
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
 
@@ -63,6 +66,20 @@ class _GpuTelemetryWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class _GpuSpecsWorker(QThread):
+    completed = Signal(object)
+
+    def __init__(self, indices: Optional[list[int]], parent=None) -> None:
+        super().__init__(parent)
+        self._indices = indices
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(nvidia_report.collect_gpu_specs(self._indices))
+        except Exception:  # pragma: no cover - driver dependent
+            self.completed.emit([])
+
+
 class NvidiaPanel(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -73,6 +90,10 @@ class NvidiaPanel(QWidget):
         self._monitoring = False
         self._runner: Optional[DcgmDiagnosticRunner] = None
         self._linux_status: Optional[LinuxNvidiaStatus] = None
+        self._specs_worker: Optional[_GpuSpecsWorker] = None
+        self._diag_specs: Optional[list[dict[str, str]]] = None
+        self._diag_meta: dict[str, object] = {}
+        self._last_html: Optional[Path] = None
 
         self.hint = QLabel(
             "nvidia-smi liefert Inventar- und Gesundheitsdaten. Der GPU-Lasttest läuft auf jeder "
@@ -83,6 +104,9 @@ class NvidiaPanel(QWidget):
 
         self.scan_btn = QPushButton("NVIDIA-GPUs suchen")
         self.linux_check_btn = QPushButton("Linux-Basisprüfung")
+        self.datasheet_btn = QPushButton("GPU-Datenblatt (HTML)")
+        self.datasheet_btn.setToolTip("Technische Daten aller NVIDIA-GPUs (nvidia-smi) als HTML-Bericht in ~/Downloads speichern und öffnen.")
+        self.datasheet_btn.setEnabled(False)
         self.select_all = QCheckBox("Alle NVIDIA-GPUs auswählen")
         self.gpu_container = QWidget()
         self.gpu_layout = QVBoxLayout(self.gpu_container)
@@ -143,6 +167,9 @@ class NvidiaPanel(QWidget):
         self.start_btn = QPushButton("DCGM-Diagnose starten")
         self.stop_btn = QPushButton("DCGM-Diagnose stoppen")
         self.stop_btn.setEnabled(False)
+        self.html_btn = QPushButton("HTML-Bericht öffnen")
+        self.html_btn.setToolTip("Der HTML-Bericht (Datenblatt + DCGM-Ergebnisse) wird nach jeder Diagnose in ~/Downloads abgelegt.")
+        self.html_btn.setEnabled(False)
         self.result = QLabel("")
         self.result.setWordWrap(True)
         self.progress = QProgressBar()
@@ -192,6 +219,7 @@ class NvidiaPanel(QWidget):
         diag_buttons = QHBoxLayout()
         diag_buttons.addWidget(self.start_btn)
         diag_buttons.addWidget(self.stop_btn)
+        diag_buttons.addWidget(self.html_btn)
         diag_layout = QVBoxLayout()
         diag_layout.addLayout(diag_form)
         diag_layout.addLayout(diag_buttons)
@@ -212,6 +240,7 @@ class NvidiaPanel(QWidget):
         top = QHBoxLayout()
         top.addWidget(self.scan_btn)
         top.addWidget(self.linux_check_btn)
+        top.addWidget(self.datasheet_btn)
         top.addWidget(self.inventory_status, 1)
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -239,6 +268,8 @@ class NvidiaPanel(QWidget):
         self.select_all.toggled.connect(self._select_all)
         self.start_btn.clicked.connect(self._start_diagnostic)
         self.stop_btn.clicked.connect(self._stop_diagnostic)
+        self.html_btn.clicked.connect(self._open_html)
+        self.datasheet_btn.clicked.connect(self._export_datasheet)
         self.stress_start_btn.clicked.connect(self._start_stress)
         self.stress_stop_btn.clicked.connect(self._stop_diagnostic)
         self.monitor_start_btn.clicked.connect(self._start_monitoring)
@@ -326,6 +357,7 @@ class NvidiaPanel(QWidget):
 
     def _show_gpus(self, value: object) -> None:
         self._gpus = list(value) if isinstance(value, list) else []
+        self.datasheet_btn.setEnabled(bool(self._gpus))
         self._clear_checks()
         for position, gpu in enumerate(self._gpus):
             checkbox = QCheckBox(f"GPU {gpu.index}: {gpu.model} – {gpu.uuid}")
@@ -409,6 +441,14 @@ class NvidiaPanel(QWidget):
             return
         runner._ui_log_lines = lines
         self._runner = runner
+        self._diag_specs = None
+        try:
+            command = " ".join(runner.build_command())
+        except Exception:  # pragma: no cover - dcgmi fehlt
+            command = "dcgmi diag"
+        self._diag_meta = {"level": level, "indices": list(indices), "skip_p2p": self.skip_p2p_box.isChecked(),
+                           "started": datetime.now(), "command": command}
+        self._collect_specs(indices, self._store_diag_specs)
         self.output.clear()
         self._set_runtime_text(self.result, "⌛ DCGM-Diagnose läuft")
         self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
@@ -629,6 +669,89 @@ class NvidiaPanel(QWidget):
                 fail_key,
                 failed=counts["fail"], names=failed_names,
             )
+
+        try:
+            self._write_diag_html(runner, counts, failed_names, aborted, evaluation_error)
+        except Exception as exc:  # pragma: no cover - Bericht darf die Auswertung nie blockieren
+            self.output.append("\n" + language_manager.tr("HTML-Bericht konnte nicht gespeichert werden: {error}", error=str(exc)))
+
+    def _collect_specs(self, indices: Optional[list[int]], callback) -> None:
+        if self._specs_worker is not None:
+            return
+        worker = _GpuSpecsWorker(indices, self)
+        worker.completed.connect(callback)
+        connect_finished(worker, lambda w: release_worker(self, "_specs_worker", w))
+        self._specs_worker = worker
+        worker.start()
+
+    def _store_diag_specs(self, specs: object) -> None:
+        self._diag_specs = list(specs) if isinstance(specs, list) else []
+
+    def _write_diag_html(self, runner, counts: dict[str, int], failed_names: str, aborted: bool,
+                         evaluation_error: Optional[str]) -> None:
+        """HTML-Bericht (Datenblatt + Ergebnisse) nach jeder Diagnose in ~/Downloads ablegen."""
+        payload = runner.parsed_payload()
+        if payload is None and aborted:
+            return
+        lang = language_manager.language
+        tr = language_manager.tr
+        meta = self._diag_meta or {}
+        specs = self._diag_specs
+        if specs is None:
+            specs = nvidia_report.collect_gpu_specs(meta.get("indices"))
+        verdict = self.result.text()
+        color = {"#44ff44": "#2e7d32", "#ff4444": "#c62828", "#ffaa00": "#e65100"}
+        verdict_color = next((v for k, v in color.items() if k in self.result.styleSheet()), "#000")
+        details = [self.diag_status.text()]
+        if evaluation_error:
+            details.append(evaluation_error)
+        hints = self._p2p_hint_lines()[1:] if self._p2p_failure(runner, failed_names) else None
+        started = meta.get("started")
+        meta_rows = [
+            (tr("DCGM-Stufe"), str(meta.get("level", "?"))),
+            ("GPUs", ", ".join(f"GPU {i}" for i in meta.get("indices", [])) or "–"),
+            (tr("PCIe-P2P-Test übersprungen"), tr("ja") if meta.get("skip_p2p") else tr("nein")),
+            (tr("Befehl"), str(meta.get("command") or "dcgmi diag")),
+        ]
+        if isinstance(started, datetime):
+            meta_rows.append((tr("Dauer"), f"{int((datetime.now() - started).total_seconds())} s"))
+        html = nvidia_report.render_html(
+            specs, lang, payload=payload, title_suffix=tr("DCGM-Diagnose Stufe {level}", level=meta.get("level", "?")),
+            verdict=verdict, verdict_color=verdict_color, details=details, hints=hints, meta=meta_rows)
+        try:
+            path = nvidia_report.report_path("dcgm-diagnose")
+            path.write_text(html, encoding="utf-8")
+        except OSError as exc:
+            self.output.append("\n" + tr("HTML-Bericht konnte nicht gespeichert werden: {error}", error=str(exc)))
+            return
+        self._last_html = path
+        self.html_btn.setEnabled(True)
+        self.output.append("\n" + tr("HTML-Bericht gespeichert: {path}", path=str(path)))
+
+    def _open_html(self) -> None:
+        if self._last_html is not None:
+            open_html_report(self._last_html, self)
+
+    def _export_datasheet(self) -> None:
+        self.datasheet_btn.setEnabled(False)
+        self._collect_specs(None, self._finish_datasheet)
+
+    def _finish_datasheet(self, specs: object) -> None:
+        self.datasheet_btn.setEnabled(bool(self._gpus))
+        lang = language_manager.language
+        tr = language_manager.tr
+        html = nvidia_report.render_html(list(specs) if isinstance(specs, list) else [], lang,
+                                         title_suffix=tr("GPU-Datenblatt"))
+        try:
+            path = nvidia_report.report_path("gpu-datenblatt")
+            path.write_text(html, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, tr("GPU-Datenblatt"), tr("HTML-Bericht konnte nicht gespeichert werden: {error}", error=str(exc)))
+            return
+        self._last_html = path
+        self.html_btn.setEnabled(True)
+        self._set_raw_text(self.inventory_status, tr("GPU-Datenblatt gespeichert: {path}", path=str(path)))
+        open_html_report(path, self)
 
     @staticmethod
     def _p2p_failure(runner, failed_names: str) -> bool:

@@ -2,6 +2,18 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.2.67
+
+- **NVIDIA GPU – HTML-Bericht:** Nach jeder DCGM-Diagnose wird ein HTML-Bericht in
+  `~/Downloads` (`dcgm-diagnose-DATUM.html`) abgelegt: Gesamtergebnis, Datenblatt aller
+  geprüften GPUs (Modell, Seriennummer, UUID, VBIOS, PCIe-Generation/-Breite, ECC,
+  Retired/Remapped Pages, Leistungsgrenzen, Takte, Temperatur) sowie die Ergebnistabelle
+  pro Test und GPU. „HTML-Bericht öffnen“ zeigt ihn im Browser.
+- **NVIDIA GPU – Datenblatt:** Neuer Knopf „GPU-Datenblatt (HTML)“ erzeugt dasselbe
+  Datenblatt ohne Diagnose (`gpu-datenblatt-DATUM.html`).
+- **DCGM-Diagnose:** „PCIe-Peer-to-Peer-Test überspringen“ ist nicht mehr auf HPE Synergy
+  vorbelegt; der P2P-Test läuft standardmäßig mit (mit `iommu=pt` funktionsfähig).
+
 ### Neu in 0.2.66
 
 - **DCGM-Diagnose:** Die Option „PCIe-Peer-to-Peer-Test überspringen“ verwendet jetzt den

@@ -16,8 +16,9 @@ TERMINAL_CANDIDATES: Sequence[TerminalCandidate] = (
     ("ptyxis", ("--",)),
     ("kgx", ("--",)),
     ("konsole", ("-e",)),
-    ("xfce4-terminal", ("-e",)),
-    ("mate-terminal", ("-e",)),
+    # -e erwartet hier einen einzelnen String; -x nimmt den Rest der Zeile als Befehl.
+    ("xfce4-terminal", ("-x",)),
+    ("mate-terminal", ("-x",)),
     ("tilix", ("-e",)),
     ("terminology", ("-e",)),
     # Puppy Linux / leichtgewichtige Desktops

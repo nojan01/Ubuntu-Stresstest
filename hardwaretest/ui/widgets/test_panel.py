@@ -7,6 +7,7 @@ Pass/Fail-Bewertung und memtest86+-Hinweis.
 from __future__ import annotations
 
 from datetime import datetime
+import shutil
 from typing import Callable, Optional
 
 from PySide6.QtCore import QThread, QTimer, Signal, Qt
@@ -268,6 +269,14 @@ class TestPanel(QWidget):
         duration_seconds = self._total_duration_seconds()
         if duration_seconds <= 0:
             self._append_log("Bitte eine Dauer groesser als 0 Sekunden auswaehlen.")
+            return
+        if not shutil.which("stress-ng"):
+            hint = distro.install_command("stress-ng")
+            if distro.family() == "rhel":
+                hint += "  (EPEL: sudo dnf install epel-release)"
+            self._append_log(f"stress-ng nicht installiert. Installation: {hint}")
+            self.result_label.setText(language_manager.tr("stress-ng nicht installiert"))
+            self.result_label.setStyleSheet("color: #ff5555; font-weight: bold;")
             return
         mem_bytes = int(self.memory_mb.value() * 1024 * 1024)
         usable_cores = max(1, min(self.cores.value(), self._effective_core_limit()))

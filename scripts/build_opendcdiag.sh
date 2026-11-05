@@ -14,7 +14,7 @@ EIGEN_URL="https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz"
 EIGEN_SHA256="8586084f71f9bde545ee7fa6d00288b264a2b7ac3607b974e54d13e7162c1c72"
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEST="$REPO_DIR/vendor/opendcdiag"
+DEST="${OPENDCDIAG_DEST:-$REPO_DIR/vendor/opendcdiag}"
 WORK="${OPENDCDIAG_WORK:-$(mktemp -d /tmp/opendcdiag-build.XXXXXX)}"
 mkdir -p "$WORK" "$DEST"
 echo "Arbeitsverzeichnis: $WORK"
@@ -42,7 +42,7 @@ if ! pkg-config --exists eigen3; then
 fi
 
 CPP_ARGS=""
-if [[ ! -f /usr/include/boost/algorithm/string.hpp ]]; then
+if [[ ! -f /usr/include/boost/algorithm/string.hpp ]] && command -v apt-get >/dev/null; then
     pkg="$(apt-cache depends libboost-dev 2>/dev/null | awk '/Depends: libboost[0-9.]*-dev/{print $2; exit}')"
     (cd "$WORK" && apt-get download "${pkg:-libboost1.83-dev}")
     dpkg-deb -x "$WORK"/libboost*-dev_*.deb "$WORK/boost"

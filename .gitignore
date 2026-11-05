@@ -63,5 +63,6 @@ Hardwaretest-v*.zip
 
 # Debian-Paket (per scripts/build_deb.sh erzeugt)
 hardwaretest_*.deb
+hardwaretest-*.rpm
 Hardwaretest-*.AppImage
 Hardwaretest-installieren.sh

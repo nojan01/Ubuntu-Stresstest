@@ -725,6 +725,7 @@ _EN: dict[str, str] = {
     "Kein Ergebnis": "No result",
     "Messwerte": "Measurements",
     "Fehlerzähler ({interface})": "Error counters ({interface})",
+    "stress-ng nicht installiert": "stress-ng not installed",
 }
 
 _EN_PARTS: tuple[tuple[str, str], ...] = (

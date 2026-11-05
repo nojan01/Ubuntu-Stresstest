@@ -1,6 +1,13 @@
 # Hardwaretest GUI
 
-PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
+PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
+
+### Neu in 0.3.1
+
+- **AlmaLinux/RHEL/Rocky 9+:** Neues RPM-Paket (`scripts/build_rpm.sh`) mit sudoers-Regeln für die Gruppe `wheel`, Desktop-Eintrag und allen Abhängigkeiten (`stress-ng`, `fio`, `btop`, … – EPEL vorher aktivieren).
+- Bundle, OpenDCDiag, RPM und AppImage werden jetzt in einem AlmaLinux-9-Container gebaut (`scripts/build_in_container.sh`, glibc 2.34). Damit laufen RPM und AppImage auf EL 9/10, Debian 12+ und Ubuntu 22.04+; zuvor verlangte das AppImage glibc 2.38.
+- Installationshinweise sind distributionsabhängig (`sudo apt install …` / `sudo dnf install …`), Paketprüfung per `dpkg` oder `rpm`; Update-Prüfung kennt `.rpm`.
+- stress-ng-Tab meldet ein fehlendes `stress-ng` vor dem Start mit Installationshinweis statt „Exit-Code 127“.
 
 ### Neu in 0.3.0
 
@@ -370,6 +377,19 @@ Ein zusätzliches Installationsskript gehört nicht zur DEB-Auslieferung.
 > Das Paket wird aus dem Repo mit `bash scripts/build_deb.sh` erzeugt
 > (benötigt `dpkg-dev`, PyInstaller und die Entwicklungsumgebung nur auf dem
 > Build-System).
+
+### Variante A2 – RPM-Paket (AlmaLinux, RHEL, Rocky 9+)
+
+```bash
+sudo dnf install -y epel-release          # stress-ng, btop, fastfetch liegen in EPEL
+sudo dnf install -y ./hardwaretest-0.3.1-1.x86_64.rpm
+```
+
+dnf installiert die nativen Abhängigkeiten automatisch. Die sudoers-Regeln
+gelten für Mitglieder der Gruppe `wheel`. Deinstallation mit
+`sudo dnf remove hardwaretest`. Gebaut wird das RPM mit
+`bash scripts/build_in_container.sh rpm` (benötigt podman oder docker; baut in
+`almalinux:9`, damit die Binärdateien auf EL9 und neuer laufen).
 
 ### Variante B – AppImage
 

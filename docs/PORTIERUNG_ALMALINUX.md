@@ -1,6 +1,6 @@
 # Portierung nach AlmaLinux / RHEL-Derivate
 
-Stand: Hardwaretest 0.3.0, hwtest-live 2026.11.04d. Einschätzung, was für einen
+Stand: Hardwaretest 0.3.1, hwtest-live 2026.11.04d. Einschätzung, was für einen
 Betrieb auf AlmaLinux 9/10 (RHEL, Rocky, Oracle Linux) nötig wäre.
 
 ## 1. Hardwaretest-App (Aufwand: gering bis mittel)
@@ -63,7 +63,16 @@ Marvell/QLogic (qaucli) liefern RHEL-RPMs offiziell → kein Umpacken von RPM na
 Kernel 5.14 (Alma 9) ist älter als Debian trixie 6.12 → neuere Hardware (z. B. Gen12) ggf. nur mit
 Alma 10 (Kernel 6.12).
 
-## 3. Empfohlene Reihenfolge
+## 3. Stand (0.3.1)
+
+- `core/distro.py`: Distributionsfamilie, Paketnamen-Mapping, `install_command()`, `package_installed()` (dpkg/rpm).
+- `scripts/build_rpm.sh`: RPM aus dem PyInstaller-Bundle (sudoers für `wheel`, `%config(noreplace)`, Requires inkl. stress-ng/fio/btop).
+- `scripts/build_in_container.sh`: baut OpenDCDiag, Bundle, RPM und AppImage in `almalinux:9` (podman/docker).
+  **Wichtig:** Auf Ubuntu 24.04 gebaute Bundles verlangen glibc 2.38 und starten auf EL9 (glibc 2.34) nicht.
+- Getestet auf AlmaLinux 9 (VM): stress-ng, Prime95, OpenDCDiag, btop, Berichte, Speichercontroller, RAM-Fülltest, ethtool.
+- Live-ISO auf RHEL-Basis: weiterhin offen.
+
+## 3a. Ursprüngliche Reihenfolge
 
 1. AppImage auf AlmaLinux 9 (VM) starten; Tabs durchgehen, Fehlermeldungen notieren.
 2. `install_hint()` einführen und `rpm -q` ergänzen (kleiner Commit, kein Risiko für Debian).

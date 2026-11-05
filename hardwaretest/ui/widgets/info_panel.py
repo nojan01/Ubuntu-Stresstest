@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardwaretest.core import distro
 from hardwaretest.core.paths import resource_path
 from hardwaretest.core.system_info import SystemInfo, read_system_info, is_running_as_root
 from hardwaretest.ui.report_html import json_to_html_report
@@ -296,7 +297,7 @@ class InfoPanel(QWidget):
     def _update_fastfetch_output(self) -> None:
         if shutil.which("fastfetch") is None:
             self.fastfetch_view.setPlainText(
-                "fastfetch ist nicht installiert. sudo apt install fastfetch"
+                f"fastfetch ist nicht installiert. {distro.install_command('fastfetch')}"
             )
             return
         if getattr(self, "_fastfetch_process", None) is not None:

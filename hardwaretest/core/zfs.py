@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 
+from hardwaretest.core import distro
 from hardwaretest.core.paths import self_command_for_root
 
 
@@ -36,7 +37,7 @@ class ZfsStatus:
 def run_zpool(args: list[str]) -> str:
     executable = shutil.which("zpool")
     if not executable:
-        raise FileNotFoundError("ZFS tools missing / ZFS-Werkzeuge fehlen: sudo apt install zfsutils-linux")
+        raise FileNotFoundError(f"ZFS tools missing / ZFS-Werkzeuge fehlen: {distro.install_command('zfsutils-linux')}")
     env = {**os.environ, "LC_ALL": "C"}
     if getattr(sys, "frozen", False):
         if "LD_LIBRARY_PATH_ORIG" in env:

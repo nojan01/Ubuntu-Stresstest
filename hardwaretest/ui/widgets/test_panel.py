@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardwaretest.core import distro
 from hardwaretest.core.system_info import (
     SystemInfo,
     check_memtest86_installed,
@@ -524,7 +525,7 @@ class TestPanel(QWidget):
                 self,
                 "memtest86+",
                 f"✗ {message}\n\n"
-                "Installation:\n  sudo apt install memtest86+\n\n"
+                f"Installation:\n  {distro.install_command('memtest86+')}\n\n"
                 "Nach der Installation erscheint memtest86+ im GRUB-Bootmenue "
                 "unter 'Erweiterte Optionen'.",
             )

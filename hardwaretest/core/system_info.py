@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 import psutil
 
+from hardwaretest.core import distro
 from hardwaretest.core import privilege
 
 
@@ -684,19 +685,9 @@ def check_memtest86_installed() -> Tuple[bool, str]:
     if found:
         return True, f"memtest86+ gefunden: {found[0].name}"
 
-    # Check ob Package installiert ist
-    dpkg = shutil.which("dpkg")
-    if dpkg:
-        try:
-            result = subprocess.run(
-                [dpkg, "-s", "memtest86+"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0 and "Status: install ok installed" in result.stdout:
-                return True, "memtest86+ Paket installiert"
-        except (subprocess.SubprocessError, OSError):
-            pass
-    return False, "memtest86+ nicht installiert (sudo apt install memtest86+)"
+    if distro.package_installed("memtest86+"):
+        return True, "memtest86+ Paket installiert"
+    return False, f"memtest86+ nicht installiert ({distro.install_command('memtest86+')})"
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +777,7 @@ def read_smart_info(device: str) -> SmartInfo:
     smartctl = shutil.which("smartctl")
     if not smartctl:
         return SmartInfo(device=device, healthy=None,
-                         error="smartctl nicht gefunden (sudo apt install smartmontools)")
+                         error=f"smartctl nicht gefunden ({distro.install_command('smartmontools')})")
     prefix: List[str] = privilege.command_prefix("SMART-Daten lesen")
 
     try:

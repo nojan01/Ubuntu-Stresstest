@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 
+from hardwaretest.core import distro
 from hardwaretest.core.paths import self_command_for_root
 
 
@@ -385,7 +386,7 @@ def _run_vmfs_check(device: str, env: dict) -> int:
 
     available = [t for t in ("fsck.vmfs6", "fsck.vmfs") if os.path.exists(_tool(t))]
     if not available:
-        print("fsck.vmfs6/fsck.vmfs fehlen / missing. Installation: sudo apt install vmfs6-tools vmfs-tools", flush=True)
+        print(f"fsck.vmfs6/fsck.vmfs fehlen / missing. Installation: {distro.install_command('vmfs6-tools', 'vmfs-tools')}", flush=True)
         return 8
     code, output = run(available[0])
     if "Unsupported version" in output and len(available) > 1:
@@ -419,7 +420,7 @@ def run_checker(action: str, device: str, fstype: str = "ext4") -> int:
         return _run_vmfs_check(device, env)
     if not os.path.exists(command[0]):
         package = next(p for n, (a, b, p) in _TOOLS.items() if command[0] in (a, b))
-        print(f"{command[0]} fehlt / missing. Installation: sudo apt install {package}", flush=True)
+        print(f"{command[0]} fehlt / missing. Installation: {distro.install_command(package)}", flush=True)
         return 8
     print("$ " + " ".join(command), flush=True)
     declined_fix = False

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from hardwaretest.core import distro
 from hardwaretest.core import hpe_raid, ipmi, privilege
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.system_info import read_edac_info
@@ -74,8 +75,8 @@ def build_ecc_report(run) -> tuple[str, str, list[str]]:
     lines.append(_t("== BMC-Ereignisprotokoll (IPMI, z. B. HPE iLO) ==", "== BMC event log (IPMI, e.g. HPE iLO) =="))
     sel_events = None
     if not shutil.which("ipmitool"):
-        lines.append(_t("ipmitool nicht installiert (sudo apt install ipmitool).",
-                        "ipmitool not installed (sudo apt install ipmitool)."))
+        lines.append(_t(f"ipmitool nicht installiert ({distro.install_command('ipmitool')}).",
+                        f"ipmitool not installed ({distro.install_command('ipmitool')})."))
     elif run is None:
         lines.append(_t("Keine Root-Rechte – BMC nicht lesbar.", "No root privileges – BMC unavailable."))
     else:

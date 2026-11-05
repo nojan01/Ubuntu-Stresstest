@@ -40,8 +40,11 @@ def update_check_disabled() -> bool:
 
 
 def _preferred_asset_suffix() -> str:
-    # AppImage-Laufzeit setzt $APPIMAGE; sonst ist die .deb-Installation wahrscheinlicher.
-    return ".AppImage" if os.environ.get("APPIMAGE") else ".deb"
+    # AppImage-Laufzeit setzt $APPIMAGE; sonst Paketformat der Distribution.
+    if os.environ.get("APPIMAGE"):
+        return ".AppImage"
+    from hardwaretest.core import distro
+    return ".rpm" if distro.family() in ("rhel", "suse") else ".deb"
 
 
 def parse_release(payload: dict, asset_suffix: Optional[str] = None) -> Optional[ReleaseInfo]:

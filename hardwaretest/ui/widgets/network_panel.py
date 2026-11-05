@@ -326,7 +326,8 @@ class NetworkPanel(QWidget):
                     "Auf dem Gegensystem muss vor dem Test ein iperf3-Server laufen:\n\n"
                     "  iperf3 -s\n\n"
                     "macOS (falls iperf3 fehlt): brew install iperf3\n"
-                    "Ubuntu (falls iperf3 fehlt): sudo apt install iperf3\n\n"
+                    "Ubuntu (falls iperf3 fehlt): sudo apt install iperf3\n"
+                    "RHEL/AlmaLinux (falls iperf3 fehlt): sudo dnf install iperf3\n\n"
                     "Der Standardport ist TCP 5201 und muss von der Firewall zugelassen werden. "
                     "Durchsatztest jetzt starten?"
                 ),

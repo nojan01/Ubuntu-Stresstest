@@ -20,6 +20,24 @@ from hardwaretest.core.paths import self_command_for_user
 
 PROMPT_PREFIX = "Hardwaretest: "
 _ASKPASS_NAME = "hardwaretest-askpass"
+PARENT_GEOMETRY_ENV = "HARDWARETEST_PARENT_GEOMETRY"
+
+
+def publish_parent_geometry(x: int, y: int, width: int, height: int) -> None:
+    """Merkt die Lage des Hauptfensters für Kindprozesse (Askpass-Dialog zentrieren)."""
+    os.environ[PARENT_GEOMETRY_ENV] = f"{x},{y},{width},{height}"
+
+
+def parent_geometry(env: Optional[dict] = None) -> Optional[tuple[int, int, int, int]]:
+    """Liest die vom Hauptfenster veröffentlichte Geometrie, ``None`` wenn nicht gesetzt/ungültig."""
+    raw = (os.environ if env is None else env).get(PARENT_GEOMETRY_ENV, "")
+    try:
+        x, y, width, height = (int(part) for part in raw.split(","))
+    except ValueError:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return x, y, width, height
 
 
 def is_root() -> bool:
@@ -119,8 +137,32 @@ def askpass_main(argv: list[str]) -> int:
     dialog.setLabelText(label)
     dialog.setTextEchoMode(QLineEdit.EchoMode.Password)
     dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    dialog.adjustSize()
+    _center_dialog(dialog, app)
     if dialog.exec() != QInputDialog.DialogCode.Accepted or not dialog.textValue():
         return 1
     sys.stdout.write(dialog.textValue() + "\n")
     sys.stdout.flush()
     return 0
+
+
+def _center_dialog(dialog, app) -> None:
+    """Zentriert den Dialog über dem Hauptfenster, sonst auf dem Bildschirm mit dem Mauszeiger."""
+    from PySide6.QtCore import QPoint, QRect
+    from PySide6.QtGui import QCursor
+
+    geometry = parent_geometry()
+    if geometry is not None:
+        target = QRect(*geometry)
+    else:
+        screen = app.screenAt(QCursor.pos()) or app.primaryScreen()
+        target = screen.availableGeometry() if screen else QRect(0, 0, 0, 0)
+    size = dialog.sizeHint().expandedTo(dialog.size())
+    center = target.center()
+    position = QPoint(center.x() - size.width() // 2, center.y() - size.height() // 2)
+    screen = app.screenAt(center) or app.primaryScreen()
+    if screen is not None:
+        bounds = screen.availableGeometry()
+        position.setX(max(bounds.left(), min(position.x(), bounds.right() - size.width())))
+        position.setY(max(bounds.top(), min(position.y(), bounds.bottom() - size.height())))
+    dialog.move(position)

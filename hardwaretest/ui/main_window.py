@@ -9,6 +9,7 @@ from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplicati
 from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox, QTabWidget
 
 from hardwaretest import __version__
+from hardwaretest.core.privilege import publish_parent_geometry
 from hardwaretest.core.update_check import (
     ReleaseInfo,
     fetch_latest_release,
@@ -224,6 +225,22 @@ class MainWindow(QMainWindow):
             thread = getattr(runner, name, None)
             if thread is not None and thread.is_alive():
                 thread.join(timeout)
+
+    def _publish_geometry(self) -> None:
+        frame = self.frameGeometry()
+        publish_parent_geometry(frame.x(), frame.y(), frame.width(), frame.height())
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._publish_geometry()
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        self._publish_geometry()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._publish_geometry()
 
     def closeEvent(self, event) -> None:
         active_runners = self._active_runners()

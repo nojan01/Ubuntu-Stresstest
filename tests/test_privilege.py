@@ -77,3 +77,12 @@ def test_askpass_subcommand_cancel_returns_1():
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, env=env)
     assert result.returncode == 1, result.stderr
     assert result.stdout == ""
+
+
+def test_parent_geometry_roundtrip(monkeypatch):
+    monkeypatch.delenv(privilege.PARENT_GEOMETRY_ENV, raising=False)
+    assert privilege.parent_geometry() is None
+    privilege.publish_parent_geometry(100, 200, 800, 600)
+    assert privilege.parent_geometry() == (100, 200, 800, 600)
+    assert privilege.parent_geometry({privilege.PARENT_GEOMETRY_ENV: "1,2,0,5"}) is None
+    assert privilege.parent_geometry({privilege.PARENT_GEOMETRY_ENV: "kaputt"}) is None

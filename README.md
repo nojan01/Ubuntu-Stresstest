@@ -2,6 +2,13 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.0
+
+- **Stabile Version** nach ausführlichen Tests auf ProLiant-Servern, Workstations und im Live-ISO.
+- Gesamttest-Tab: gesamter Tab scrollbar, Gruppe „Ablauf und Protokoll“ wird nicht mehr gestaucht.
+- „Berichtsordner“ öffnet ~/Downloads zuverlässig im Dateimanager (bereinigte Umgebung).
+- Doku: Portierungsanalyse für AlmaLinux/RHEL (`docs/PORTIERUNG_ALMALINUX.md`).
+
 ### Neu in 0.2.69
 
 - **Einheitliche HTML-Berichte:** Jeder Test-Tab (stress-ng, Prime95, OpenDCDiag,

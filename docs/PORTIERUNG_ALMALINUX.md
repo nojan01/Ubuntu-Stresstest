@@ -1,6 +1,6 @@
 # Portierung nach AlmaLinux / RHEL-Derivate
 
-Stand: Hardwaretest 0.2.69, hwtest-live 2026.11.04d. Einschätzung, was für einen
+Stand: Hardwaretest 0.3.0, hwtest-live 2026.11.04d. Einschätzung, was für einen
 Betrieb auf AlmaLinux 9/10 (RHEL, Rocky, Oracle Linux) nötig wäre.
 
 ## 1. Hardwaretest-App (Aufwand: gering bis mittel)

@@ -78,8 +78,6 @@ def launch_command_in_terminal(
         }:
             if binary in {"x-terminal-emulator", "terminology", "rxvt", "rxvt-unicode", "urxvt", "st"}:
                 terminal_args += [_wrap_hold_single_string(command)]
-            elif "gnome" in binary or binary in {"kgx", "ptyxis"}:
-                terminal_args += ["--", "bash", "-lc", _wrap_hold_command(command)]
             else:
                 terminal_args += ["bash", "-lc", _wrap_hold_command(command)]
         else:

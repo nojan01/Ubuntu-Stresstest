@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.2
+
+- Terminalstart: `xfce4-terminal`/`mate-terminal` werden mit `-x` aufgerufen. Mit `-e bash -lc …` starteten sie gar nicht („Unknown option -lc“) – Systemreport und die lshw/lspci/dmesg-Fenster im Informationen-Tab blieben auf Systemen ohne `x-terminal-emulator` (z. B. AlmaLinux-Live mit Openbox) aus.
+
 ### Neu in 0.3.1
 
 - **AlmaLinux/RHEL/Rocky 9+:** Neues RPM-Paket (`scripts/build_rpm.sh`) mit sudoers-Regeln für die Gruppe `wheel`, Desktop-Eintrag und allen Abhängigkeiten (`stress-ng`, `fio`, `btop`, … – EPEL vorher aktivieren).
@@ -383,7 +387,7 @@ Ein zusätzliches Installationsskript gehört nicht zur DEB-Auslieferung.
 
 ```bash
 sudo dnf install -y epel-release          # stress-ng, btop, fastfetch liegen in EPEL
-sudo dnf install -y ./hardwaretest-0.3.1-1.x86_64.rpm
+sudo dnf install -y ./hardwaretest-0.3.2-1.x86_64.rpm
 ```
 
 dnf installiert die nativen Abhängigkeiten automatisch. Die sudoers-Regeln

@@ -487,7 +487,8 @@ mit SmartArray RAID-Controllern, SAS-/NVMe-Laufwerken.
 <h3>I/O-Engine</h3>
 <p>
 Das Tool erkennt automatisch, ob <b>io_uring</b> verfügbar ist (Linux ≥ 5.1,
-NVMe auf HPE Gen10+). Andernfalls wird <b>libaio</b> verwendet.
+NVMe auf HPE Gen10+). Andernfalls wird <b>libaio</b> verwendet – auch auf
+RHEL/AlmaLinux 9, wo io_uring per <code>kernel.io_uring_disabled</code> gesperrt ist.
 <code>io_uring</code> bietet deutlich niedrigere Latenz bei NVMe-Laufwerken.
 </p>
 
@@ -1340,7 +1341,8 @@ with SmartArray RAID controllers, SAS/NVMe drives.
 <h3>I/O Engine</h3>
 <p>
 The tool automatically detects whether <b>io_uring</b> is available (Linux ≥ 5.1,
-NVMe on HPE Gen10+). Otherwise <b>libaio</b> is used.
+NVMe on HPE Gen10+). Otherwise <b>libaio</b> is used – also on RHEL/AlmaLinux 9,
+where io_uring is blocked via <code>kernel.io_uring_disabled</code>.
 <code>io_uring</code> provides significantly lower latency on NVMe drives.
 </p>
 

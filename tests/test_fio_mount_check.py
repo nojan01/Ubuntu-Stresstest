@@ -65,3 +65,13 @@ class Test_FioBusyDetection:
         monkeypatch.setattr(fio_runner.os, "open", fake_open)
         with pytest.raises(TestExecutionError, match="busy"):
             fio_runner._check_devices_not_mounted(["/dev/sdz"])
+
+
+def test_io_uring_disabled_sysctl(tmp_path):
+    sysdir = tmp_path / "sys" / "kernel"
+    sysdir.mkdir(parents=True)
+    assert fio_runner._io_uring_enabled(str(tmp_path)) is True  # Datei fehlt
+    (sysdir / "io_uring_disabled").write_text("2\n")
+    assert fio_runner._io_uring_enabled(str(tmp_path)) is False
+    (sysdir / "io_uring_disabled").write_text("0\n")
+    assert fio_runner._io_uring_enabled(str(tmp_path)) is True

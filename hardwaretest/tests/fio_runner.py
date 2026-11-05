@@ -39,11 +39,28 @@ def _best_ioengine() -> str:
             ["fio", "--enghelp"],
             capture_output=True, text=True, timeout=5,
         )
-        if "io_uring" in (result.stdout or ""):
+        if "io_uring" in (result.stdout or "") and _io_uring_enabled():
             return "io_uring"
     except (FileNotFoundError, subprocess.SubprocessError):
         pass
     return "libaio"
+
+
+def _io_uring_enabled(proc_root: str = "/proc") -> bool:
+    """RHEL/AlmaLinux 9 deaktiviert io_uring per Sysctl (``kernel.io_uring_disabled``).
+
+    0 = erlaubt, 1 = nur mit CAP_SYS_ADMIN, 2 = komplett gesperrt. Fehlt die
+    Datei (aeltere Kernel), ist io_uring verfuegbar.
+    """
+    try:
+        value = Path(proc_root, "sys/kernel/io_uring_disabled").read_text().strip()
+    except OSError:
+        return True
+    if value == "0":
+        return True
+    if value == "1":
+        return os.geteuid() == 0
+    return False
 
 
 _BUSY_FSTYPES = {"zfs_member", "linux_raid_member", "LVM2_member", "crypto_LUKS", "swap"}

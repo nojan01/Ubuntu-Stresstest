@@ -6,13 +6,14 @@ import os
 import shutil
 from typing import List, Optional, Sequence, Tuple
 
-from PySide6.QtCore import QProcess
+from PySide6.QtCore import QProcess, QProcessEnvironment
 
 TerminalCandidate = Tuple[str, Sequence[str]]
 
 TERMINAL_CANDIDATES: Sequence[TerminalCandidate] = (
     ("x-terminal-emulator", ("-e",)),
     ("gnome-terminal", ("--",)),
+    ("ptyxis", ("--",)),
     ("kgx", ("--",)),
     ("konsole", ("-e",)),
     ("xfce4-terminal", ("-e",)),
@@ -62,6 +63,7 @@ def launch_command_in_terminal(
             "x-terminal-emulator",
             "gnome-terminal",
             "kgx",
+            "ptyxis",
             "xfce4-terminal",
             "mate-terminal",
             "konsole",
@@ -76,15 +78,34 @@ def launch_command_in_terminal(
         }:
             if binary in {"x-terminal-emulator", "terminology", "rxvt", "rxvt-unicode", "urxvt", "st"}:
                 terminal_args += [_wrap_hold_single_string(command)]
-            elif "gnome" in binary or binary in {"kgx"}:
+            elif "gnome" in binary or binary in {"kgx", "ptyxis"}:
                 terminal_args += ["--", "bash", "-lc", _wrap_hold_command(command)]
             else:
                 terminal_args += ["bash", "-lc", _wrap_hold_command(command)]
         else:
             terminal_args += list(command)
-        if QProcess.startDetached(resolved, terminal_args):
+        if _start_detached_clean(resolved, terminal_args):
             return True
     return False
+
+
+def _start_detached_clean(executable: str, args: Sequence[str]) -> bool:
+    """Startet ein Host-Programm ohne die PyInstaller-Bibliothekspfade.
+
+    Das gebuendelte LD_LIBRARY_PATH/QT_PLUGIN_PATH wuerde sonst in das Terminal
+    vererbt und kann dessen Start (glib/GTK-Konflikte) verhindern.
+    """
+    from hardwaretest.ui.report_browser import browser_environment
+
+    process = QProcess()
+    process.setProgram(executable)
+    process.setArguments(list(args))
+    env = QProcessEnvironment()
+    for key, value in browser_environment().items():
+        env.insert(key, value)
+    process.setProcessEnvironment(env)
+    result = process.startDetached()
+    return bool(result[0]) if isinstance(result, tuple) else bool(result)
 
 
 def _geometry_args(binary: str, cols: int, rows: int) -> List[str]:

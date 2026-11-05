@@ -70,12 +70,14 @@ Alma 10 (Kernel 6.12).
 - `scripts/build_in_container.sh`: baut OpenDCDiag, Bundle, RPM und AppImage in `almalinux:9` (podman/docker).
   **Wichtig:** Auf Ubuntu 24.04 gebaute Bundles verlangen glibc 2.38 und starten auf EL9 (glibc 2.34) nicht.
 - Getestet auf AlmaLinux 9 (VM): stress-ng, Prime95, OpenDCDiag, btop, Berichte, Speichercontroller, RAM-Fülltest, ethtool.
-- Live-ISO auf RHEL-Basis: **Vorbereitung abgeschlossen** (HPE-Live-ISO-Repo, Verzeichnis `alma/`):
-  geprüfte Kickstart-Paketliste (123/123 Pakete verfügbar inkl. HPE MCP/ilorest aus dem
-  HPE-SDR-Alma-Repo und NVIDIA/DCGM aus dem CUDA-rhel9-Repo), Repo-Dateien, Prüfskript.
-  Oberfläche bleibt **Openbox + tint2** (EPEL) wie im Trixie-Image. Offen: vmfs-tools und
-  OpenDCDiag als RPM bauen, Image-Bau (lorax `livemedia-creator` oder eigener Container-Build),
-  Persistenz per `rd.live.overlay`.
+- Live-ISO auf RHEL-Basis: **Image-Bau fertig** (HPE-Live-ISO-Repo, Verzeichnis `alma/`):
+  `alma/scripts/build_alma_live.sh` baut `hwtest-live-alma-<version>.iso` (~1 GB) im
+  `almalinux:9`-Container (dnf --installroot → dracut dmsquash-live → squashfs → xorriso,
+  BIOS + UEFI). Pakete: Kickstart-Liste inkl. HPE MCP/ilorest, kmod-zfs (ELRepo-frei via
+  zfs-release), vmfs-tools/vmfs6-tools und Hardwaretest als eigene RPMs; Oberfläche
+  **Openbox + tint2** wie im Trixie-Image. In VirtualBox (UEFI und BIOS, 4 GB) getestet.
+  JSON Viewer entfällt (WebKitGTK), Berichte öffnen im Firefox. Offen: Persistenz per
+  `rd.live.overlay`, NVIDIA-Variante (`--nvidia`).
 
 ## 3a. Ursprüngliche Reihenfolge
 

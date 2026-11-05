@@ -126,6 +126,10 @@ def askpass_main(argv: list[str]) -> int:
     from hardwaretest.main import _apply_dark_theme, _sanitize_qt_environment
     from hardwaretest.ui.i18n import language_manager
 
+    # Unter Wayland darf ein Fenster seine Position nicht selbst wählen; über
+    # XWayland (xcb) wird die Zentrierung über dem Hauptfenster respektiert.
+    if os.environ.get("WAYLAND_DISPLAY") and os.environ.get("DISPLAY"):
+        os.environ["QT_QPA_PLATFORM"] = "xcb;wayland"
     _sanitize_qt_environment()
     app = QApplication.instance() or QApplication(sys.argv[:1])
     _apply_dark_theme(app)

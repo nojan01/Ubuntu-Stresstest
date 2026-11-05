@@ -228,6 +228,9 @@ class MainWindow(QMainWindow):
 
     def _publish_geometry(self) -> None:
         frame = self.frameGeometry()
+        # Wayland verrät Qt keine Fensterposition – dann auf den Bildschirm zentrieren.
+        if "wayland" in QGuiApplication.platformName().lower() and self.screen() is not None:
+            frame = self.screen().availableGeometry()
         publish_parent_geometry(frame.x(), frame.y(), frame.width(), frame.height())
 
     def showEvent(self, event) -> None:

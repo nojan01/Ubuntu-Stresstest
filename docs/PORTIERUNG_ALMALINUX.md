@@ -70,7 +70,10 @@ Alma 10 (Kernel 6.12).
 - `scripts/build_in_container.sh`: baut OpenDCDiag, Bundle, RPM und AppImage in `almalinux:9` (podman/docker).
   **Wichtig:** Auf Ubuntu 24.04 gebaute Bundles verlangen glibc 2.38 und starten auf EL9 (glibc 2.34) nicht.
 - Getestet auf AlmaLinux 9 (VM): stress-ng, Prime95, OpenDCDiag, btop, Berichte, Speichercontroller, RAM-Fülltest, ethtool.
-- Live-ISO auf RHEL-Basis: weiterhin offen.
+- Live-ISO auf RHEL-Basis: weiterhin offen. **Vorgemerkt:** Desktop **XFCE** (aus EPEL) statt
+  des unveränderten GNOME 40 von RHEL 9 – leicht, klassische Taskleiste, gut über iLO-Konsole
+  bedienbar. Aufbau per Kickstart (`@xfce-desktop-environment`, lightdm, Autologin) und
+  `livemedia-creator`/`lorax`; Hardwaretest-RPM + EPEL-Abhängigkeiten ins Image.
 
 ## 3a. Ursprüngliche Reihenfolge
 

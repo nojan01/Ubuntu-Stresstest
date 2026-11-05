@@ -8,6 +8,7 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations 
 - Bundle, OpenDCDiag, RPM und AppImage werden jetzt in einem AlmaLinux-9-Container gebaut (`scripts/build_in_container.sh`, glibc 2.34). Damit laufen RPM und AppImage auf EL 9/10, Debian 12+ und Ubuntu 22.04+; zuvor verlangte das AppImage glibc 2.38.
 - Installationshinweise sind distributionsabhängig (`sudo apt install …` / `sudo dnf install …`), Paketprüfung per `dpkg` oder `rpm`; Update-Prüfung kennt `.rpm`.
 - stress-ng-Tab meldet ein fehlendes `stress-ng` vor dem Start mit Installationshinweis statt „Exit-Code 127“.
+- Informationen-Tab: „Report öffnen“ zeigt den JSON-Systemreport im Browser (Firefox-JSON-Ansicht), wenn kein grafischer JSON-Viewer installiert ist; HTML-Report ebenfalls mit bereinigter Umgebung.
 
 ### Neu in 0.3.0
 

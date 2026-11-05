@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from hardwaretest.core import distro
 from hardwaretest.core.paths import resource_path
 from hardwaretest.core.system_info import SystemInfo, read_system_info, is_running_as_root
+from hardwaretest.ui.report_browser import open_in_browser
 from hardwaretest.ui.report_html import json_to_html_report
 from hardwaretest.ui.utils import launch_command_in_terminal
 from hardwaretest.ui.i18n import language_manager
@@ -180,6 +181,10 @@ class InfoPanel(QWidget):
             )
             return
         viewer = self._find_json_viewer()
+        # Ohne grafischen JSON-Viewer den Browser nutzen (Firefox hat eine JSON-Baumansicht),
+        # bevor auf Terminalwerkzeuge oder Texteditoren ausgewichen wird.
+        if (viewer is None or Path(viewer).name != "app") and open_in_browser(path):
+            return
         if viewer is None:
             QMessageBox.critical(
                 self,
@@ -254,8 +259,9 @@ class InfoPanel(QWidget):
                 f"HTML-Report konnte nicht generiert werden:\n{exc}",
             )
             return
-        import webbrowser
-        webbrowser.open(html_path.as_uri())
+        if not open_in_browser(html_path):
+            import webbrowser
+            webbrowser.open(html_path.as_uri())
 
     def _resolve_latest_report(self) -> Optional[Path]:
         downloads = Path.home() / "Downloads"

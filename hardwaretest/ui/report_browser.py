@@ -56,14 +56,23 @@ def start_browser(executable, url, directory):
     return bool(result[0]) if isinstance(result, tuple) else bool(result)
 
 
+def open_in_browser(path):
+    """Öffnet eine lokale Datei (HTML, JSON, …) im Browser; True bei Erfolg, ohne Dialog."""
+    path = Path(path).expanduser().resolve()
+    if not path.is_file():
+        return False
+    url = QUrl.fromLocalFile(str(path)).toString()
+    for browser in browser_candidates():
+        executable = shutil.which(browser)
+        if executable and start_browser(executable, url, path.parent):
+            return True
+    return False
+
+
 def open_html_report(path, parent=None):
     path = Path(path).expanduser().resolve()
-    if path.is_file():
-        url = QUrl.fromLocalFile(str(path)).toString()
-        for browser in browser_candidates():
-            executable = shutil.which(browser)
-            if executable and start_browser(executable, url, path.parent):
-                return True
+    if open_in_browser(path):
+        return True
     title = "HTML-Protokoll konnte nicht geöffnet werden"
     message = ("Bitte die Datei manuell in einem Browser öffnen:\n{path}" if path.is_file()
                else "HTML-Protokoll nicht gefunden")

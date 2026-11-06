@@ -102,7 +102,7 @@ ExclusiveArch:  $ARCH
 AutoReqProv:    no
 
 # stress-ng und btop liegen in EPEL: vorher "sudo dnf install epel-release"
-Requires:       stress-ng fio btop dmidecode libzstd zlib e2fsprogs util-linux polkit
+Requires:       stress-ng fio fio-engine-libaio btop dmidecode libzstd zlib e2fsprogs util-linux polkit
 Requires:       libxcb xcb-util-cursor xcb-util-wm xcb-util-keysyms xcb-util-renderutil libxkbcommon-x11 mesa-libGL mesa-libEGL
 Requires:       (gnome-terminal or ptyxis or konsole or xfce4-terminal or xterm)
 Recommends:     vulkan-loader mesa-vulkan-drivers python3 smartmontools jq curl lshw pciutils iperf3 iputils nvme-cli ipmitool

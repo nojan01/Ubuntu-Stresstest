@@ -25,7 +25,7 @@ gesucht, HPE-/Broadcom-Tools über feste `/opt`-Pfade (identisch auf RHEL).
 | Debian | AlmaLinux (Repo) |
 |---|---|
 | stress-ng | stress-ng (EPEL) |
-| fio | fio (AppStream) |
+| fio | fio + fio-engine-libaio (AppStream; libaio-Engine ist in EL9 ein eigenes Paket) |
 | btop | btop (EPEL) |
 | smartmontools, nvme-cli, dmidecode, pciutils, lshw, iperf3, ipmitool, jq, curl | gleichnamig (BaseOS/AppStream/EPEL) |
 | vulkan-tools, libvulkan1, mesa-vulkan-drivers | vulkan-tools, vulkan-loader, mesa-vulkan-drivers |

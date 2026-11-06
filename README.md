@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.4
+
+- **System-Tab:** neue Gruppe **„Sensoren (iLO/IPMI): Temperaturen, Lüfter, Leistung“** – alle IPMI-Messwerte mit Status (farbig), leere Steckplätze ausgeblendet, auch im HTML-Bericht. Auf ProLiants mit laufendem `amsd` erscheinen deutlich mehr Sensoren.
+
 ### Neu in 0.3.3
 
 - **System-Tab:** „In Zwischenablage kopieren“ ersetzt durch **„Bericht erstellen“** – alle Inventartabellen (CPU, Cache, Takt, Mainboard/BIOS, RAM, PCIe, Netzwerk, Grafik, Controller, Datenträger, USB, Thunderbolt, FC, Netzteile) als HTML-Bericht `~/Downloads/hwtest-system-*.html`.
@@ -394,7 +398,7 @@ Ein zusätzliches Installationsskript gehört nicht zur DEB-Auslieferung.
 
 ```bash
 sudo dnf install -y epel-release          # stress-ng, btop, fastfetch liegen in EPEL
-sudo dnf install -y ./hardwaretest-0.3.3-1.x86_64.rpm
+sudo dnf install -y ./hardwaretest-0.3.4-1.x86_64.rpm
 ```
 
 dnf installiert die nativen Abhängigkeiten automatisch. Die sudoers-Regeln

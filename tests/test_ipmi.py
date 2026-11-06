@@ -181,3 +181,17 @@ def test_is_proliant_recognizes_hpe_ilo_servers(monkeypatch, vendor, product, ex
     values = {"/sys/class/dmi/id/sys_vendor": vendor, "/sys/class/dmi/id/product_name": product}
     monkeypatch.setattr(ipmi, "_read", lambda path, *a, **k: values.get(path, ""))
     assert ipmi.is_proliant() is expected
+
+
+def test_environment_sensors_filters_and_sorts():
+    text = "\n".join([
+        "Fan 1             | 30h | ok  | 29.1 | 30.58 percent",
+        "Fan 2             | 31h | ns  | 29.2 | No Reading",
+        "01-Inlet Ambient  | 01h | ok  | 64.1 | 21 degrees C",
+        "Power Meter       | 50h | ok  | 7.1  | 180 Watts",
+        "Power Supply 1    | 9Eh | ok  | 10.1 | Presence detected",
+        "Memory            | 20h | ok  | 7.1  | Presence Detected",
+    ])
+    picked = ipmi.environment_sensors(ipmi.parse_sensors(text))
+    assert [s.name for s in picked] == ["01-Inlet Ambient", "Fan 1", "Power Meter"]
+    assert [ipmi.sensor_kind(s) for s in picked] == ["temperature", "fan", "power"]

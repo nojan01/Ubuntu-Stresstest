@@ -85,6 +85,8 @@ class SystemPanel(QWidget):
         self._devices = dev.DeviceInventory()
         self._power_sensors: list[ipmi.Sensor] | None = None
         self._power_sensors_error = ""
+        self._env_sensors: list[ipmi.Sensor] | None = None
+        self._env_sensors_error = ""
 
         outer = QVBoxLayout(self)
         buttons = QHBoxLayout()
@@ -172,6 +174,10 @@ class SystemPanel(QWidget):
         self.power_note = QLabel()
         self.power_note.setWordWrap(True)
         self.power_group.layout().insertWidget(0, self.power_note)
+        self.sensor_group, self.sensor_table = self._add_table_group(layout)
+        self.sensor_note = QLabel()
+        self.sensor_note.setWordWrap(True)
+        self.sensor_group.layout().insertWidget(0, self.sensor_note)
         layout.addStretch(1)
 
         self._clock_timer = QTimer(self)
@@ -200,14 +206,18 @@ class SystemPanel(QWidget):
         self.retranslate()
 
     def _read_power_sensors(self) -> None:
-        """IPMI-Netzteilsensoren ohne Passwortabfrage (root bzw. sudo -n, z. B. Live-ISO)."""
+        """IPMI-Sensoren ohne Passwortabfrage (root bzw. sudo -n, z. B. Live-ISO):
+        Netzteile/Redundanz sowie Temperaturen und Lüfter (iLO liefert mit laufendem amsd deutlich mehr)."""
         self._power_sensors, self._power_sensors_error = None, ""
+        self._env_sensors, self._env_sensors_error = None, ""
         if not ipmi.ipmi_available():
             return
         run = ipmi._noninteractive_runner()
         if run is None:
             return
         self._power_sensors, self._power_sensors_error = ipmi.read_power_sensors(run)
+        sensors, self._env_sensors_error = ipmi.read_sensors(run)
+        self._env_sensors = ipmi.environment_sensors(sensors) if sensors is not None else None
 
     def _read_with_password(self) -> None:
         if privilege.tool() is None or self._process is not None:
@@ -257,6 +267,9 @@ class SystemPanel(QWidget):
             lines.append(_t("Netzteile (IPMI): ", "Power supplies (IPMI): ") + "; ".join(
                 f"{sensor.name}: {sensor.reading}" for sensor in self._power_sensors)
                 + (f" – {self._redundancy_text(redundancy)}" if redundancy else ""))
+        if self._env_sensors:
+            lines.append(_t("Sensoren (IPMI): ", "Sensors (IPMI): ") + "; ".join(
+                f"{sensor.name}: {sensor.reading}" for sensor in self._env_sensors))
         return lines
 
     @staticmethod
@@ -272,7 +285,8 @@ class SystemPanel(QWidget):
                 (self.network_group, self.network_table, None), (self.graphics_group, self.graphics_table, None),
                 (self.controller_group, self.controller_table, None), (self.disk_group, self.disk_table, None),
                 (self.usb_group, self.usb_table, self.usb_note), (self.tb_group, self.tb_table, self.tb_note),
-                (self.fc_group, self.fc_table, self.fc_note), (self.power_group, self.power_table, self.power_note)]
+                (self.fc_group, self.fc_table, self.fc_note), (self.power_group, self.power_table, self.power_note),
+                (self.sensor_group, self.sensor_table, self.sensor_note)]
 
     def write_report(self) -> None:
         """HTML-Bericht aus den angezeigten Tabellen (eine Tabelle je Gruppe) nach ~/Downloads."""
@@ -361,6 +375,8 @@ class SystemPanel(QWidget):
         self.tb_group.setTitle("Thunderbolt / USB4")
         self.fc_group.setTitle(_t("Fibre-Channel-HBAs", "Fibre Channel HBAs"))
         self.power_group.setTitle(_t("Netzteile / Redundanz", "Power supplies / redundancy"))
+        self.sensor_group.setTitle(_t("Sensoren (iLO/IPMI): Temperaturen, Lüfter, Leistung",
+                                      "Sensors (iLO/IPMI): temperatures, fans, power"))
         self._show_cpu()
         self._show_caches()
         self._show_board()
@@ -531,6 +547,38 @@ class SystemPanel(QWidget):
         self._show_thunderbolt(language, devices)
         self._show_fc(language, devices)
         self._show_power(language)
+        self._show_sensors()
+
+    def _show_sensors(self) -> None:
+        headers = [_t("Art", "Kind"), "Sensor", _t("Wert", "Reading"), "Status", _t("Einheit (IPMI)", "Entity (IPMI)")]
+        rows, colors, notes = [], {}, []
+        kind_text = {"temperature": _t("Temperatur", "Temperature"), "fan": _t("Lüfter", "Fan"),
+                     "power": _t("Leistung", "Power")}
+        for sensor in self._env_sensors or []:
+            rows.append([kind_text.get(ipmi.sensor_kind(sensor), ""), sensor.name, sensor.reading,
+                         sensor.status, sensor.entity])
+            color = _SEVERITY_COLORS.get(sensor.severity)
+            if color is not None:
+                colors[(len(rows) - 1, 3)] = color
+        if self._env_sensors:
+            notes.append(_t(
+                "Werte direkt aus dem iLO/BMC (ipmitool sdr elist). Auf ProLiants liefert der Agentless "
+                "Management Service (amsd) zusätzliche Sensoren; vollständige Liste im Tab ProLiant-Info.",
+                "Readings straight from the iLO/BMC (ipmitool sdr elist). On ProLiants the Agentless "
+                "Management Service (amsd) exposes additional sensors; full list in the ProLiant info tab."))
+        elif self._env_sensors is not None:
+            notes.append(_t("IPMI meldet keine Temperatur-/Lüftersensoren.", "IPMI reports no temperature/fan sensors."))
+        elif self._env_sensors_error:
+            notes.append(_t("IPMI-Sensoren nicht lesbar: ", "IPMI sensors unavailable: ")
+                         + self._env_sensors_error.splitlines()[0][:120])
+        elif ipmi.ipmi_available() and not privilege.is_root():
+            notes.append(_t("IPMI-Sensoren benötigen Root-Rechte (ipmitool sdr elist).",
+                            "IPMI sensors need root (ipmitool sdr elist)."))
+        else:
+            notes.append(_t("Kein BMC/iLO (ipmitool) verfügbar – CPU-Temperaturen siehe Tab Temperatur.",
+                            "No BMC/iLO (ipmitool) available – CPU temperatures see the Temperature tab."))
+        self.sensor_note.setText("\n".join(notes))
+        _fill(self.sensor_table, headers, rows, colors)
 
     def _show_fc(self, language: str, devices: dev.DeviceInventory) -> None:
         headers = ["Host", _t("Modell", "Model"), "WWPN", _t("Zustand", "State"), _t("Geschwindigkeit", "Speed"),

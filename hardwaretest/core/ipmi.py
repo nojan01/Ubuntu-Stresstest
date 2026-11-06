@@ -355,6 +355,27 @@ def read_sensors(run: Runner) -> tuple[Optional[list[Sensor]], str]:
     return (parse_sensors(text) if text is not None else None), error
 
 
+def sensor_kind(sensor: Sensor) -> str:
+    """Grobe Einordnung nach Messwert: temperature | fan | power | other."""
+    reading = sensor.reading.lower()
+    name = sensor.name.lower()
+    if "degrees" in reading or re.search(r"\btemp", name):
+        return "temperature"
+    if "rpm" in reading or ("percent" in reading and "fan" in name) or re.search(r"\bfan", name):
+        return "fan"
+    if "watts" in reading or re.search(r"\bpower meter|\bpwr", name):
+        return "power"
+    return "other"
+
+
+def environment_sensors(sensors: list[Sensor]) -> list[Sensor]:
+    """Temperatur-, Lüfter- und Leistungssensoren mit Messwert (ohne leere Steckplätze)."""
+    kinds = ("temperature", "fan", "power")
+    picked = [s for s in sensors if sensor_kind(s) in kinds and s.status.lower() != "ns"
+              and not re.search(r"no reading|disabled", s.reading, re.I)]
+    return sorted(picked, key=lambda s: (kinds.index(sensor_kind(s)), s.name))
+
+
 # Sensortypen laut IPMI-Spezifikation: 0x08 Power Supply, 0x09 Power Unit (Redundanz).
 POWER_SENSOR_TYPES = ("0x08", "0x09")
 

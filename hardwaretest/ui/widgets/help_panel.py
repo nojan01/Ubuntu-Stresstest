@@ -819,6 +819,13 @@ fehlerfreien Netzteilen ein Netzkabel ziehen – der Server muss weiterlaufen un
 „Redundancy Lost“ melden; nach dem Einstecken muss „Fully Redundant“ zurückkehren.
 Ein künstlicher Lasttest des Netzteils findet nicht statt.
 </p>
+<p>
+<b>Sensoren (iLO/IPMI):</b> Auf Servern mit BMC/iLO (<code>ipmitool sdr elist</code>, braucht
+Root) listet der Tab Temperaturen, Lüfter und Leistungsaufnahme mit Status; leere Steckplätze
+ohne Messwert werden ausgeblendet. Auf ProLiants liefert der Agentless Management Service
+(<code>amsd</code>, im Live-System enthalten) deutlich mehr Sensoren als das nackte iLO. Die
+vollständige Liste aller Sensoren steht im Tab ProLiant-Info.
+</p>
 
 <hr>
 
@@ -1663,6 +1670,13 @@ whether a supply is populated and hot-pluggable. On servers with IPMI
 healthy supplies unplug one power cord – the server must keep running and IPMI must
 report "Redundancy Lost"; after plugging it back in "Fully Redundant" must return.
 There is no artificial load test of the power supply.
+</p>
+<p>
+<b>Sensors (iLO/IPMI):</b> on servers with a BMC/iLO (<code>ipmitool sdr elist</code>, needs
+root) the tab lists temperatures, fans and power draw with their status; empty slots without a
+reading are hidden. On ProLiants the Agentless Management Service (<code>amsd</code>, included in
+the live system) exposes considerably more sensors than the bare iLO. The complete sensor list
+is in the ProLiant info tab.
 </p>
 
 <hr>

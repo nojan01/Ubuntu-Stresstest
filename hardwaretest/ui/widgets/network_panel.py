@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 from datetime import datetime
 import subprocess
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
@@ -28,7 +28,8 @@ from PySide6.QtWidgets import (
 
 from hardwaretest.core import network, privilege
 from hardwaretest.core.network import NetworkAdapter, list_network_adapters
-from hardwaretest.core.report import STATUS_CANCELLED, STATUS_FAILED, STATUS_PASSED, Report
+from hardwaretest.core.report import (STATUS_CANCELLED, STATUS_FAILED, STATUS_INFO, STATUS_PASSED, STATUS_WARNING,
+                                      Report)
 from hardwaretest.core.root_broker import RootBroker
 from hardwaretest.core.test_runner import TestParameters, TestResult
 from hardwaretest.tests.network import NetworkRunner, threshold_failures
@@ -70,6 +71,7 @@ class NetworkPanel(QWidget):
         self._stats_interface = ""
         self._counter_deltas: dict[str, int] = {}
         self._ethtool_worker: Optional[_EthtoolWorker] = None
+        self._ethtool_started: Optional[datetime] = None
         self._root_session: Optional[RootBroker] = None
 
         self.adapter_box = QComboBox()
@@ -599,6 +601,7 @@ class NetworkPanel(QWidget):
             return
         worker = _EthtoolWorker(action, self)
         self._ethtool_worker = worker
+        self._ethtool_started = datetime.now()
         worker.completed.connect(on_success)
         worker.failed.connect(self._ethtool_failed)
         connect_finished(worker, self._ethtool_finished)
@@ -617,6 +620,23 @@ class NetworkPanel(QWidget):
         self.ethtool_result.setVisible(True)
         self.ethtool_result.setStyleSheet(f"color: {color}; font-weight: bold; padding: 2px;")
         self._set_runtime_text(self.ethtool_result, source, **values)
+
+    def _publish_ethtool_report(self, test: str, title: str, status: str, interface: str,
+                                rows: Sequence[tuple[str, str]] = (), section: str = "Ergebnis",
+                                parameters: Sequence[tuple[str, str]] = (), hints: Sequence[str] = ()) -> None:
+        """Bericht für ethtool-/mstlink-Aktionen; Zusammenfassung ist der angezeigte Ergebnistext."""
+        tr = language_manager.tr
+        adapter = self._adapters.get(interface)
+        params = [(tr("Adapter"), self._adapter_label(adapter) if adapter else interface)]
+        params.extend(parameters)
+        report = Report(test=test, title=tr(title), status=status,
+                        summary=self.ethtool_result.text().lstrip("✓✗?⚠ ").strip() or tr("Kein Ergebnis"),
+                        started=self._ethtool_started, finished=datetime.now(), parameters=params)
+        if rows:
+            report.add_section(tr(section), "pairs", list(rows))
+        report.hints.extend(hints)
+        report.raw_output = self.log_view.toPlainText()
+        self.report_bar.publish(report)
 
     def _start_selftest(self) -> None:
         adapter = self._selected_adapter()
@@ -638,6 +658,7 @@ class NetworkPanel(QWidget):
                 return
         self._set_runtime_text(self.status, "ethtool-Selbsttest läuft auf {interface} …", interface=adapter.name)
         name = adapter.name
+        self._selftest_offline = offline
         self._run_ethtool(
             lambda: (name, network.run_ethtool_selftest(name, offline, run=self._ethtool_run)),
             self._show_selftest,
@@ -645,27 +666,41 @@ class NetworkPanel(QWidget):
 
     def _show_selftest(self, value: object) -> None:
         name, result = value
+        tr = language_manager.tr
+        mode = tr("offline") if getattr(self, "_selftest_offline", False) else tr("online")
+        rows = [(test, tr("bestanden") if code == 0 else tr("Code {code}", code=code)) for test, code in result.entries]
+        hints: list[str] = []
         if result.passed is None:
             self._show_ethtool("? Selbsttest auf {interface} ohne Ergebnis – {details}", "#ffaa00", interface=name,
                                details=result.error or language_manager.tr("Treiber unterstützt keinen Selbsttest"))
-            return
-        details = "; ".join(f"{test}: {code}" for test, code in result.entries)
-        if result.passed:
-            self._show_ethtool("✓ Selbsttest auf {interface} bestanden ({details})", "#55ff55", interface=name,
-                               details=details or language_manager.tr("keine Einzelergebnisse"))
-        elif result.inconclusive:
-            self._show_ethtool(
-                "? Selbsttest auf {interface} nicht aussagekräftig: Treiber meldet FAIL, aber alle Einzeltests sind 0 "
-                "({details}). Der Test konnte nicht ausgeführt werden – bei bnxt_en z. B. Offline-Test auf "
-                "NPAR-/geteilter PF oder mit aktiven VFs, oder Schnittstelle nicht aktiv (Grund in dmesg). "
-                "Kein Hinweis auf einen Hardwarefehler; ggf. Online-Test versuchen.",
-                "#ffaa00", interface=name, details=details)
+            status = STATUS_WARNING
         else:
-            failed = "; ".join(f"{test}: {code}" for test, code in result.failed_entries)
-            self._show_ethtool("✗ Selbsttest auf {interface} fehlgeschlagen – {details}", "#ff5555", interface=name,
-                               details=failed)
-        for line in (details.split("; ") if details else []):
-            self.log_signal.emit(f"ethtool -t {name}: {line}")
+            details = "; ".join(f"{test}: {code}" for test, code in result.entries)
+            if result.passed:
+                self._show_ethtool("✓ Selbsttest auf {interface} bestanden ({details})", "#55ff55", interface=name,
+                                   details=details or language_manager.tr("keine Einzelergebnisse"))
+                status = STATUS_PASSED
+            elif result.inconclusive:
+                self._show_ethtool(
+                    "? Selbsttest auf {interface} nicht aussagekräftig: Treiber meldet FAIL, aber alle Einzeltests sind 0 "
+                    "({details}). Der Test konnte nicht ausgeführt werden – bei bnxt_en z. B. Offline-Test auf "
+                    "NPAR-/geteilter PF oder mit aktiven VFs, oder Schnittstelle nicht aktiv (Grund in dmesg). "
+                    "Kein Hinweis auf einen Hardwarefehler; ggf. Online-Test versuchen.",
+                    "#ffaa00", interface=name, details=details)
+                status = STATUS_WARNING
+                hints.append(tr("Treiber meldet FAIL ohne fehlgeschlagenen Einzeltest – Test konnte nicht laufen "
+                                "(kein Hardwarefehler nachgewiesen); Grund in dmesg prüfen."))
+            else:
+                failed = "; ".join(f"{test}: {code}" for test, code in result.failed_entries)
+                self._show_ethtool("✗ Selbsttest auf {interface} fehlgeschlagen – {details}", "#ff5555", interface=name,
+                                   details=failed)
+                status = STATUS_FAILED
+            for line in (details.split("; ") if details else []):
+                self.log_signal.emit(f"ethtool -t {name}: {line}")
+        if result.error:
+            rows.append((tr("Fehler"), result.error))
+        self._publish_ethtool_report("netzwerk-selbsttest", "Netzwerk – ethtool-Selbsttest", status, name, rows,
+                                     section="Einzeltests", parameters=[(tr("Modus"), mode)], hints=hints)
 
     def _read_module(self) -> None:
         adapter = self._selected_adapter()
@@ -679,16 +714,24 @@ class NetworkPanel(QWidget):
         name, (values, error) = value
         if error:
             self._show_ethtool("✗ SFP-Modul auf {interface} nicht lesbar: {details}", "#ff5555", interface=name, details=error)
+            self._publish_ethtool_report("netzwerk-sfp", "Netzwerk – SFP-Modul (ethtool -m)", STATUS_FAILED, name,
+                                         [(language_manager.tr("Fehler"), error)])
             return
         if not values:
             self._show_ethtool("Kein steckbares Modul (SFP/QSFP) auf {interface} oder keine Moduldaten.", "#bbbbbb", interface=name)
+            self._publish_ethtool_report("netzwerk-sfp", "Netzwerk – SFP-Modul (ethtool -m)", STATUS_INFO, name)
             return
+        rows = list(values.items())
         alarms = values.pop("Alarms", "")
         text = " | ".join(f"{key}: {val}" for key, val in values.items())
         if alarms:
             self._show_ethtool("⚠ SFP {interface}: {details} | Alarme: {alarms}", "#ffaa00", interface=name, details=text, alarms=alarms)
+            status = STATUS_WARNING
         else:
             self._show_ethtool("SFP {interface}: {details}", "#bbbbbb", interface=name, details=text)
+            status = STATUS_INFO
+        self._publish_ethtool_report("netzwerk-sfp", "Netzwerk – SFP-Modul (ethtool -m)", status, name, rows,
+                                     section="Moduldaten")
 
     def _run_mstlink(self) -> None:
         adapter = self._selected_adapter()
@@ -703,10 +746,14 @@ class NetworkPanel(QWidget):
         if result.error:
             self._show_ethtool("✗ mstlink auf {interface} fehlgeschlagen: {details}", "#ff5555",
                                interface=name, details=result.error)
+            self._publish_ethtool_report("netzwerk-mstlink", "Netzwerk – Mellanox Link-Diagnose (mstlink)",
+                                         STATUS_FAILED, name, [(language_manager.tr("Fehler"), result.error)])
             return
+        rows: list[tuple[str, str]] = []
         for section, values in result.sections.items():
             for key, val in values.items():
                 self.log_signal.emit(f"mstlink {name} [{section}] {key}: {val}")
+                rows.append((f"[{section}] {key}", str(val)))
         parts = [part for part in (result.physical_state or result.state, result.speed, result.fec) if part]
         if result.effective_errors is not None:
             parts.append(f"Errors {result.effective_errors}")
@@ -721,11 +768,16 @@ class NetworkPanel(QWidget):
         details = " | ".join(parts)
         if result.severity == "error":
             self._show_ethtool("✗ mstlink {interface}: kein Link – {details}", "#ff5555", interface=name, details=details)
+            status = STATUS_FAILED
         elif result.severity == "warn":
             self._show_ethtool("⚠ mstlink {interface}: {details} | Auffällig: {warnings}", "#ffaa00", interface=name,
                                details=details, warnings="; ".join(result.warnings))
+            status = STATUS_WARNING
         else:
             self._show_ethtool("✓ mstlink {interface}: {details}", "#55ff55", interface=name, details=details)
+            status = STATUS_PASSED
+        self._publish_ethtool_report("netzwerk-mstlink", "Netzwerk – Mellanox Link-Diagnose (mstlink)", status, name,
+                                     rows, section="mstlink-Ausgabe", hints=list(result.warnings))
 
     def close_privileged_session(self) -> None:
         if self._root_session is not None:

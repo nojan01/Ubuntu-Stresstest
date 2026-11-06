@@ -784,8 +784,8 @@ Nenn- und Ist-Takt, Rank, ECC, Spannung, Hersteller, Teile- und Seriennummer).
 <p>
 Die Speichermodule liest <code>dmidecode</code> mit Root-Rechten. Das .deb erlaubt
 Mitgliedern der Gruppe sudo genau <code>dmidecode -t 1 -t 4 -t 16 -t 17</code> ohne Passwort;
-sonst erscheint „Speichermodule und Netzteile mit Passwort auslesen“ (liest alle DMI-Tabellen inkl. Netzteile). „In Zwischenablage kopieren“
-liefert alles als Text, z. B. für Tickets.
+sonst erscheint „Speichermodule und Netzteile mit Passwort auslesen“ (liest alle DMI-Tabellen inkl. Netzteile). „Bericht erstellen“
+schreibt alle Tabellen als HTML-Bericht nach <code>~/Downloads/hwtest-system-…html</code>, z. B. für Tickets.
 </p>
 <p>
 Darunter folgen weitere Komponenten (ohne root, aus <code>/sys</code>, <code>lspci</code>,
@@ -1631,8 +1631,8 @@ rated and configured speed, rank, ECC, voltage, manufacturer, part and serial nu
 <p>
 Memory modules are read by <code>dmidecode</code> with root privileges. The .deb lets
 members of the sudo group run exactly <code>dmidecode -t 1 -t 4 -t 16 -t 17</code> without a
-password; otherwise "Read memory modules and power supplies with password" appears (reads all DMI tables incl. power supplies). "Copy to clipboard"
-returns everything as text, e.g. for tickets.
+password; otherwise "Read memory modules and power supplies with password" appears (reads all DMI tables incl. power supplies). "Create report"
+writes all tables as an HTML report to <code>~/Downloads/hwtest-system-…html</code>, e.g. for tickets.
 </p>
 <p>
 Further components follow below (without root, from <code>/sys</code>, <code>lspci</code>,

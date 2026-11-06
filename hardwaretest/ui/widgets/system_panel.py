@@ -4,7 +4,9 @@ from __future__ import annotations
 
 
 from PySide6.QtCore import QProcess, QTimer
-from PySide6.QtGui import QColor, QGuiApplication
+from datetime import datetime
+
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
@@ -13,7 +15,9 @@ from PySide6.QtWidgets import (
 from hardwaretest.core import ipmi, privilege
 from hardwaretest.core import device_inventory as dev
 from hardwaretest.core import hardware_inventory as inv
+from hardwaretest.core.report import STATUS_INFO, Report
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.widgets.report_bar import ReportBar
 
 
 def _t(de: str, en: str) -> str:
@@ -88,12 +92,14 @@ class SystemPanel(QWidget):
         self.refresh_button.clicked.connect(self.refresh)
         self.password_button = QPushButton()
         self.password_button.clicked.connect(self._read_with_password)
-        self.copy_button = QPushButton()
-        self.copy_button.clicked.connect(self._copy)
-        for button in (self.refresh_button, self.password_button, self.copy_button):
+        self.report_button = QPushButton()
+        self.report_button.clicked.connect(self.write_report)
+        for button in (self.refresh_button, self.password_button, self.report_button):
             buttons.addWidget(button)
         buttons.addStretch(1)
         outer.addLayout(buttons)
+        self.report_bar = ReportBar()
+        outer.addWidget(self.report_bar)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -259,8 +265,40 @@ class SystemPanel(QWidget):
                 "degraded": _t("Redundanz: eingeschränkt", "redundancy: degraded"),
                 "lost": _t("Redundanz: verloren", "redundancy: lost")}.get(redundancy or "", "")
 
-    def _copy(self) -> None:
-        QGuiApplication.clipboard().setText("\n".join(self.text_lines()))
+    def _table_groups(self) -> list[tuple[QGroupBox, QTableWidget, QLabel | None]]:
+        return [(self.cpu_group, self.cpu_table, self.flags_label), (self.cache_group, self.cache_table, None),
+                (self.clock_group, self.clock_table, self.clock_note), (self.board_group, self.board_table, None),
+                (self.memory_group, self.memory_table, self.memory_summary), (self.pci_group, self.pci_table, self.pci_note),
+                (self.network_group, self.network_table, None), (self.graphics_group, self.graphics_table, None),
+                (self.controller_group, self.controller_table, None), (self.disk_group, self.disk_table, None),
+                (self.usb_group, self.usb_table, self.usb_note), (self.tb_group, self.tb_table, self.tb_note),
+                (self.fc_group, self.fc_table, self.fc_note), (self.power_group, self.power_table, self.power_note)]
+
+    def write_report(self) -> None:
+        """HTML-Bericht aus den angezeigten Tabellen (eine Tabelle je Gruppe) nach ~/Downloads."""
+        started = datetime.now()
+        summary = inv.inventory_lines(language_manager.language, self._packages, self._caches, self._board,
+                                      self._memory, self._memory_error)
+        report = Report(test="system", title=_t("System – Hardware-Inventar", "System – hardware inventory"),
+                        status=STATUS_INFO, summary=" | ".join(summary[:2]) if summary else "",
+                        started=started, finished=started)
+        for group, table, note in self._table_groups():
+            header = [table.horizontalHeaderItem(c).text() if table.horizontalHeaderItem(c) else ""
+                      for c in range(table.columnCount())]
+            rows = [[table.item(r, c).text() if table.item(r, c) else "" for c in range(table.columnCount())]
+                    for r in range(table.rowCount())]
+            text = note.text().strip() if note is not None and note.isVisibleTo(self) else ""
+            if not rows and not text:
+                continue
+            section = report.add_section(group.title(), "table", rows, header)
+            if text and not rows:
+                section.kind, section.text = "text", text
+            elif text:
+                report.add_section(group.title() + " – " + _t("Hinweis", "Note"), "text", text=text)
+        if self._memory_error:
+            report.hints.append(self._memory_error)
+        report.raw_output = "\n".join(self.text_lines())
+        self.report_bar.publish(report)
 
     # ------------------------------------------------------------------ Takt
     def showEvent(self, event) -> None:
@@ -304,7 +342,7 @@ class SystemPanel(QWidget):
     def retranslate(self, *_args) -> None:
         self.refresh_button.setText(_t("Neu einlesen", "Refresh"))
         self.password_button.setText(_t("Speichermodule und Netzteile mit Passwort auslesen", "Read memory modules and power supplies with password"))
-        self.copy_button.setText(_t("In Zwischenablage kopieren", "Copy to clipboard"))
+        self.report_button.setText(_t("Bericht erstellen", "Create report"))
         self.password_button.setVisible(
             self._memory is None and not privilege.is_root() and privilege.tool() is not None
         )

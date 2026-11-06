@@ -715,6 +715,20 @@ _EN: dict[str, str] = {
     "Speicherbelegung": "Memory usage",
     "GPU – Vulkan-Lasttest": "GPU – Vulkan stress test",
     "Netzwerk – Verbindungstest": "Network – connectivity test",
+    "Netzwerk – ethtool-Selbsttest": "Network – ethtool self-test",
+    "Netzwerk – SFP-Modul (ethtool -m)": "Network – SFP module (ethtool -m)",
+    "Netzwerk – Mellanox Link-Diagnose (mstlink)": "Network – Mellanox link diagnostics (mstlink)",
+    "Einzeltests": "Individual tests",
+    "Moduldaten": "Module data",
+    "mstlink-Ausgabe": "mstlink output",
+    "bestanden": "passed",
+    "Code {code}": "code {code}",
+    "online": "online",
+    "offline": "offline",
+    "Treiber meldet FAIL ohne fehlgeschlagenen Einzeltest – Test konnte nicht laufen "
+    "(kein Hardwarefehler nachgewiesen); Grund in dmesg prüfen.":
+        "Driver reports FAIL without any failed individual test – the test could not run "
+        "(no hardware fault proven); check dmesg for the reason.",
     "Zielhost": "Target host",
     "Adapter": "Adapter",
     "Mindestdurchsatz": "Minimum throughput",

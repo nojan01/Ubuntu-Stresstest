@@ -49,7 +49,7 @@ VENDOR_TOOLS: tuple[VendorTool, ...] = (
                ("qaucli", "qlnxcli")),
     VendorTool("Mellanox/NVIDIA", ("mlx5_core", "mlx5_en", "mlx4_en", "mlx4_core", "mlxsw_spectrum"),
                ("mlxfwmanager", "mlxconfig", "mlxlink")),
-    VendorTool("Solarflare/Xilinx/AMD", ("sfc", "sfc_ef100"), ("sfupdate", "sfboot")),
+    VendorTool("Solarflare/Xilinx/AMD", ("sfc", "sfc_ef100"), ("sfupdate", "sfboot", "sfreport")),
 )
 
 _WHICH_CACHE: dict[str, Optional[str]] = {}
@@ -113,8 +113,49 @@ def available_tool(adapter: NetworkAdapter) -> Optional[tuple[VendorTool, str, s
     for binary in tool.binaries:
         path = find_tool(binary)
         if path:
+            if binary == "nvmupdate64e":
+                path = _nvmupdate_variant(adapter.driver) or path
             return tool, binary, path
     return None
+
+
+# Intel liefert nvmupdate64e je Adapterfamilie getrennt; Schlüsselwörter im Installationspfad.
+_NVMUPDATE_FAMILY = {
+    "ice": ("e810", "800"), "idpf": ("e810", "800"),
+    "i40e": ("700", "x710", "xl710", "xxv710"), "iavf": ("700", "e810", "800"),
+    "ixgbe": ("x550", "x540", "82599", "500"), "igb": ("i350", "i210", "igb"), "igc": ("i225", "i226"),
+}
+
+
+def _nvmupdate_variant(driver: str) -> Optional[str]:
+    """nvmupdate64e-Variante, deren Pfad zur Adapterfamilie passt (Suche unter TOOL_TREES)."""
+    keywords = _NVMUPDATE_FAMILY.get(driver)
+    if not keywords:
+        return None
+    for tree in TOOL_TREES:
+        for candidate in _search_tree_all(Path(tree), "nvmupdate64e"):
+            lowered = candidate.lower()
+            if any(key in lowered for key in keywords):
+                return candidate
+    return None
+
+
+def _search_tree_all(root: Path, name: str, max_depth: int = 5) -> list[str]:
+    results: list[str] = []
+    if not root.is_dir():
+        return results
+    base_depth = len(root.parts)
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel = os.path.relpath(dirpath, root)
+        if rel != "." and _SKIP_DIRS.search(rel + "/"):
+            dirnames[:] = []
+            continue
+        if len(Path(dirpath).parts) - base_depth >= max_depth:
+            dirnames[:] = []
+        if name in filenames and os.access(Path(dirpath) / name, os.X_OK):
+            results.append(str(Path(dirpath) / name))
+        dirnames.sort()
+    return sorted(results)
 
 
 @dataclass
@@ -205,7 +246,12 @@ def plan_commands(binary: str, adapter: NetworkAdapter) -> list[VendorStep]:
     if binary == "bnxtnvm":
         return [VendorStep("Geräteinfo", ["bnxtnvm", f"-dev={name}", "device_info"])]
     if binary == "nvmupdate64e":
-        return [VendorStep("NVM-Inventar", ["nvmupdate64e", "-i"])]
+        steps = [VendorStep("NVM-Inventar", ["nvmupdate64e", "-i"])]
+        for epct in ("epct64e", "epct"):
+            if find_tool(epct):
+                steps.append(VendorStep("Geräteliste", [epct, "-devices"]))
+                break
+        return steps
     if binary in {"epct64e", "epct"}:
         return [VendorStep("Geräteliste", [binary, "-devices"])]
     if binary == "qaucli":
@@ -222,13 +268,16 @@ def plan_commands(binary: str, adapter: NetworkAdapter) -> list[VendorStep]:
         if find_tool("mlxlink"):
             steps.append(VendorStep("Link-Diagnose", ["mlxlink", "-d", bdf, "--show_module", "--show_counters"]))
         return steps
-    if binary == "sfupdate":
-        steps = [VendorStep("Firmware-Inventar", ["sfupdate"])]
-        if find_tool("sfboot"):
+    if binary in {"sfupdate", "sfboot", "sfreport"}:
+        steps = []
+        if binary == "sfupdate" or find_tool("sfupdate"):
+            steps.append(VendorStep("Firmware-Inventar", ["sfupdate"]))
+        if binary == "sfboot" or find_tool("sfboot"):
             steps.append(VendorStep("Adapterkonfiguration", ["sfboot"]))
+        if binary == "sfreport" or find_tool("sfreport"):
+            # sfreport.pl: -m = Minimalformat (Text), "-" = nach stdout
+            steps.append(VendorStep("Systembericht", ["sfreport", "-m", "-"]))
         return steps
-    if binary == "sfboot":
-        return [VendorStep("Adapterkonfiguration", ["sfboot"])]
     return []
 
 
@@ -244,11 +293,11 @@ def _follow_up(binary: str, step: VendorStep, adapter: NetworkAdapter) -> list[V
                 VendorStep("Firmware-Paket", ["niccli", "-i", index, "show", "--pkg_ver"]),
                 VendorStep("Link-Status", ["niccli", "-i", index, "link", "-s"]),
                 VendorStep("Transceiver", ["niccli", "-i", index, "cable", "-m", "--show"])]
-    if binary in {"epct64e", "epct"} and step.title == "Geräteliste":
+    if step.title == "Geräteliste" and step.command[0] in {"epct64e", "epct"}:
         index = _epct_index(step.output, adapter.bus_address)
         if index is None:
             return []
-        return [VendorStep("Port-Konfiguration", [binary, f"-nic={index}", "-get"])]
+        return [VendorStep("Port-Konfiguration", [step.command[0], f"-nic={index}", "-get"])]
     return []
 
 
@@ -262,8 +311,17 @@ def _clean_env() -> dict[str, str]:
 
 def _execute(step: VendorStep, path: str, run: RunCommand, timeout: int) -> None:
     command = [path] + step.command[1:]
+    # nvmupdate64e sucht nvmupdate.cfg im Arbeitsverzeichnis -> aus dem Installationsordner starten
+    # (Symlink/Wrapper unter /usr/local/sbin auflösen).
+    cwd = None
+    if step.command[0] == "nvmupdate64e":
+        real = os.path.realpath(path)
+        if os.path.isfile(os.path.join(os.path.dirname(real), "nvmupdate.cfg")):
+            cwd = os.path.dirname(real)
+            command = [real] + step.command[1:]
     try:
-        completed = run(command, check=False, capture_output=True, text=True, timeout=timeout, env=_clean_env())
+        completed = run(command, check=False, capture_output=True, text=True, timeout=timeout, env=_clean_env(),
+                        cwd=cwd)
     except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
         step.error = str(exc)
         return

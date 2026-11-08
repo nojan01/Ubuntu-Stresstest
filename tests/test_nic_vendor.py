@@ -173,3 +173,61 @@ def test_failure_words_in_output_become_warnings(monkeypatch):
     assert result.tool == "bnxtnvm"
     assert result.severity == "warn"
     assert result.warnings == ["Geräteinfo: Selftest: FAILED"]
+
+
+def test_nvmupdate_variant_by_driver_and_cwd(tmp_path, monkeypatch):
+    tree = tmp_path / "vendor-tools"
+    tool700 = tree / "700Series_NVMUpdatePackage_v9_58_Linux" / "Linux_x64" / "nvmupdate64e"
+    _make_tool(tmp_path, str(tool700.relative_to(tmp_path)))
+    tool810 = tree / "E810_NVMUpdatePackage_v5_10_Linux" / "Linux_x64" / "nvmupdate64e"
+    _make_tool(tmp_path, str(tool810.relative_to(tmp_path)))
+    (tool700.parent / "nvmupdate.cfg").write_text("")
+    (tool810.parent / "nvmupdate.cfg").write_text("")
+    sbin = tmp_path / "sbin"
+    sbin.mkdir()
+    (sbin / "nvmupdate64e").symlink_to(tool700)
+    monkeypatch.setattr(nic_vendor, "TOOL_TREES", (str(tree),))
+    monkeypatch.setattr(nic_vendor, "TOOL_DIRS", (str(sbin),))
+    monkeypatch.setattr(nic_vendor.shutil, "which", lambda name: None)
+    nic_vendor.clear_cache()
+
+    tool, binary, path = nic_vendor.available_tool(adapter("ice"))
+    assert binary == "nvmupdate64e" and path == str(tool810)
+    tool, binary, path = nic_vendor.available_tool(adapter("i40e"))
+    assert path == str(tool700)
+    # unbekannte Familie: Standardfund (Symlink) bleibt
+    tool, binary, path = nic_vendor.available_tool(adapter("e1000e"))
+    assert path == str(sbin / "nvmupdate64e")
+
+    run = FakeRun({"nvmupdate64e -i": (0, "Num Description  Ver.  DevId S:B    Status\n01) X710 9.58 1572 00:094 Update not available")})
+    nic_vendor.run_vendor_diagnostics(adapter("i40e"), run=run, tool=(tool, binary, path))
+    assert run.calls[0][0] == str(tool700)
+    assert run.kwargs[0]["cwd"] == str(tool700.parent)
+
+
+def test_intel_runs_nvmupdate_and_epct(tmp_path, monkeypatch):
+    monkeypatch.setattr(nic_vendor.shutil, "which",
+                        lambda name: f"/usr/local/sbin/{name}" if name in {"nvmupdate64e", "epct64e"} else None)
+    nic_vendor.clear_cache()
+    run = FakeRun({
+        "nvmupdate64e -i": (0, "Num Description  Ver.  DevId S:B    Status\n01) X710 9.58 1572 00:094 Update not available"),
+        "epct64e -devices": (0, "NIC  Seg:Bus  Ven-Dev   Mode   Adapter Name\n"
+                                "===  =======  ========  =====  ============\n"
+                                " 1   00:094   8086-1572  4x10  Intel(R) Ethernet Converged Network Adapter X710\n"),
+        "epct64e -nic=1 -get": (0, "Active Configuration: 4x10G"),
+    })
+    result = nic_vendor.run_vendor_diagnostics(adapter("i40e", bdf="0000:94:00.0"), run=run)
+    titles = [s.title for s in result.steps]
+    assert titles == ["NVM-Inventar", "Geräteliste", "Port-Konfiguration"]
+    assert run.calls[2][0] == "/usr/local/sbin/epct64e"
+
+
+def test_solarflare_sfreport_fallback(monkeypatch):
+    monkeypatch.setattr(nic_vendor.shutil, "which",
+                        lambda name: "/usr/local/sbin/sfreport" if name == "sfreport" else None)
+    nic_vendor.clear_cache()
+    run = FakeRun({"sfreport -m -": (0, "AMD Solarflare system report\nsfc driver 5.3\nFirmware 8.3.4")})
+    result = nic_vendor.run_vendor_diagnostics(adapter("sfc"), run=run)
+    assert result.tool == "sfreport"
+    assert [s.title for s in result.steps] == ["Systembericht"]
+    assert result.steps[0].ok and not result.warnings

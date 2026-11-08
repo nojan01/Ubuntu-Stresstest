@@ -9,11 +9,17 @@ Die Reihenfolge entspricht der derzeitigen Priorität.
 
 - ethtool-Fehlerzähler (`ethtool -S`: CRC, rx/tx errors, dropped) automatisch vor und
   nach dem iperf3-/Ping-Lauf vergleichen und Zuwächse als Fehler werten.
-- Proprietäre Herstellertools (NVIDIA MFT `mlxlink`/`mlxcables`, Broadcom
-  `bnxtnvm`/`bnxtmt`, Intel `nvmupdate`) sind nicht im externen Live-ISO enthalten –
-  sie kämen ausschließlich über `--vendor-tools` ins interne ISO. Falls gewünscht:
-  optionale Schaltflächen, nur sichtbar, wenn das Tool installiert ist
-  (frei und immer verfügbar: `ethtool`, `mstflint`/`mstlink`).
+- Proprietäre Herstellertools (seit 0.3.6/0.3.7 „Hersteller-Diagnose“, nur internes
+  ISO über `--vendor-tools`): Syntax von `bnxtnvm`, `qaucli -pr nic`, `qlnxcli`,
+  `sfupdate`/`sfboot` ist unbelegt – mit echten Binaries prüfen; Marvell
+  QConvergeConsoleCLI und Solarflare `sfutils` (nur Source-RPM) fehlen im internen ISO.
+- Realtek (`r8169`/`r8125`/`r8168`, 0.3.8): Realtek liefert für Linux kein
+  Diagnose-CLI (nur Windows-Utility; `rtnicpg` ist ein EEPROM-Programmiertool) –
+  alle Prüfungen laufen über `ethtool`. Geplant: Hinweis im Netzwerk-Tab und
+  Bericht, wenn ein 2,5/5-GbE-Realtek-Adapter (RTL8125/8126) mit dem Kernel-`r8169`
+  statt dem Realtek-`r8125`-Treiber läuft (bekannte Ursache für Link-Flaps/
+  Durchsatzprobleme); Treiber + Version (`ethtool -i`) und PHY-Statistiken
+  (`ethtool --phy-statistics`) in den Bericht aufnehmen; Hilfe/README ergänzen.
 
 ### Fibre Channel (zurückgestellt – keine FC-Hardware vorhanden)
 

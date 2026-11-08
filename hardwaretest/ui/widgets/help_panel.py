@@ -601,7 +601,9 @@ ausgewählt, bindet Hardwaretest Ping und iperf3 gezielt an diese Schnittstelle.
       Marvell/QLogic FastLinQ (<code>qede</code>/<code>bnx2x</code> → <code>qaucli -pr nic</code>,
       <code>qlnxcli</code>), Mellanox/NVIDIA MFT (<code>mlxfwmanager --query</code>,
       <code>mlxconfig query</code>, <code>mlxlink</code>) und Solarflare/AMD (<code>sfc</code> →
-      <code>sfupdate</code>, <code>sfboot</code>). Es werden ausschließlich lesende Inventar‑,
+      <code>sfupdate</code>, <code>sfboot</code>, ersatzweise <code>sfreport -m -</code>). Bei Intel
+      wird die zur Adapterfamilie passende <code>nvmupdate64e</code>‑Variante (700er/E810) gewählt
+      und im Paketordner gestartet. Es werden ausschließlich lesende Inventar‑,
       Link‑ und Transceiver‑Abfragen ausgeführt, nie Firmware geschrieben. Die Ausgaben
       stehen vollständig im Log und als Schlüssel/Wert‑Tabelle im Bericht;
       <span style="color:#ef6c00">orange</span>, wenn eine Abfrage fehlschlägt oder das Werkzeug
@@ -1477,7 +1479,9 @@ Linux chooses the route. Selecting an adapter binds ping and iperf3 to that inte
       (<code>qede</code>/<code>bnx2x</code> → <code>qaucli -pr nic</code>, <code>qlnxcli</code>),
       Mellanox/NVIDIA MFT (<code>mlxfwmanager --query</code>, <code>mlxconfig query</code>,
       <code>mlxlink</code>) and Solarflare/AMD (<code>sfc</code> → <code>sfupdate</code>,
-      <code>sfboot</code>). Only read-only inventory, link and transceiver queries are run –
+      <code>sfboot</code>, fallback <code>sfreport -m -</code>). For Intel the
+      <code>nvmupdate64e</code> variant matching the adapter family (700 series/E810) is selected
+      and started from its package directory. Only read-only inventory, link and transceiver queries are run –
       firmware is never written. Full output goes to the log and as a key/value table into the
       report; <span style="color:#ef6c00">amber</span> if a query fails or the tool reports
       errors, <span style="color:#c62828">red</span> if no query succeeds. Tools are looked up in

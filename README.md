@@ -2,6 +2,10 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.7
+
+- **Hersteller-Diagnose (Netzwerk):** Intel führt jetzt `nvmupdate64e -i` **und** `epct64e -devices`/`-nic=N -get` nacheinander aus; bei mehreren installierten NVM-Update-Paketen wird die zur Adapterfamilie passende Variante gewählt (700er für `i40e`, E810 für `ice`) und `nvmupdate64e` im Paketordner gestartet (benötigt `nvmupdate.cfg`). Solarflare/AMD nutzt ersatzweise `sfreport -m -` (Textbericht), wenn `sfupdate`/`sfboot` fehlen.
+
 ### Neu in 0.3.6
 
 - **Netzwerk-Tab: Hersteller-Diagnose.** Neuer Button, sichtbar wenn für den Treiber des gewählten Adapters ein proprietäres Herstellerwerkzeug installiert ist (im Live-ISO nur in der internen Ausprägung): Broadcom NetXtreme-E (`bnxt_en` → `niccli --list`, `-i N show`, `show --pkg_ver`, `link -s`, `cable -m --show`; ersatzweise `bnxtnvm device_info`), Intel (`i40e`/`ice`/`ixgbe`/`igb` → `nvmupdate64e -i`, `epct64e -devices` + `-nic=N -get`), Marvell/QLogic FastLinQ (`qede`/`bnx2x` → `qaucli -pr nic -i/-g`, `qlnxcli`), Mellanox/NVIDIA MFT (`mlxfwmanager --query`, `mlxconfig query`, `mlxlink`) und Solarflare/AMD (`sfc` → `sfupdate`, `sfboot`). Nur lesende Abfragen, Ausgabe im Log und als HTML-Bericht; Werkzeuge werden in `$PATH`, `/opt/vendor-tools` und den üblichen Herstellerpfaden gesucht (`core/nic_vendor.py`).
@@ -84,7 +88,7 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations 
 
 ### Neu in 0.2.65
 
-- **ethtool-Selbsttest (Tab Netzwerk):** `ethtool -t` online/offline für physische Adapter über den Root-Broker; Fehlerzähler aus `ethtool -S` (CRC, rx/tx errors, dropped) werden vor/nach dem Test verglichen und Zuwächse als Warnung gemeldet. „SFP-Modul lesen“ (`ethtool -m`) zeigt Hersteller, Typ, Seriennummer, Temperatur, Spannung, Rx-/Tx-Leistung. **Mellanox Link-Diagnose** (`mstlink` aus `mstflint`, nur bei mlx4/mlx5-Adaptern und installiertem Paket sichtbar): Link-Zustand, FEC, Empfehlung, physische Fehler/BER, Link-Down-Zähler, Moduldaten mit Grenzwertprüfung. **Hersteller-Diagnose** (ab 0.3.6): lesende Inventar-/Link-/Transceiver-Abfragen mit proprietären Werkzeugen (Broadcom `niccli`, Intel `nvmupdate64e`/`epct64e`, Marvell `qaucli`/`qlnxcli`, NVIDIA MFT, Solarflare `sfupdate`/`sfboot`), sofern installiert.
+- **ethtool-Selbsttest (Tab Netzwerk):** `ethtool -t` online/offline für physische Adapter über den Root-Broker; Fehlerzähler aus `ethtool -S` (CRC, rx/tx errors, dropped) werden vor/nach dem Test verglichen und Zuwächse als Warnung gemeldet. „SFP-Modul lesen“ (`ethtool -m`) zeigt Hersteller, Typ, Seriennummer, Temperatur, Spannung, Rx-/Tx-Leistung. **Mellanox Link-Diagnose** (`mstlink` aus `mstflint`, nur bei mlx4/mlx5-Adaptern und installiertem Paket sichtbar): Link-Zustand, FEC, Empfehlung, physische Fehler/BER, Link-Down-Zähler, Moduldaten mit Grenzwertprüfung. **Hersteller-Diagnose** (ab 0.3.6): lesende Inventar-/Link-/Transceiver-Abfragen mit proprietären Werkzeugen (Broadcom `niccli`, Intel `nvmupdate64e`/`epct64e`, Marvell `qaucli`/`qlnxcli`, NVIDIA MFT, Solarflare `sfupdate`/`sfboot`/`sfreport`), sofern installiert.
 - **Fibre-Channel-HBAs (Tab System):** Übersicht aus `/sys/class/fc_host` (Port-Zustand, Geschwindigkeit, WWPN/WWNN, Fabric, Firmware, Treiber, Remote-Ports) mit Fehlerzählern; rot bei Zählern > 0 oder Linkdown. Auch im Gesamttest-Bericht.
 - **Netzteile / Redundanz (Tab System):** DMI-Typ 39 (Einbauort, Hersteller, Modell, Seriennummer, Maximalleistung, Status, bestückt/hot-plug) plus IPMI-Netzteilsensoren und Redundanzstatus (`ipmitool sdr type 0x08/0x09`) inkl. Anleitung für den Redundanztest.
 - **Sensoren (Tab System):** Temperaturen, Lüfter und Leistungsaufnahme aus dem iLO/BMC (`ipmitool sdr elist`); auf ProLiants mit laufendem `amsd` deutlich mehr Sensoren. Vollständige Liste im Tab ProLiant-Info.
@@ -407,7 +411,7 @@ Ein zusätzliches Installationsskript gehört nicht zur DEB-Auslieferung.
 
 ```bash
 sudo dnf install -y epel-release          # stress-ng, btop, fastfetch liegen in EPEL
-sudo dnf install -y ./hardwaretest-0.3.6-1.x86_64.rpm
+sudo dnf install -y ./hardwaretest-0.3.7-1.x86_64.rpm
 ```
 
 dnf installiert die nativen Abhängigkeiten automatisch. Die sudoers-Regeln

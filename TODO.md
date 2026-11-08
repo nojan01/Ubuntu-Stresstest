@@ -53,6 +53,9 @@ Die Reihenfolge entspricht der derzeitigen Priorität.
 
 ### Netzteil- und Server-Hardware
 
+- Tab „ProLiant Info“ (0.3.8): automatisch ausblenden, wenn kein HPE ProLiant/
+  Synergy erkannt wird (DMI-Hersteller/Produkt, iLO); auf normalen PCs soll der
+  Tab gar nicht erst erscheinen statt leer/„nicht HPE“ zu zeigen.
 - HPE iLO/Redfish, ProLiant-Health und Smart-Array-Prüfungen immer ausdrücklich als
   HPE-spezifisch markieren; fehlende HPE-Hardware niemals als PC-Fehler werten.
 - Netzteil-/Redundanzdaten über `lm-sensors` oder HPE-Werkzeuge ergänzen (DMI und

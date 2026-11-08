@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardwaretest.core import network, privilege
+from hardwaretest.core import network, nic_vendor, privilege
 from hardwaretest.core.network import NetworkAdapter, list_network_adapters
 from hardwaretest.core.report import (STATUS_CANCELLED, STATUS_FAILED, STATUS_INFO, STATUS_PASSED, STATUS_WARNING,
                                       Report)
@@ -90,6 +90,8 @@ class NetworkPanel(QWidget):
         self.module_btn = QPushButton("SFP-Modul auslesen (ethtool -m)")
         self.mstlink_btn = QPushButton("Mellanox Link-Diagnose (mstlink)")
         self.mstlink_btn.setVisible(False)
+        self.vendor_btn = QPushButton("Hersteller-Diagnose")
+        self.vendor_btn.setVisible(False)
         self.ethtool_result = QLabel("")
         self.ethtool_result.setWordWrap(True)
         self.ethtool_result.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -99,6 +101,7 @@ class NetworkPanel(QWidget):
         ethtool_row.addWidget(self.selftest_offline)
         ethtool_row.addWidget(self.module_btn)
         ethtool_row.addWidget(self.mstlink_btn)
+        ethtool_row.addWidget(self.vendor_btn)
         ethtool_row.addStretch(1)
         adapter_layout = QVBoxLayout()
         adapter_layout.addLayout(adapter_header)
@@ -187,6 +190,7 @@ class NetworkPanel(QWidget):
         self.selftest_btn.clicked.connect(self._start_selftest)
         self.module_btn.clicked.connect(self._read_module)
         self.mstlink_btn.clicked.connect(self._run_mstlink)
+        self.vendor_btn.clicked.connect(self._run_vendor)
         self.start_ping.clicked.connect(lambda: self._start("ping"))
         self.start_iperf.clicked.connect(lambda: self._start("iperf3"))
         self.stop_btn.clicked.connect(self._stop)
@@ -588,6 +592,14 @@ class NetworkPanel(QWidget):
         mellanox = adapter is not None and network.is_mellanox(adapter) and network.mstlink_available()
         self.mstlink_btn.setVisible(mellanox)
         self.mstlink_btn.setEnabled(mellanox and idle and (privilege.is_root() or privilege.tool() is not None))
+        # Hersteller-Diagnose: nur wenn ein proprietäres Werkzeug für den Treiber installiert ist (internes ISO).
+        found = nic_vendor.available_tool(adapter) if adapter is not None else None
+        self.vendor_btn.setVisible(found is not None)
+        if found is not None:
+            vendor, binary, path = found
+            self.vendor_btn.setText(language_manager.tr("Hersteller-Diagnose ({tool})", tool=binary))
+            self.vendor_btn.setToolTip(f"{vendor.vendor}: {path}")
+        self.vendor_btn.setEnabled(found is not None and idle and (privilege.is_root() or privilege.tool() is not None))
 
     def _ethtool_run(self, command, **kwargs):
         if privilege.is_root() or privilege.tool() is None:
@@ -778,6 +790,53 @@ class NetworkPanel(QWidget):
             status = STATUS_PASSED
         self._publish_ethtool_report("netzwerk-mstlink", "Netzwerk – Mellanox Link-Diagnose (mstlink)", status, name,
                                      rows, section="mstlink-Ausgabe", hints=list(result.warnings))
+
+    def _run_vendor(self) -> None:
+        adapter = self._selected_adapter()
+        if adapter is None:
+            return
+        found = nic_vendor.available_tool(adapter)
+        if found is None:
+            return
+        name = adapter.name
+        self._set_runtime_text(self.status, "Hersteller-Diagnose ({tool}) läuft auf {interface} …",
+                               tool=found[1], interface=name)
+        self._run_ethtool(lambda: (name, nic_vendor.run_vendor_diagnostics(adapter, run=self._ethtool_run, tool=found)),
+                          self._show_vendor)
+
+    def _show_vendor(self, value: object) -> None:
+        name, result = value
+        title = "Netzwerk – Hersteller-Diagnose ({tool})"
+        tr = language_manager.tr
+        if result.error:
+            self._show_ethtool("✗ Hersteller-Diagnose auf {interface} fehlgeschlagen: {details}", "#ff5555",
+                               interface=name, details=result.error)
+            self._publish_ethtool_report("netzwerk-hersteller", tr(title, tool=result.tool or result.vendor), STATUS_FAILED,
+                                         name, [(tr("Fehler"), result.error)])
+            return
+        for step in result.steps:
+            self.log_signal.emit(f"{result.tool} {name}: $ {' '.join(step.command)} → "
+                                 + (tr("OK") if step.ok else step.error))
+            for line in step.output.splitlines():
+                if line.strip():
+                    self.log_signal.emit(f"  {line.rstrip()}")
+        parameters = [(tr("Hersteller"), result.vendor), (tr("Werkzeug"), result.tool)]
+        parameters += [(step.title, " ".join(step.command)) for step in result.steps]
+        details = result.summary
+        if result.severity == "error":
+            self._show_ethtool("✗ {tool} {interface}: {details} – {warnings}", "#ff5555", tool=result.tool,
+                               interface=name, details=details, warnings="; ".join(result.warnings))
+            status = STATUS_FAILED
+        elif result.severity == "warn":
+            self._show_ethtool("⚠ {tool} {interface}: {details} | Auffällig: {warnings}", "#ffaa00", tool=result.tool,
+                               interface=name, details=details, warnings="; ".join(result.warnings))
+            status = STATUS_WARNING
+        else:
+            self._show_ethtool("✓ {tool} {interface}: {details}", "#55ff55", tool=result.tool, interface=name,
+                               details=details)
+            status = STATUS_PASSED
+        self._publish_ethtool_report("netzwerk-hersteller", tr(title, tool=result.tool), status, name, result.rows,
+                                     section="Hersteller-Ausgabe", parameters=parameters, hints=list(result.warnings))
 
     def close_privileged_session(self) -> None:
         if self._root_session is not None:

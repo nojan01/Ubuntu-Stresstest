@@ -735,9 +735,30 @@ _SMARTCTL_WARNING_BITS = (
 )
 
 
-def _apply_smartctl_exit_status(info: SmartInfo, returncode: int) -> None:
+def smartctl_messages(data: dict) -> List[str]:
+    """Fehler-/Hinweistexte aus ``smartctl -j`` (``smartctl.messages[].string``)."""
+    msgs = (data.get("smartctl") or {}).get("messages") or []
+    return [str(m.get("string", "")) for m in msgs if isinstance(m, dict) and m.get("string")]
+
+
+def smartctl_unknown_usb_bridge(data: dict) -> bool:
+    return any("unknown usb bridge" in m.lower() for m in smartctl_messages(data))
+
+
+def smartctl_cmd_failed_is_harmless(data: dict) -> bool:
+    """Exitcode-Bit 2 nur wegen fehlendem Selbsttest-Protokoll (typisch bei NVMe ohne
+    Self-test-Log, z.B. 'Read Self-test Log failed: Invalid Field in Command')."""
+    msgs = [m for m in smartctl_messages(data) if "self-test log" in m.lower()]
+    errors = [m for m in (data.get("smartctl") or {}).get("messages") or []
+              if isinstance(m, dict) and m.get("severity") == "error"]
+    return bool(msgs) and len(msgs) == len(errors)
+
+
+def _apply_smartctl_exit_status(info: SmartInfo, returncode: int, data: Optional[dict] = None) -> None:
     """Wertet die smartctl-Exitcode-Bitmaske aus und setzt healthy/error/warnings."""
     info.exit_status = returncode
+    if data and returncode & SMARTCTL_BIT_CMD_FAILED and smartctl_cmd_failed_is_harmless(data):
+        returncode &= ~SMARTCTL_BIT_CMD_FAILED
     if returncode < 0:
         info.healthy = None
         info.error = f"smartctl durch Signal {-returncode} beendet"
@@ -798,6 +819,21 @@ def read_smart_info(device: str) -> SmartInfo:
         # Fallback: Textausgabe ohne -j
         return _parse_smart_text(device, prefix, smartctl)
 
+    usb_hint = ""
+    if result.returncode & SMARTCTL_BIT_CMDLINE and smartctl_unknown_usb_bridge(data):
+        # Unbekannte USB-SATA-Bridge: SAT-Passthrough erzwingen
+        usb_hint = "; ".join(smartctl_messages(data))
+        try:
+            retry = subprocess.run(
+                [*prefix, smartctl, "-d", "sat", "-a", "-j", device],
+                capture_output=True, text=True, timeout=30,
+            )
+            retry_data = json.loads(retry.stdout or "")
+        except (subprocess.SubprocessError, OSError, json.JSONDecodeError):
+            retry, retry_data = None, None
+        if retry is not None and isinstance(retry_data, dict) and \
+                not retry.returncode & (SMARTCTL_BIT_CMDLINE | SMARTCTL_BIT_DEVICE_OPEN):
+            result, data, raw = retry, retry_data, retry.stdout or ""
     info = SmartInfo(device=device, healthy=None, raw_output=raw)
     info.model = data.get("model_name", "")
     info.serial = data.get("serial_number", "")
@@ -824,7 +860,9 @@ def read_smart_info(device: str) -> SmartInfo:
         elif attr_id == 198:
             info.uncorrectable_sectors = raw_val
 
-    _apply_smartctl_exit_status(info, result.returncode)
+    _apply_smartctl_exit_status(info, result.returncode, data)
+    if usb_hint and info.error:
+        info.error = f"USB-Bridge ohne SMART-Passthrough ({usb_hint}; auch mit -d sat kein Zugriff)"
     if info.healthy is None and not info.error:
         info.error = "SMART-Gesamtstatus nicht in smartctl-Ausgabe enthalten"
     return info

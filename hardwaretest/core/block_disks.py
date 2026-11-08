@@ -11,7 +11,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 RunCommand = Callable[..., subprocess.CompletedProcess]
 
@@ -132,13 +132,26 @@ def read_disk_smart(device: str, run: RunCommand = subprocess.run) -> DiskSmart:
         data = {}
     if not isinstance(data, dict):
         data = {}
+    if completed.returncode & 0x01 and any("unknown usb bridge" in m.lower() for m in _messages(data)):
+        # Unbekannte USB-SATA-Bridge: SAT-Passthrough erzwingen
+        try:
+            retry = run([smartctl, "-d", "sat", *SMARTCTL_ARGS, device], check=False, capture_output=True,
+                        text=True, timeout=60)
+            retry_data = json.loads(retry.stdout or "{}")
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            retry, retry_data = None, None
+        if retry is not None and isinstance(retry_data, dict) and retry_data and not retry.returncode & 0x03:
+            completed, data = retry, retry_data
     returncode = completed.returncode
     if returncode & 0x03 or not data:
-        messages = [str(m.get("string", "")) for m in (data.get("smartctl") or {}).get("messages") or []
-                    if isinstance(m, dict)]
-        info.error = "; ".join(m for m in messages if m) or f"smartctl Exit {returncode}"
+        info.error = "; ".join(_messages(data)) or f"smartctl Exit {returncode}"
         return info
     return parse_disk_smart(device, data, returncode)
+
+
+def _messages(data: dict) -> List[str]:
+    return [str(m.get("string", "")) for m in (data.get("smartctl") or {}).get("messages") or []
+            if isinstance(m, dict) and m.get("string")]
 
 
 def parse_disk_smart(device: str, data: dict, returncode: int = 0) -> DiskSmart:

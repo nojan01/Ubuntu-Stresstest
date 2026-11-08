@@ -592,6 +592,23 @@ ausgewählt, bindet Hardwaretest Ping und iperf3 gezielt an diese Schnittstelle.
       und die Moduldaten mit Grenzwerten. <span style="color:#ef6c00">Orange</span> bei
       Fehlerzählern &gt; 0, Werten außerhalb der Modulgrenzen oder einer anderen Empfehlung;
       <span style="color:#c62828">rot</span> ohne Link. Alle Werte stehen im Log.</li>
+  <li><b>Hersteller-Diagnose</b> (Root): nur sichtbar, wenn für den Treiber des gewählten
+      Adapters ein proprietäres Herstellerwerkzeug installiert ist – im Live-ISO nur in der
+      internen Ausprägung (<code>--vendor-tools</code>). Erkannt werden Broadcom NetXtreme‑E
+      (<code>bnxt_en</code> → <code>niccli</code>, ersatzweise <code>bnxtnvm</code>), Intel
+      (<code>i40e</code>/<code>ice</code>/<code>ixgbe</code>/<code>igb</code> →
+      <code>nvmupdate64e -i</code>, <code>epct64e -devices</code>/<code>-nic=N -get</code>),
+      Marvell/QLogic FastLinQ (<code>qede</code>/<code>bnx2x</code> → <code>qaucli -pr nic</code>,
+      <code>qlnxcli</code>), Mellanox/NVIDIA MFT (<code>mlxfwmanager --query</code>,
+      <code>mlxconfig query</code>, <code>mlxlink</code>) und Solarflare/AMD (<code>sfc</code> →
+      <code>sfupdate</code>, <code>sfboot</code>). Es werden ausschließlich lesende Inventar‑,
+      Link‑ und Transceiver‑Abfragen ausgeführt, nie Firmware geschrieben. Die Ausgaben
+      stehen vollständig im Log und als Schlüssel/Wert‑Tabelle im Bericht;
+      <span style="color:#ef6c00">orange</span>, wenn eine Abfrage fehlschlägt oder das Werkzeug
+      Fehler meldet, <span style="color:#c62828">rot</span>, wenn keine Abfrage gelingt.
+      Die Werkzeuge werden unter <code>$PATH</code>, <code>/opt/vendor-tools</code> und den
+      üblichen Herstellerpfaden (<code>/opt/mellanox/mft/bin</code>, <code>/opt/Broadcom</code>,
+      <code>/opt/QLogic_Corporation/…</code>) gesucht.</li>
 </ul>
 
 <hr>
@@ -1451,6 +1468,22 @@ Linux chooses the route. Selecting an adapter binds ping and iperf3 to that inte
       counter and module data with limits. <span style="color:#ef6c00">Orange</span> for
       error counters &gt; 0, values outside module limits or any other recommendation;
       <span style="color:#c62828">red</span> without link. All values go to the log.</li>
+  <li><b>Vendor diagnostics</b> (root): only shown when a proprietary vendor tool for the
+      selected adapter's driver is installed – on the live ISO only in the internal variant
+      (<code>--vendor-tools</code>). Recognised: Broadcom NetXtreme‑E (<code>bnxt_en</code> →
+      <code>niccli</code>, fallback <code>bnxtnvm</code>), Intel (<code>i40e</code>/<code>ice</code>/
+      <code>ixgbe</code>/<code>igb</code> → <code>nvmupdate64e -i</code>,
+      <code>epct64e -devices</code>/<code>-nic=N -get</code>), Marvell/QLogic FastLinQ
+      (<code>qede</code>/<code>bnx2x</code> → <code>qaucli -pr nic</code>, <code>qlnxcli</code>),
+      Mellanox/NVIDIA MFT (<code>mlxfwmanager --query</code>, <code>mlxconfig query</code>,
+      <code>mlxlink</code>) and Solarflare/AMD (<code>sfc</code> → <code>sfupdate</code>,
+      <code>sfboot</code>). Only read-only inventory, link and transceiver queries are run –
+      firmware is never written. Full output goes to the log and as a key/value table into the
+      report; <span style="color:#ef6c00">amber</span> if a query fails or the tool reports
+      errors, <span style="color:#c62828">red</span> if no query succeeds. Tools are looked up in
+      <code>$PATH</code>, <code>/opt/vendor-tools</code> and the usual vendor paths
+      (<code>/opt/mellanox/mft/bin</code>, <code>/opt/Broadcom</code>,
+      <code>/opt/QLogic_Corporation/…</code>).</li>
 </ul>
 
 <hr>

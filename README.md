@@ -6,6 +6,7 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations 
 
 - **ProLiant Info** erscheint nur noch auf HPE ProLiant/Synergy (DMI); auf anderen Rechnern ist der Tab ausgeblendet. Der RAID-Button der Disk-Tabs blendet ihn bei Bedarf ein (z. B. MegaRAID).
 - **Gesamttest:** neuer Teiltest **„RAM-Fülltest (gesamter freier Speicher)“** (Dauer, Reserve). Aktiver Swap wird vor dem Schritt über die Root-Sitzung des Gesamttests deaktiviert (`swapoff -a`) und nach dem Gesamttest wieder aktiviert; ist das Abschalten unsicher (zu viel belegter Swap), wird der Schritt übersprungen.
+- Root-Sitzung: `swapoff -a` und `swapon` sind in der Befehlsliste freigegeben (nötig für den RAM-Fülltest im Gesamttest).
 
 ### Neu in 0.3.7
 

@@ -29,10 +29,11 @@ from hardwaretest.core.block_disks import (
 from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices, read_nvme_smart
 from hardwaretest.core import report as hwreport
 from hardwaretest.core.root_broker import RootBroker
-from hardwaretest.core.system_info import read_system_info
+from hardwaretest.core.system_info import check_swapoff_safe, read_system_info
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.network import NetworkRunner, invalid_measurements, threshold_failures
 from hardwaretest.tests.fio_runner import FioDiskFullReadRunner, FioNvmeFullReadRunner
+from hardwaretest.tests.memory_fill import MemoryFillRunner
 from hardwaretest.tests.opendcdiag import (
     OpenDcDiagRunner,
     default_opendcdiag_path,
@@ -63,6 +64,11 @@ class TestPlanConfig:
     ram_enabled: bool = True
     ram_seconds: int = 60
     ram_percent: int = 70
+    # Zyklischer RAM-Fülltest (Tab „RAM-Fuelltest“): belegt den gesamten freien Speicher
+    # abzüglich Reserve; Swap wird dafür vorher deaktiviert und danach wieder aktiviert.
+    ram_fill_enabled: bool = False
+    ram_fill_seconds: int = 300
+    ram_fill_reserve_mb: int = 512
     nvme_enabled: bool = True
     nvme_read_enabled: bool = False
     nvme_devices: tuple[NvmeDevice, ...] = ()
@@ -184,6 +190,8 @@ class TestPlanExecutor:
         self._active_runner: Optional[BaseTestRunner] = None
         self._monitor: Optional[MonitoringGuard] = None
         self._root: Optional[RootBroker] = None
+        # Swap-Geräte, die der RAM-Fülltest deaktiviert hat (werden am Ende reaktiviert).
+        self._disabled_swaps: list[str] = []
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -197,6 +205,8 @@ class TestPlanExecutor:
             steps.append("opendcdiag")
         if config.ram_enabled:
             steps.append("ram")
+        if config.ram_fill_enabled:
+            steps.append("ram_fill")
         if config.nvme_enabled:
             steps.append("nvme")
         if config.nvme_read_enabled:
@@ -229,6 +239,9 @@ class TestPlanExecutor:
             if self._monitor is not None:
                 self._monitor.finish()
                 self._monitor = None
+            # Swap erst nach dem letzten Schritt wieder aktivieren – solange die
+            # Root-Sitzung noch offen ist.
+            self._restore_swap()
             if self._root is not None:
                 self._root.close()
                 self._root = None
@@ -262,6 +275,7 @@ class TestPlanExecutor:
             "cpu": self._run_cpu,
             "opendcdiag": self._run_opendcdiag,
             "ram": self._run_ram,
+            "ram_fill": self._run_ram_fill,
             "nvme": self._run_nvme,
             "nvme_read": self._run_nvme_read,
             "disk_read": self._run_disk_read,
@@ -595,6 +609,64 @@ class TestPlanExecutor:
         return self._run_process_step(
             "ram", runner, summary_extra=f"RAM: {memory // (1024 * 1024)} MiB"
         )
+
+    def _run_ram_fill(self) -> TestPlanStepResult:
+        info = read_system_info()
+        details: list[str] = []
+        if info.swap_enabled and not self._disabled_swaps:
+            safe, message = check_swapoff_safe(info)
+            if not safe:
+                return self._instant_result("ram_fill", STATUS_SKIPPED,
+                    "Swap kann nicht sicher deaktiviert werden – RAM-Fülltest übersprungen.", [message])
+            run = self._privileged_run()
+            if run is None:
+                return self._instant_result("ram_fill", STATUS_SKIPPED,
+                    "Swap ist aktiv und es gibt keine Root-Sitzung – RAM-Fülltest übersprungen.")
+            devices = _active_swaps()
+            self._log(_text("Swap wird für den RAM-Fülltest deaktiviert …", self.config.language))
+            try:
+                proc = run(["swapoff", "-a"], capture_output=True, text=True, timeout=600)
+            except Exception as exc:
+                return self._instant_result("ram_fill", STATUS_FAILED, "swapoff fehlgeschlagen.", [str(exc)])
+            if proc.returncode != 0:
+                return self._instant_result("ram_fill", STATUS_FAILED, "swapoff fehlgeschlagen.",
+                                            [(proc.stderr or proc.stdout or "").strip()])
+            self._disabled_swaps = devices or ["-a"]
+            details.append("$ swapoff -a  (" + ", ".join(devices) + ")")
+            info = read_system_info()
+        if info.swap_enabled:
+            details.append(_text("WARNUNG: Swap ist weiterhin aktiv.", self.config.language))
+        runner = MemoryFillRunner(
+            TestParameters(self.config.ram_fill_seconds),
+            memory_mb=0,
+            reserve_mb=max(0, self.config.ram_fill_reserve_mb),
+            log_fn=self._log,
+        )
+        result = self._run_process_step(
+            "ram_fill", runner,
+            summary_extra=f"RAM: {info.available_memory_bytes // (1024 * 1024)} MiB"
+                          + (" | Swap: an" if info.swap_enabled else " | Swap: aus"),
+        )
+        result.details = _bounded_details(details + result.details, language=self.config.language)
+        return result
+
+    def _restore_swap(self) -> None:
+        if not self._disabled_swaps:
+            return
+        run = self._privileged_run()
+        devices, self._disabled_swaps = self._disabled_swaps, []
+        if run is None:
+            self._log(_text("Swap konnte nicht reaktiviert werden (keine Root-Sitzung).", self.config.language))
+            return
+        self._log(_text("Swap wird wieder aktiviert …", self.config.language))
+        for device in devices:
+            command = ["swapon", "-a"] if device == "-a" else ["swapon", device]
+            try:
+                proc = run(command, capture_output=True, text=True, timeout=120)
+                if proc.returncode != 0:
+                    self._log(f"swapon {device}: {(proc.stderr or proc.stdout or '').strip()}")
+            except Exception as exc:
+                self._log(f"swapon {device}: {exc}")
 
     def _run_nvme(self) -> TestPlanStepResult:
         started = time.monotonic()
@@ -968,7 +1040,8 @@ class TestPlanExecutor:
         if privilege.is_root() or privilege.tool() is None:
             return False
         keys = set(self.selected_step_keys())
-        return (bool(keys & {"nvme", "nvme_read", "disk_read"}) or ("dcgm" in keys and dcgmi_available())
+        return (bool(keys & {"nvme", "nvme_read", "disk_read"})
+                or ("ram_fill" in keys and read_system_info().swap_enabled) or ("dcgm" in keys and dcgmi_available())
                 or ("zfs_scrub" in keys and shutil.which("zpool") is not None)
                 or ("opendcdiag" in keys and opendcdiag_available()
                     and not runs_as_root(default_opendcdiag_path()))
@@ -1077,6 +1150,20 @@ class TestPlanExecutor:
             summary=_text(summary, self.config.language),
             details=details or [],
         )
+
+
+def _active_swaps() -> list[str]:
+    devices: list[str] = []
+    try:
+        with open("/proc/swaps", encoding="utf-8") as stream:
+            next(stream, None)
+            for line in stream:
+                parts = line.split()
+                if parts:
+                    devices.append(parts[0])
+    except OSError:
+        pass
+    return devices
 
 
 def write_test_plan_reports(
@@ -1197,6 +1284,7 @@ def _step_name(key: str, language: str) -> str:
         "cpu": ("CPU-Stresstest", "CPU stress test"),
         "opendcdiag": ("OpenDCDiag – stille Datenfehler je Kern", "OpenDCDiag – silent data errors per core"),
         "ram": ("RAM-Verifikation", "RAM verification"),
+        "ram_fill": ("RAM-Fülltest (gesamter freier Speicher)", "RAM fill test (all free memory)"),
         "nvme": ("NVMe-/Laufwerksgesundheit", "NVMe / drive health"),
         "nvme_read": ("NVMe – vollständiger Lesetest", "NVMe – full read test"),
         "disk_read": ("SATA/SAS/USB – vollständiger Lesetest", "SATA/SAS/USB – full read test"),
@@ -1296,6 +1384,15 @@ def _bounded_details(
 def _text(source: str, language: str) -> str:
     translations = {
         "Durchläufe vollständig": "Completed rounds",
+        "Swap wird für den RAM-Fülltest deaktiviert …": "Disabling swap for the RAM fill test …",
+        "Swap wird wieder aktiviert …": "Re-enabling swap …",
+        "Swap konnte nicht reaktiviert werden (keine Root-Sitzung).": "Swap could not be re-enabled (no root session).",
+        "Swap kann nicht sicher deaktiviert werden – RAM-Fülltest übersprungen.":
+            "Swap cannot be disabled safely – RAM fill test skipped.",
+        "Swap ist aktiv und es gibt keine Root-Sitzung – RAM-Fülltest übersprungen.":
+            "Swap is active and there is no root session – RAM fill test skipped.",
+        "swapoff fehlgeschlagen.": "swapoff failed.",
+        "WARNUNG: Swap ist weiterhin aktiv.": "WARNING: swap is still active.",
         "Endzeit": "End time",
         "Endzeit erreicht": "End time reached",
         "Endzeit erreicht – keine weiteren Teiltests.": "End time reached – no further steps.",

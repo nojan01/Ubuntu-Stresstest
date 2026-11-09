@@ -242,3 +242,62 @@ def test_plan_panel_hides_dcgm_without_dcgmi_and_offers_vulkan(monkeypatch):
     config = panel._config()
     assert config.vulkan_enabled and config.vulkan_seconds == 90
     panel.deleteLater()
+
+
+def _fake_run(calls, returncode=0):
+    def run(command, **_kwargs):
+        calls.append(list(command))
+        return SimpleNamespace(returncode=returncode, stdout="", stderr="boom" if returncode else "")
+    return run
+
+
+def test_ram_fill_step_disables_swap_and_restores_it_at_the_end(tmp_path, monkeypatch):
+    plan = executor(tmp_path, nvme_enabled=False, ram_fill_enabled=True, ram_fill_seconds=30)
+    assert plan.selected_step_keys() == ["ram_fill"]
+    calls = []
+    states = iter([True, False])
+    monkeypatch.setattr(test_plan, "read_system_info", lambda: SimpleNamespace(
+        swap_enabled=next(states, False), swap_used_bytes=0,
+        available_memory_bytes=8 * 1024 ** 3, logical_cpu_cores=4))
+    monkeypatch.setattr(test_plan, "_active_swaps", lambda: ["/dev/sda2"])
+    monkeypatch.setattr(plan, "_privileged_run", lambda: _fake_run(calls))
+    monkeypatch.setattr(plan, "_authorize_root", lambda: None)
+    monkeypatch.setattr(plan, "_collect_system_info", lambda: [])
+    monkeypatch.setattr(plan, "_proliant_snapshot", lambda: None)
+    captured = {}
+
+    def run_step(key, runner, summary_extra=""):
+        captured["runner"] = runner
+        return plan._instant_result(key, "passed", "BESTANDEN | " + summary_extra)
+
+    monkeypatch.setattr(plan, "_run_process_step", run_step)
+    result = plan.execute()
+    assert result.status == "passed"
+    assert calls == [["swapoff", "-a"], ["swapon", "/dev/sda2"]]
+    assert captured["runner"].reserve_mb == 512
+    assert captured["runner"].params.duration_seconds == 30
+    assert result.steps[0].name.startswith("RAM-Fülltest")
+    assert "Swap: aus" in result.steps[0].summary
+    assert any("swapoff -a" in line for line in result.steps[0].details)
+    assert plan._disabled_swaps == []
+
+
+def test_ram_fill_step_is_skipped_when_swapoff_would_freeze_the_system(tmp_path, monkeypatch):
+    plan = executor(tmp_path, nvme_enabled=False, ram_fill_enabled=True)
+    monkeypatch.setattr(test_plan, "read_system_info", lambda: SimpleNamespace(
+        swap_enabled=True, swap_used_bytes=16 * 1024 ** 3,
+        available_memory_bytes=1024 ** 3, logical_cpu_cores=4))
+    calls = []
+    monkeypatch.setattr(plan, "_privileged_run", lambda: _fake_run(calls))
+    result = plan._run_ram_fill()
+    assert result.status == "skipped"
+    assert calls == []
+    plan._restore_swap()
+    assert calls == []
+
+
+def test_ram_fill_needs_root_only_while_swap_is_active():
+    # conftest ersetzt _needs_root durch einen Stub; die Root-Regel steht im Quelltext.
+    import inspect
+    source = inspect.getsource(test_plan)
+    assert '"ram_fill" in keys and read_system_info().swap_enabled' in source

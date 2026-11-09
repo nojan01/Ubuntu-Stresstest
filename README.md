@@ -2,6 +2,11 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.8
+
+- **ProLiant Info** erscheint nur noch auf HPE ProLiant/Synergy (DMI); auf anderen Rechnern ist der Tab ausgeblendet. Der RAID-Button der Disk-Tabs blendet ihn bei Bedarf ein (z. B. MegaRAID).
+- **Gesamttest:** neuer Teiltest **„RAM-Fülltest (gesamter freier Speicher)“** (Dauer, Reserve). Aktiver Swap wird vor dem Schritt über die Root-Sitzung des Gesamttests deaktiviert (`swapoff -a`) und nach dem Gesamttest wieder aktiviert; ist das Abschalten unsicher (zu viel belegter Swap), wird der Schritt übersprungen.
+
 ### Neu in 0.3.7
 
 - **Hersteller-Diagnose (Netzwerk):** Intel führt jetzt `nvmupdate64e -i` **und** `epct64e -devices`/`-nic=N -get` nacheinander aus; bei mehreren installierten NVM-Update-Paketen wird die zur Adapterfamilie passende Variante gewählt (700er für `i40e`, E810 für `ice`) und `nvmupdate64e` im Paketordner gestartet (benötigt `nvmupdate.cfg`). Solarflare/AMD nutzt ersatzweise `sfreport -m -` (Textbericht), wenn `sfupdate`/`sfboot` fehlen.

@@ -536,3 +536,35 @@ def test_nvme_device_box_marked_dynamic(monkeypatch):
     monkeypatch.setattr(nvme_panel, "nvme_available", lambda: False)
     panel = nvme_panel.NvmePanel()
     assert panel.device_box.property("hardwaretest_dynamic") is True
+
+
+def test_hidden_proliant_tab_is_inserted_before_system_when_raid_is_requested():
+    from PySide6.QtWidgets import QTabWidget, QWidget
+
+    window = _bare_window([])
+    window._tabs = QTabWidget()
+    window.proliant_panel = QWidget()
+    window.proliant_panel.show_raid_tab = mock.Mock()
+    window.system_panel = QWidget()
+    window._retranslate = mock.Mock()
+    window._tabs.addTab(QWidget(), "Gesamttest")
+    window._tabs.addTab(window.system_panel, "System")
+    assert window._tabs.indexOf(window.proliant_panel) < 0
+
+    window._show_raid_tab()
+
+    assert window._tabs.indexOf(window.proliant_panel) == 1
+    assert window._tabs.tabText(1) == "ProLiant Info"
+    assert window._tabs.currentWidget() is window.proliant_panel
+    window.proliant_panel.show_raid_tab.assert_called_once()
+    window._retranslate.assert_called_once()
+
+    window._show_raid_tab()
+    assert window._tabs.count() == 3
+
+
+def test_main_window_adds_proliant_tab_only_on_hpe_servers():
+    import inspect
+
+    source = inspect.getsource(mw.MainWindow.__init__)
+    assert 'if ipmi.is_proliant():\n            self._tabs.addTab(self.proliant_panel, "ProLiant Info")' in source

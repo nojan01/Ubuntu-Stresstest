@@ -9,6 +9,7 @@ from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplicati
 from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox, QTabWidget
 
 from hardwaretest import __version__
+from hardwaretest.core import ipmi
 from hardwaretest.core.privilege import publish_parent_geometry
 from hardwaretest.core.update_check import (
     ReleaseInfo,
@@ -115,8 +116,11 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(filesystem_tabs, "Dateisystem")
         self.monitoring_panel = MonitoringPanel()
         self._tabs.addTab(self.monitoring_panel, "Langzeitmonitoring")
+        # Der Tab erscheint nur auf HPE ProLiant/Synergy; die Disk-Panels können ihn
+        # bei Bedarf (RAID-Controller auf anderer Hardware) nachträglich einblenden.
         self.proliant_panel = ProliantPanel()
-        self._tabs.addTab(self.proliant_panel, "ProLiant Info")
+        if ipmi.is_proliant():
+            self._tabs.addTab(self.proliant_panel, "ProLiant Info")
         for panel in (device_disk_panel, destructive_disk_panel):
             panel.raid_tab_requested.connect(self._show_raid_tab)
         self._test_panels = [ram_panel, prime_panel, opendcdiag_panel, mem_ctrl_panel, mem_fill_panel,
@@ -156,6 +160,9 @@ class MainWindow(QMainWindow):
 
     def _show_raid_tab(self) -> None:
         """Wechselt zu „ProLiant Info“ → „RAID“ (Aufruf aus den Disk-Panels)."""
+        if self._tabs.indexOf(self.proliant_panel) < 0:
+            self._tabs.insertTab(self._tabs.indexOf(self.system_panel), self.proliant_panel, "ProLiant Info")
+            self._retranslate()
         self._tabs.setCurrentWidget(self.proliant_panel)
         self.proliant_panel.show_raid_tab()
 

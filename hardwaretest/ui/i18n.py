@@ -357,6 +357,13 @@ _EN: dict[str, str] = {
         "Integer, floating point, FMA, vector, matrix, L1 cache and compression load at the "
         "same time; every load type verifies its results (--verify).",
     "RAM-Verifikation (stress-ng)": "RAM verification (stress-ng)",
+    "RAM-Fülltest (gesamter freier Speicher)": "RAM fill test (all free memory)",
+    "RAM-Fülltest: Reserve für das System": "RAM fill test: reserve for the system",
+    "Zyklischer Fülltest wie im Tab „RAM-Fuelltest“: belegt den gesamten freien Speicher abzüglich Reserve. Aktiver Swap wird vor dem Schritt deaktiviert (Root) und nach dem Gesamttest wieder aktiviert.":
+        "Cyclic fill test as in the “RAM fill test” tab: occupies all free memory minus the reserve. Active swap is disabled before the step (root) and re-enabled after the full test.",
+    "Swap wird deaktiviert": "Swap will be disabled",
+    "Für den RAM-Fülltest wird der Swap vor dem Schritt deaktiviert (swapoff, Root) und nach dem Gesamttest wieder aktiviert. Fortfahren?":
+        "For the RAM fill test, swap is disabled before the step (swapoff, root) and re-enabled after the full test. Continue?",
     "RAM-Anteil des verfügbaren Speichers": "Share of available memory",
     "CPU und Arbeitsspeicher": "CPU and memory",
     "NVMe-Inventar und SMART-Gesundheit": "NVMe inventory and SMART health",

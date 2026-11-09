@@ -2,6 +2,9 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.9
+- **Hersteller-Diagnose für Marvell/QLogic FastLinQ (QL41000/QL45000, Treiber `qede`):** nutzt die QLogic Control Suite CLI (`QCScli`, Paket `QCS-CLI-40.x`, Installationspfad `/opt/QLogic_Corporation/QCS`) – Adapterliste, Geräteinfo und Statistik des gewählten Adapters (Ziel über MAC). Textfehler des Tools (Exitcode bleibt 0) werden als fehlgeschlagener Schritt gewertet. `qlnxcli` bleibt als Ersatz.
+
 ### Neu in 0.3.8
 
 - **ProLiant Info** erscheint nur noch auf HPE ProLiant/Synergy (DMI); auf anderen Rechnern ist der Tab ausgeblendet. Der RAID-Button der Disk-Tabs blendet ihn bei Bedarf ein (z. B. MegaRAID).
@@ -14,7 +17,7 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations 
 
 ### Neu in 0.3.6
 
-- **Netzwerk-Tab: Hersteller-Diagnose.** Neuer Button, sichtbar wenn für den Treiber des gewählten Adapters ein proprietäres Herstellerwerkzeug installiert ist (im Live-ISO nur in der internen Ausprägung): Broadcom NetXtreme-E (`bnxt_en` → `niccli --list`, `-i N show`, `show --pkg_ver`, `link -s`, `cable -m --show`; ersatzweise `bnxtnvm device_info`), Intel (`i40e`/`ice`/`ixgbe`/`igb` → `nvmupdate64e -i`, `epct64e -devices` + `-nic=N -get`), Marvell/QLogic FastLinQ (`qede`/`bnx2x` → `qlnxcli -i`; `qaucli` 3.x ist reines FC-Werkzeug), Mellanox/NVIDIA MFT (`mlxfwmanager --query`, `mlxconfig query`, `mlxlink`) und Solarflare/AMD (`sfc` → `sfupdate`, `sfboot`). Nur lesende Abfragen, Ausgabe im Log und als HTML-Bericht; Werkzeuge werden in `$PATH`, `/opt/vendor-tools` und den üblichen Herstellerpfaden gesucht (`core/nic_vendor.py`).
+- **Netzwerk-Tab: Hersteller-Diagnose.** Neuer Button, sichtbar wenn für den Treiber des gewählten Adapters ein proprietäres Herstellerwerkzeug installiert ist (im Live-ISO nur in der internen Ausprägung): Broadcom NetXtreme-E (`bnxt_en` → `niccli --list`, `-i N show`, `show --pkg_ver`, `link -s`, `cable -m --show`; ersatzweise `bnxtnvm device_info`), Intel (`i40e`/`ice`/`ixgbe`/`igb` → `nvmupdate64e -i`, `epct64e -devices` + `-nic=N -get`), Marvell/QLogic FastLinQ (`qede`/`bnx2x` → QLogic Control Suite CLI `QCScli -protocol local "list -f BDF NDIS"`, `-t NDIS -f MAC -i <mac> info`/`stats`; ersatzweise `qlnxcli -i`; `qaucli` 3.x ist reines FC-Werkzeug), Mellanox/NVIDIA MFT (`mlxfwmanager --query`, `mlxconfig query`, `mlxlink`) und Solarflare/AMD (`sfc` → `sfupdate`, `sfboot`). Nur lesende Abfragen, Ausgabe im Log und als HTML-Bericht; Werkzeuge werden in `$PATH`, `/opt/vendor-tools` und den üblichen Herstellerpfaden gesucht (`core/nic_vendor.py`).
 
 ### Neu in 0.3.5
 
@@ -94,7 +97,7 @@ PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations 
 
 ### Neu in 0.2.65
 
-- **ethtool-Selbsttest (Tab Netzwerk):** `ethtool -t` online/offline für physische Adapter über den Root-Broker; Fehlerzähler aus `ethtool -S` (CRC, rx/tx errors, dropped) werden vor/nach dem Test verglichen und Zuwächse als Warnung gemeldet. „SFP-Modul lesen“ (`ethtool -m`) zeigt Hersteller, Typ, Seriennummer, Temperatur, Spannung, Rx-/Tx-Leistung. **Mellanox Link-Diagnose** (`mstlink` aus `mstflint`, nur bei mlx4/mlx5-Adaptern und installiertem Paket sichtbar): Link-Zustand, FEC, Empfehlung, physische Fehler/BER, Link-Down-Zähler, Moduldaten mit Grenzwertprüfung. **Hersteller-Diagnose** (ab 0.3.6): lesende Inventar-/Link-/Transceiver-Abfragen mit proprietären Werkzeugen (Broadcom `niccli`, Intel `nvmupdate64e`/`epct64e`, Marvell `qlnxcli`, NVIDIA MFT, Solarflare `sfupdate`/`sfboot`/`sfreport`), sofern installiert.
+- **ethtool-Selbsttest (Tab Netzwerk):** `ethtool -t` online/offline für physische Adapter über den Root-Broker; Fehlerzähler aus `ethtool -S` (CRC, rx/tx errors, dropped) werden vor/nach dem Test verglichen und Zuwächse als Warnung gemeldet. „SFP-Modul lesen“ (`ethtool -m`) zeigt Hersteller, Typ, Seriennummer, Temperatur, Spannung, Rx-/Tx-Leistung. **Mellanox Link-Diagnose** (`mstlink` aus `mstflint`, nur bei mlx4/mlx5-Adaptern und installiertem Paket sichtbar): Link-Zustand, FEC, Empfehlung, physische Fehler/BER, Link-Down-Zähler, Moduldaten mit Grenzwertprüfung. **Hersteller-Diagnose** (ab 0.3.6): lesende Inventar-/Link-/Transceiver-Abfragen mit proprietären Werkzeugen (Broadcom `niccli`, Intel `nvmupdate64e`/`epct64e`, Marvell `QCScli`/`qlnxcli`, NVIDIA MFT, Solarflare `sfupdate`/`sfboot`/`sfreport`), sofern installiert.
 - **Fibre-Channel-HBAs (Tab System):** Übersicht aus `/sys/class/fc_host` (Port-Zustand, Geschwindigkeit, WWPN/WWNN, Fabric, Firmware, Treiber, Remote-Ports) mit Fehlerzählern; rot bei Zählern > 0 oder Linkdown. Auch im Gesamttest-Bericht.
 - **Netzteile / Redundanz (Tab System):** DMI-Typ 39 (Einbauort, Hersteller, Modell, Seriennummer, Maximalleistung, Status, bestückt/hot-plug) plus IPMI-Netzteilsensoren und Redundanzstatus (`ipmitool sdr type 0x08/0x09`) inkl. Anleitung für den Redundanztest.
 - **Sensoren (Tab System):** Temperaturen, Lüfter und Leistungsaufnahme aus dem iLO/BMC (`ipmitool sdr elist`); auf ProLiants mit laufendem `amsd` deutlich mehr Sensoren. Vollständige Liste im Tab ProLiant-Info.

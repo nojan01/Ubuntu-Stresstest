@@ -188,6 +188,14 @@ def test_qcscli_plan_and_text_errors(monkeypatch):
     assert "Firmware 8.59.1.0" in result.summary
 
 
+def test_qcscli_error_texts_are_recognised():
+    for text in ("Specified device not found!", "Specified device cannot be selected by mac address!",
+                 "Invalid cmd, the command string should be enclosed within double quotes.",
+                 "Unknown command or invalid target identifier!"):
+        assert nic_vendor._QCSCLI_ERROR.search("QLogic Control Suite ... v40.0.81.0\n\n" + text + "\n"), text
+    assert not nic_vendor._QCSCLI_ERROR.search("Vital Signs\n-----------\nNDIS MAC Address : 183D2DC67849\n")
+
+
 def test_qcscli_without_valid_mac_only_lists(monkeypatch):
     monkeypatch.setattr(nic_vendor, "find_tool", lambda name: "/usr/local/sbin/QCScli" if name == "QCScli" else None)
     nic = adapter("qede")

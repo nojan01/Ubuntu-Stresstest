@@ -445,6 +445,25 @@ def test_zpool_is_only_allowed_to_start_or_stop_a_scrub(tmp_path):
     broker.close()
 
 
+# ------------------------------------------------------- swapoff/swapon (RAM-Fuelltest im Gesamttest)
+
+
+def test_swapoff_and_swapon_are_limited_to_all_or_absolute_paths(tmp_path):
+    _install(tmp_path, "swapoff", 'echo "swapoff $*"; exit 0')
+    _install(tmp_path, "swapon", 'echo "swapon $*"; exit 0')
+    broker = _broker(tmp_path)
+    broker.start()
+    assert broker.run(["swapoff", "-a"], timeout=10).stdout.strip() == "swapoff -a"
+    assert broker.run(["swapon", "-a"], timeout=10).stdout.strip() == "swapon -a"
+    assert broker.run(["swapon", "/dev/nvme0n1p3"], timeout=10).returncode == 0
+    assert broker.run(["swapon", "/swap.img"], timeout=10).returncode == 0
+    for bad in (["swapoff"], ["swapoff", "/dev/sda2"], ["swapon"], ["swapon", "-a", "extra"],
+                ["swapon", "swap.img"], ["swapon", "/tmp/../swap"], ["swapon", "-p", "10"], ["swapon", "/"]):
+        with pytest.raises(RuntimeError):
+            broker.run(bad, timeout=10)
+    broker.close()
+
+
 # ------------------------------------------------- Aufrufer-UID unter sudo -A statt pkexec
 
 

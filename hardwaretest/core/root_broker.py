@@ -154,6 +154,12 @@ while IFS= read -r line; do
           case "$a" in --show_module|--show_counters) ;; *) ok=0;; esac; done ;;
       ilorest) [ "$*" = "ilorest --nologo serverlogs --selectlog=IML --json" ] || ok=0 ;;
       modprobe) [ $# -eq 3 ] && [ "$2" = "-q" ] && case "$3" in ipmi_si|ipmi_devintf) true;; *) false;; esac || ok=0 ;;
+      swapoff) [ $# -eq 2 ] && [ "$2" = "-a" ] || ok=0 ;;
+      swapon)
+        # Gesamttest: Swap nach dem RAM-Fuelltest wieder aktivieren (alle oder ein Geraet/eine Datei).
+        [ $# -eq 2 ] || ok=0
+        case "${2:-}" in -a|/?*) ;; *) ok=0;; esac
+        case "${2:-}" in *..*|*//*) ok=0;; esac ;;
       zpool)
         # Nur Scrub starten/abbrechen; Pool-Namen beginnen mit einem Buchstaben.
         case $# in 3) [ "$2" = "scrub" ] || ok=0; pool=$3;; 4) [ "$2 $3" = "scrub -s" ] || ok=0; pool=$4;; *) ok=0;; esac

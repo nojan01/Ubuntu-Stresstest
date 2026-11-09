@@ -48,6 +48,7 @@ from hardwaretest.tests.nvidia_runner import dcgmi_available
 from hardwaretest.tests.vulkan_runner import vulkan_loader_available
 from hardwaretest.core.block_disks import BlockDisk, list_block_disks
 from hardwaretest.core.nvme import NvmeDevice, list_nvme_devices
+from hardwaretest.core.system_info import read_system_info
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 from hardwaretest.ui.widgets.report_bar import ReportBar
@@ -121,6 +122,17 @@ class TestPlanPanel(QWidget):
         self.ram_percent.setRange(10, 90)
         self.ram_percent.setValue(70)
         self.ram_percent.setSuffix(" %")
+        self.ram_fill_check = QCheckBox("RAM-Fülltest (gesamter freier Speicher)")
+        self.ram_fill_check.setToolTip(
+            "Zyklischer Fülltest wie im Tab „RAM-Fuelltest“: belegt den gesamten freien Speicher "
+            "abzüglich Reserve. Aktiver Swap wird vor dem Schritt deaktiviert (Root) und nach dem "
+            "Gesamttest wieder aktiviert."
+        )
+        self.ram_fill_duration = self._seconds_spin(300)
+        self.ram_fill_reserve = QSpinBox()
+        self.ram_fill_reserve.setRange(0, 65536)
+        self.ram_fill_reserve.setValue(512)
+        self.ram_fill_reserve.setSuffix(" MB")
 
         stress_form = QFormLayout()
         stress_form.addRow(self.cpu_check, self.cpu_duration)
@@ -128,6 +140,8 @@ class TestPlanPanel(QWidget):
         stress_form.addRow(self.opendcdiag_check, self.opendcdiag_duration)
         stress_form.addRow(self.ram_check, self.ram_duration)
         stress_form.addRow("RAM-Anteil des verfügbaren Speichers", self.ram_percent)
+        stress_form.addRow(self.ram_fill_check, self.ram_fill_duration)
+        stress_form.addRow("RAM-Fülltest: Reserve für das System", self.ram_fill_reserve)
         stress_group = QGroupBox("CPU und Arbeitsspeicher")
         stress_group.setLayout(stress_form)
 
@@ -442,6 +456,19 @@ class TestPlanPanel(QWidget):
                 language_manager.tr("Bitte einen Zielhost oder eine IP-Adresse angeben."),
             )
             return
+        if self.ram_fill_check.isChecked() and read_system_info().swap_enabled:
+            answer = QMessageBox.question(
+                self,
+                language_manager.tr("Swap wird deaktiviert"),
+                language_manager.tr(
+                    "Für den RAM-Fülltest wird der Swap vor dem Schritt deaktiviert (swapoff, Root) "
+                    "und nach dem Gesamttest wieder aktiviert. Fortfahren?"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         if self.iperf_check.isChecked():
             answer = QMessageBox.question(
                 self,
@@ -569,6 +596,9 @@ class TestPlanPanel(QWidget):
             ram_enabled=self.ram_check.isChecked(),
             ram_seconds=self.ram_duration.value(),
             ram_percent=self.ram_percent.value(),
+            ram_fill_enabled=self.ram_fill_check.isChecked(),
+            ram_fill_seconds=self.ram_fill_duration.value(),
+            ram_fill_reserve_mb=self.ram_fill_reserve.value(),
             nvme_enabled=self.nvme_check.isChecked(),
             nvme_read_enabled=self.nvme_read_check.isChecked(),
             nvme_devices=self._selected_nvme(),
@@ -602,6 +632,7 @@ class TestPlanPanel(QWidget):
             self.cpu_check,
             self.opendcdiag_check,
             self.ram_check,
+            self.ram_fill_check,
             self.nvme_check,
             self.nvme_read_check,
             self.disk_read_check,
@@ -619,7 +650,8 @@ class TestPlanPanel(QWidget):
         self.choose_dir_btn.setEnabled(not running)
         for widget in (
             self.cpu_check, self.cpu_duration, self.cpu_mode, self.opendcdiag_check, self.opendcdiag_duration, self.ram_check, self.ram_duration,
-            self.ram_percent, self.nvme_check, self.ping_check, self.ping_count,
+            self.ram_percent, self.ram_fill_check, self.ram_fill_duration, self.ram_fill_reserve,
+            self.nvme_check, self.ping_check, self.ping_count,
             self.nvme_read_check, self.disk_read_check, self.zfs_check, self.drives, self.drive_scan_btn, self.select_all_btn,
             self.rounds, self.end_time_check,
             self.iperf_check, self.iperf_duration, self.network_target,

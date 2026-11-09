@@ -204,7 +204,11 @@ class VendorDiagResult:
 
 _KEY_VALUE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 _./()\[\]-]{1,48}?)\s*[:=]\s*(\S.*?)\s*$")
 _FAIL_WORDS = re.compile(r"\b(fail(?:ed|ure)?|error|not supported|unknown device|no (?:adapters?|devices?) found|timeout)\b", re.I)
-_BENIGN = re.compile(r"\b(0 errors?|no errors?|errors?\s*[:=]\s*0\b|error_?count\s*[:=]\s*0\b)", re.I)
+# Unbedenklich: Null-Zähler (auch tabellarisch wie "Total Transmit Error   0", QCScli stats) und
+# QCScli-Adapterlisten, deren pci.ids das Gerät nicht kennt ("L2NIC  -Unknown device 1656 rev 10 (ens3f0)").
+_BENIGN = re.compile(r"\b(0 errors?|no errors?|errors?\s*[:=]\s*0\b|error_?count\s*[:=]\s*0\b|"
+                     r"(?:error|fail(?:ed|ure)?|timeout)(?: ?(?:err|cnt|count|total|frames?))?\s+0\s*$|"
+                     r"L2NIC\s+-*Unknown device [0-9a-f]{4}\b)", re.I)
 _QCSCLI_ERROR = re.compile(r"^.*\b(Unknown command|invalid target identifier|No (?:such|matching) (?:target|device)|"
                            r"Specified device (?:not found|cannot be selected)|Invalid cmd|"
                            r"QCSCLI_[A-Z_]*(?:ERR|FAIL|INVALID)[A-Z_]*)\b.*$", re.I | re.M)

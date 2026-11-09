@@ -196,6 +196,23 @@ def test_qcscli_error_texts_are_recognised():
     assert not nic_vendor._QCSCLI_ERROR.search("Vital Signs\n-----------\nNDIS MAC Address : 183D2DC67849\n")
 
 
+def test_qcscli_zero_counters_and_unknown_device_names_are_not_warnings():
+    step = nic_vendor.VendorStep("Statistik", ["QCScli"])
+    step.returncode = 0
+    step.output = ("Statistics\n------------------\nTotal Transmit Error           0\nRDMA Local Ack Timeout Err  0\n"
+                   "Transmit Heartbeat Failure 0\nReceive CRC Error              0\nTotal Receive Error            3\n")
+    result = nic_vendor.VendorDiagResult(tool="QCScli")
+    nic_vendor._collect_rows(result, step)
+    assert result.warnings == ["Statistik: Total Receive Error            3"]
+    listing = nic_vendor.VendorStep("Adapterliste", ["QCScli"])
+    listing.returncode = 0
+    listing.output = ("C   B:D.F        DevType Name\n0   37:00.00     L2NIC   -Unknown device 1656 rev 10 (ens3f0)\n"
+                      "1   37:01.00     L2NIC   -Unknown device 1656 rev 10 (enp55s1f8)\n")
+    nic_vendor._collect_rows(result, listing)
+    assert len(result.warnings) == 1
+    assert not nic_vendor._BENIGN.search("niccli: Unknown device")
+
+
 def test_qcscli_without_valid_mac_only_lists(monkeypatch):
     monkeypatch.setattr(nic_vendor, "find_tool", lambda name: "/usr/local/sbin/QCScli" if name == "QCScli" else None)
     nic = adapter("qede")

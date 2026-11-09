@@ -10,9 +10,12 @@ Die Reihenfolge entspricht der derzeitigen Priorität.
 - ethtool-Fehlerzähler (`ethtool -S`: CRC, rx/tx errors, dropped) automatisch vor und
   nach dem iperf3-/Ping-Lauf vergleichen und Zuwächse als Fehler werten.
 - Proprietäre Herstellertools (seit 0.3.6/0.3.7 „Hersteller-Diagnose“, nur internes
-  ISO über `--vendor-tools`): Syntax von `bnxtnvm`, `qaucli -pr nic`, `qlnxcli`,
-  `sfupdate`/`sfboot` ist unbelegt – mit echten Binaries prüfen; Marvell
-  QConvergeConsoleCLI und Solarflare `sfutils` (nur Source-RPM) fehlen im internen ISO.
+  ISO über `--vendor-tools`): Syntax von `bnxtnvm`, `qlnxcli`, `sfupdate`/`sfboot`
+  ist unbelegt – mit echten Binaries prüfen; Marvell `qlnxcli` (FastLinQ) und
+  Solarflare `sfutils` (nur Source-RPM) fehlen im internen ISO. Marvell
+  QConvergeConsoleCLI 3.2.2 (`qaucli`) ist im ISO, bedient aber nur FC-HBAs
+  (`-pr nic` → „Unsupported command line option“) – deshalb seit 0.3.8 nicht mehr
+  für Ethernet-Adapter verwendet.
 - Realtek (`r8169`/`r8125`/`r8168`, 0.3.8): Realtek liefert für Linux kein
   Diagnose-CLI (nur Windows-Utility; `rtnicpg` ist ein EEPROM-Programmiertool) –
   alle Prüfungen laufen über `ethtool`. Geplant: Hinweis im Netzwerk-Tab und
@@ -28,8 +31,11 @@ Die Reihenfolge entspricht der derzeitigen Priorität.
   (`link_failure_count`, `loss_of_sync_count`, `loss_of_signal_count`,
   `invalid_crc_count`, `error_frames`) vorher/nachher; Pfadstatus per `multipath -ll`.
 - Ohne Fabric: Loopback-Stecker am SFP → `port_state` Online, Zähler ruhig.
-- Herstellertools (proprietär, nur internes ISO): QLogic `qaucli` (hp-qaucli) und
-  Emulex `hbacmd` (hp-elxocmcore) mit `LoopBackTest` und SFP-Daten (`GetXcvrData`).
+- Herstellertools (proprietär, nur internes ISO): QLogic `qaucli` (QConvergeConsoleCLI
+  3.2.2 ist im internen ISO; belegte Lese-Syntax: `qaucli -pr fc -g`, `-i [<hba>|all]`,
+  `-i <hba> vpd`, `-t <hba>` Targets, `-l <hba>` LUNs, `-fg <hba> view` Flash-Gruppen;
+  Loopback-/Diagnoseoptionen noch aus `qaucli -h` ermitteln) und Emulex `hbacmd`
+  (hp-elxocmcore) mit `LoopBackTest` und SFP-Daten (`GetXcvrData`).
 
 ### NVMe / Langzeitmonitoring
 

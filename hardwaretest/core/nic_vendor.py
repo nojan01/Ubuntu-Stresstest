@@ -1,7 +1,7 @@
 """Hersteller-Diagnose für Ethernet-Adapter mit proprietären NIC-Werkzeugen.
 
 Die Werkzeuge (Broadcom ``niccli``/``bnxtnvm``, Intel ``nvmupdate64e``/``epct64e``,
-Marvell/QLogic ``qaucli``/``qlnxcli``, Mellanox/NVIDIA MFT ``mlxfwmanager``/``mlxconfig``/
+Marvell/QLogic ``qlnxcli`` (``qaucli`` 3.x bedient nur FC-HBAs), Mellanox/NVIDIA MFT ``mlxfwmanager``/``mlxconfig``/
 ``mlxlink``, Solarflare/AMD ``sfupdate``/``sfboot``) sind nicht frei weitergebbar und nur im
 internen Live-ISO (``--vendor-tools``) enthalten. Hier werden ausschließlich lesende
 Inventar- und Diagnosebefehle ausgeführt; Firmware wird nie geschrieben.
@@ -46,7 +46,7 @@ VENDOR_TOOLS: tuple[VendorTool, ...] = (
     VendorTool("Intel Ethernet", ("i40e", "ice", "ixgbe", "igb", "igc", "e1000e", "iavf", "idpf"),
                ("nvmupdate64e", "epct64e", "epct")),
     VendorTool("Marvell/QLogic FastLinQ", ("qede", "qed", "bnx2x", "bnx2", "qlcnic", "netxen_nic"),
-               ("qaucli", "qlnxcli")),
+               ("qlnxcli",)),
     VendorTool("Mellanox/NVIDIA", ("mlx5_core", "mlx5_en", "mlx4_en", "mlx4_core", "mlxsw_spectrum"),
                ("mlxfwmanager", "mlxconfig", "mlxlink")),
     VendorTool("Solarflare/Xilinx/AMD", ("sfc", "sfc_ef100"), ("sfupdate", "sfboot", "sfreport")),
@@ -254,9 +254,6 @@ def plan_commands(binary: str, adapter: NetworkAdapter) -> list[VendorStep]:
         return steps
     if binary in {"epct64e", "epct"}:
         return [VendorStep("Geräteliste", [binary, "-devices"])]
-    if binary == "qaucli":
-        return [VendorStep("Adapterübersicht", ["qaucli", "-pr", "nic", "-i"]),
-                VendorStep("Allgemeine Informationen", ["qaucli", "-pr", "nic", "-g"])]
     if binary == "qlnxcli":
         return [VendorStep("Adapterübersicht", ["qlnxcli", "-i"])]
     if binary in {"mlxfwmanager", "mlxconfig", "mlxlink"}:

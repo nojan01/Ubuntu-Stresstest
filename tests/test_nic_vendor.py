@@ -1,4 +1,4 @@
-"""Hersteller-NIC-Diagnose (niccli, nvmupdate64e/epct, MFT, qaucli, sfupdate): Planung, Index-Auflösung, Bewertung."""
+"""Hersteller-NIC-Diagnose (niccli, nvmupdate64e/epct, MFT, qlnxcli, sfupdate): Planung, Index-Auflösung, Bewertung."""
 
 import os
 import stat
@@ -67,7 +67,7 @@ def _make_tool(tmp_path, relative: str) -> str:
 def test_tool_for_adapter_mapping():
     assert nic_vendor.tool_for_adapter(adapter("bnxt_en")).vendor.startswith("Broadcom")
     assert nic_vendor.tool_for_adapter(adapter("ice")).binaries[0] == "nvmupdate64e"
-    assert nic_vendor.tool_for_adapter(adapter("qede")).binaries == ("qaucli", "qlnxcli")
+    assert nic_vendor.tool_for_adapter(adapter("qede")).binaries == ("qlnxcli",)
     assert nic_vendor.tool_for_adapter(adapter("mlx5_core")).vendor.startswith("Mellanox")
     assert nic_vendor.tool_for_adapter(adapter("sfc")).binaries[0] == "sfupdate"
     assert nic_vendor.tool_for_adapter(adapter("cxgb4")) is None   # Chelsio bewusst nicht integriert

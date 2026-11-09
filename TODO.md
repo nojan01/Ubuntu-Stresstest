@@ -70,6 +70,13 @@ Die Reihenfolge entspricht der derzeitigen Priorität.
   (DMI Typ 39, IPMI 0x08/0x09, Netzkabel ziehen → „Redundancy Lost“).
 - mstlink-Parser gegen echte Mellanox-Ausgabe verifizieren.
 
+### AMD Instinct (zurückgestellt – bei Bedarf)
+
+- Gegenstück zu DCGM für AMD-Datacenter-GPUs: **ROCm Validation Suite** (`rvs`: GST, IET,
+  PEBB/PBQT, MEM), **RDC** (`rdci`) und `amd-smi`/`rocm-smi`. Setzt ROCm voraus (nur
+  Instinct/wenige Radeon Pro; ISO +2–3 GB) → eigene ISO-Variante `rvs` und Tab „AMD RVS“
+  analog zu OpenDCDiag/DCGM. Für Consumer-Radeons bleibt Vulkan-Lasttest + amdgpu-Sensoren.
+
 ### USB-Test
 
 - Nicht-destruktiver Schreibtest auf ausdrücklich ausgewählten Testmedien.

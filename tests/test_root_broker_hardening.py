@@ -489,3 +489,81 @@ def test_caller_uid_from_pkexec_or_sudo(env, expected):
     out = subprocess.run(["sh", "-c", _caller_snippet()], env={**clean, **env},
                          capture_output=True, text=True, check=True).stdout.strip()
     assert out == expected
+
+
+# ------------------------------------------------- Hersteller-NIC-Werkzeuge (core/nic_vendor.py)
+
+
+def test_vendor_nic_tools_allow_only_read_only_queries(tmp_path):
+    for name in ("niccli", "bnxtnvm", "epct64e", "qlnxcli", "mlxfwmanager", "mlxconfig", "mlxlink",
+                 "sfupdate", "sfboot", "sfreport", "QCScli"):
+        _install(tmp_path, name, f'echo "{name} $#:$*"; exit 0')
+    broker = _broker(tmp_path)
+    broker.start()
+    good = [
+        ["niccli", "--list"], ["niccli", "-i", "1", "show"], ["niccli", "-i", "2", "show", "--pkg_ver"],
+        ["niccli", "-i", "1", "link", "-s"], ["niccli", "-i", "1", "cable", "-m", "--show"],
+        ["bnxtnvm", "-dev=ens1f0", "device_info"], ["epct64e", "-devices"], ["epct64e", "-nic=1", "-get"],
+        ["qlnxcli", "-i"], ["mlxfwmanager", "--query", "-d", "0000:37:00.0"],
+        ["mlxconfig", "-d", "37:00.0", "query"], ["mlxlink", "-d", "0000:37:00.0", "--show_module", "--show_counters"],
+        ["sfupdate"], ["sfboot"], ["sfreport", "-m", "-"],
+    ]
+    for cmd in good:
+        out = broker.run(cmd, timeout=10).stdout.strip()
+        assert out == f"{cmd[0]} {len(cmd) - 1}:{' '.join(cmd[1:])}", cmd
+    bad = [
+        ["niccli", "-i", "1", "nvm", "--install"], ["niccli", "-i", "x", "show"], ["niccli", "--list", "extra"],
+        ["bnxtnvm", "-dev=ens1f0", "install"], ["bnxtnvm", "-dev=../x", "device_info"],
+        ["epct64e", "-nic=1", "-set"], ["qlnxcli", "-u"], ["mlxfwmanager", "-d", "0000:37:00.0", "--update"],
+        ["mlxconfig", "-d", "37:00.0", "set"], ["mlxconfig", "-d", "/dev/mst/x", "query"],
+        ["mlxlink", "-d", "0000:37:00.0", "--port_state", "down"], ["sfupdate", "--write"], ["sfreport"],
+    ]
+    for cmd in bad:
+        with pytest.raises(RuntimeError, match="nicht erlaubt"):
+            broker.run(cmd, timeout=10)
+    broker.close()
+
+
+def test_qcscli_command_string_is_rejoined_into_one_argument(tmp_path):
+    _install(tmp_path, "QCScli", 'for a in "$@"; do echo "[$a]"; done; exit 0')
+    broker = _broker(tmp_path)
+    broker.start()
+    out = broker.run(["QCScli", "-protocol", "local", "list -f BDF NDIS"], timeout=10).stdout
+    assert out.split("\n")[:3] == ["[-protocol]", "[local]", "[list -f BDF NDIS]"]
+    mac = "9643dbf00084"
+    out = broker.run(["QCScli", "-protocol", "local", "-t", "NDIS", "-f", "MAC", "-i", mac, "stats"], timeout=10).stdout
+    assert "[stats]" in out and f"[{mac}]" in out
+    for bad in (["QCScli", "-protocol", "local", "list"], ["QCScli", "-protocol", "local", "-t", "NDIS", "-f", "MAC", "-i", "zz", "info"],
+                ["QCScli", "-protocol", "local", "-t", "NDIS", "-f", "MAC", "-i", mac, "update"]):
+        with pytest.raises(RuntimeError, match="nicht erlaubt"):
+            broker.run(bad, timeout=10)
+    broker.close()
+
+
+def test_vendor_tool_with_path_must_be_root_owned_and_not_writable(tmp_path):
+    tool = _install(tmp_path, "niccli", 'echo "niccli $*"; exit 0')
+    broker = _broker(tmp_path)
+    broker.start()
+    # Testdatei gehört dem Testbenutzer, der auch das Root-Skript ausführt -> Eigentümerprüfung bestanden.
+    assert broker.run([str(tool), "--list"], timeout=10).stdout.strip() == "niccli --list"
+    tool.chmod(0o777)
+    with pytest.raises(RuntimeError, match="nicht erlaubt"):
+        broker.run([str(tool), "--list"], timeout=10)
+    tool.chmod(0o755)
+    with pytest.raises(RuntimeError, match="nicht erlaubt"):
+        broker.run([str(tmp_path / "missing" / "niccli"), "--list"], timeout=10)
+    broker.close()
+
+
+def test_nvmupdate_runs_in_its_program_directory(tmp_path):
+    sub = tmp_path / "intel"
+    sub.mkdir()
+    tool = sub / "nvmupdate64e"
+    tool.write_text('#!/bin/sh\necho "$(pwd) $*"\n')
+    tool.chmod(0o755)
+    broker = _broker(tmp_path)
+    broker.start()
+    assert broker.run([str(tool), "-i"], timeout=10).stdout.strip() == f"{sub.resolve()} -i"
+    with pytest.raises(RuntimeError, match="nicht erlaubt"):
+        broker.run([str(tool), "-u"], timeout=10)
+    broker.close()

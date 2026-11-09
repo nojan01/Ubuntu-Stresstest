@@ -1,4 +1,4 @@
-"""Hersteller-NIC-Diagnose (niccli, nvmupdate64e/epct, MFT, qlnxcli, sfupdate): Planung, Index-Auflösung, Bewertung."""
+"""Hersteller-NIC-Diagnose (niccli, nvmupdate64e/epct, MFT, QCScli/qlnxcli, sfupdate): Planung, Index-Auflösung, Bewertung."""
 
 import os
 import stat
@@ -67,7 +67,7 @@ def _make_tool(tmp_path, relative: str) -> str:
 def test_tool_for_adapter_mapping():
     assert nic_vendor.tool_for_adapter(adapter("bnxt_en")).vendor.startswith("Broadcom")
     assert nic_vendor.tool_for_adapter(adapter("ice")).binaries[0] == "nvmupdate64e"
-    assert nic_vendor.tool_for_adapter(adapter("qede")).binaries == ("qlnxcli",)
+    assert nic_vendor.tool_for_adapter(adapter("qede")).binaries == ("QCScli", "qlnxcli")
     assert nic_vendor.tool_for_adapter(adapter("mlx5_core")).vendor.startswith("Mellanox")
     assert nic_vendor.tool_for_adapter(adapter("sfc")).binaries[0] == "sfupdate"
     assert nic_vendor.tool_for_adapter(adapter("cxgb4")) is None   # Chelsio bewusst nicht integriert
@@ -164,6 +164,36 @@ def test_no_tool_installed(monkeypatch):
     result = nic_vendor.run_vendor_diagnostics(adapter("qede"), run=FakeRun({}))
     assert result.severity == "error"
     assert "kein Herstellerwerkzeug" in result.error and "qede" in result.error
+
+
+def test_qcscli_plan_and_text_errors(monkeypatch):
+    monkeypatch.setattr(nic_vendor, "find_tool",
+                        lambda name: "/opt/QLogic_Corporation/QCS/QCScli" if name == "QCScli" else None)
+    listing = "QLogic Control Suite Command Line Interface Utility for Linux v40.0.81.0\n\n" \
+              "C  Status     Name\n0  connected  host\n  16  5e:00.00  L2NIC  FastLinQ QL45212 25GbE Adapter (ens1f0)\n"
+    run = FakeRun({
+        "QCScli -protocol local list -f BDF NDIS": (0, listing),
+        "QCScli -protocol local -t NDIS -f MAC -i aabbccddeeff info": (0, "Vital Signs\nLink Status: Up\nFirmware: 8.59.1.0\n"),
+        "QCScli -protocol local -t NDIS -f MAC -i aabbccddeeff stats":
+            (0, "Unknown command or invalid target identifier!\n"),
+    })
+    result = nic_vendor.run_vendor_diagnostics(adapter("qede"), run=run)
+    assert result.tool == "QCScli"
+    assert run.calls[0][0] == "/opt/QLogic_Corporation/QCS/QCScli"
+    assert run.calls[0][-1] == "list -f BDF NDIS"      # Kommandozeichenkette als ein Argument
+    assert [step.ok for step in result.steps] == [True, True, False]
+    assert result.steps[2].error.startswith("Unknown command")
+    assert result.severity == "warn"
+    assert ("[Geräteinfo] Firmware", "8.59.1.0") in result.rows
+    assert "Firmware 8.59.1.0" in result.summary
+
+
+def test_qcscli_without_valid_mac_only_lists(monkeypatch):
+    monkeypatch.setattr(nic_vendor, "find_tool", lambda name: "/usr/local/sbin/QCScli" if name == "QCScli" else None)
+    nic = adapter("qede")
+    nic = type(nic)(**{**nic.__dict__, "mac_address": ""})
+    steps = nic_vendor.plan_commands("QCScli", nic)
+    assert [step.title for step in steps] == ["Adapterliste"]
 
 
 def test_failure_words_in_output_become_warnings(monkeypatch):

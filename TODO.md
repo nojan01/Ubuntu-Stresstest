@@ -11,11 +11,13 @@ Die Reihenfolge entspricht der derzeitigen Priorität.
   nach dem iperf3-/Ping-Lauf vergleichen und Zuwächse als Fehler werten.
 - Proprietäre Herstellertools (seit 0.3.6/0.3.7 „Hersteller-Diagnose“, nur internes
   ISO über `--vendor-tools`): Syntax von `bnxtnvm`, `qlnxcli`, `sfupdate`/`sfboot`
-  ist unbelegt – mit echten Binaries prüfen; Marvell `qlnxcli` (FastLinQ) und
-  Solarflare `sfutils` (nur Source-RPM) fehlen im internen ISO. Marvell
-  QConvergeConsoleCLI 3.2.2 (`qaucli`) ist im ISO, bedient aber nur FC-HBAs
-  (`-pr nic` → „Unsupported command line option“) – deshalb seit 0.3.8 nicht mehr
-  für Ethernet-Adapter verwendet.
+  ist unbelegt – mit echten Binaries prüfen; Solarflare `sfutils` (nur Source-RPM)
+  fehlt im internen ISO. Marvell QConvergeConsoleCLI 3.2.2 (`qaucli`) ist im ISO,
+  bedient aber nur FC-HBAs (`-pr nic` → „Unsupported command line option“) – deshalb
+  seit 0.3.8 nicht mehr für Ethernet-Adapter verwendet. Seit 0.3.9 stattdessen
+  QLogic Control Suite CLI (`QCScli` 40.0.81.0, `Linux_QCScli_40.0.81.0.zip` mit
+  Agent `qlnxremote`): Ausgabeformat von `list`/`info`/`stats` und `-protocol local`
+  auf einem ProLiant mit QL45000 (`qede`) verifizieren; ggf. `rpcbind`+Agent nötig.
 - Realtek (`r8169`/`r8125`/`r8168`, 0.3.8): Realtek liefert für Linux kein
   Diagnose-CLI (nur Windows-Utility; `rtnicpg` ist ein EEPROM-Programmiertool) –
   alle Prüfungen laufen über `ethtool`. Geplant: Hinweis im Netzwerk-Tab und

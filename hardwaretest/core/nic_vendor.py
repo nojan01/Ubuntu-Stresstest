@@ -1,7 +1,8 @@
 """Hersteller-Diagnose für Ethernet-Adapter mit proprietären NIC-Werkzeugen.
 
 Die Werkzeuge (Broadcom ``niccli``/``bnxtnvm``, Intel ``nvmupdate64e``/``epct64e``,
-Marvell/QLogic ``qlnxcli`` (``qaucli`` 3.x bedient nur FC-HBAs), Mellanox/NVIDIA MFT ``mlxfwmanager``/``mlxconfig``/
+Marvell/QLogic ``QCScli`` (QLogic Control Suite CLI für FastLinQ 41000/45000 und 578xx; ``qaucli`` 3.x bedient
+nur FC-HBAs) bzw. ``qlnxcli``, Mellanox/NVIDIA MFT ``mlxfwmanager``/``mlxconfig``/
 ``mlxlink``, Solarflare/AMD ``sfupdate``/``sfboot``) sind nicht frei weitergebbar und nur im
 internen Live-ISO (``--vendor-tools``) enthalten. Hier werden ausschließlich lesende
 Inventar- und Diagnosebefehle ausgeführt; Firmware wird nie geschrieben.
@@ -25,7 +26,7 @@ RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 TOOL_DIRS = (
     "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/sbin", "/usr/bin",
     "/opt/vendor-tools/bin", "/opt/mellanox/mft/bin", "/opt/Broadcom", "/opt/broadcom",
-    "/opt/QLogic_Corporation/QConvergeConsoleCLI", "/opt/marvell", "/opt/marvell/qlnxcli/bin",
+    "/opt/QLogic_Corporation/QCS", "/opt/QLogic_Corporation/QConvergeConsoleCLI", "/opt/marvell", "/opt/marvell/qlnxcli/bin",
     "/opt/intel", "/opt/solarflare", "/usr/share/vendor-tools",
 )
 # Verzeichnisse, die rekursiv (begrenzt) durchsucht werden – dort entpackt das ISO Archive.
@@ -46,7 +47,7 @@ VENDOR_TOOLS: tuple[VendorTool, ...] = (
     VendorTool("Intel Ethernet", ("i40e", "ice", "ixgbe", "igb", "igc", "e1000e", "iavf", "idpf"),
                ("nvmupdate64e", "epct64e", "epct")),
     VendorTool("Marvell/QLogic FastLinQ", ("qede", "qed", "bnx2x", "bnx2", "qlcnic", "netxen_nic"),
-               ("qlnxcli",)),
+               ("QCScli", "qlnxcli")),
     VendorTool("Mellanox/NVIDIA", ("mlx5_core", "mlx5_en", "mlx4_en", "mlx4_core", "mlxsw_spectrum"),
                ("mlxfwmanager", "mlxconfig", "mlxlink")),
     VendorTool("Solarflare/Xilinx/AMD", ("sfc", "sfc_ef100"), ("sfupdate", "sfboot", "sfreport")),
@@ -204,6 +205,8 @@ class VendorDiagResult:
 _KEY_VALUE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 _./()\[\]-]{1,48}?)\s*[:=]\s*(\S.*?)\s*$")
 _FAIL_WORDS = re.compile(r"\b(fail(?:ed|ure)?|error|not supported|unknown device|no (?:adapters?|devices?) found|timeout)\b", re.I)
 _BENIGN = re.compile(r"\b(0 errors?|no errors?|errors?\s*[:=]\s*0\b|error_?count\s*[:=]\s*0\b)", re.I)
+_QCSCLI_ERROR = re.compile(r"^.*\b(Unknown command|invalid target identifier|No (?:such|matching) (?:target|device)|"
+                           r"QCSCLI_[A-Z_]*(?:ERR|FAIL|INVALID)[A-Z_]*)\b.*$", re.I | re.M)
 
 
 def _short_bdf(bus_address: str) -> str:
@@ -256,6 +259,15 @@ def plan_commands(binary: str, adapter: NetworkAdapter) -> list[VendorStep]:
         return [VendorStep("Geräteliste", [binary, "-devices"])]
     if binary == "qlnxcli":
         return [VendorStep("Adapterübersicht", ["qlnxcli", "-i"])]
+    if binary == "QCScli":
+        # QLogic Control Suite CLI: Kommandozeichenkette als ein Argument; Ziel über MAC ohne Doppelpunkte.
+        mac = adapter.mac_address.replace(":", "").lower()
+        steps = [VendorStep("Adapterliste", ["QCScli", "-protocol", "local", "list -f BDF NDIS"])]
+        if re.fullmatch(r"[0-9a-f]{12}", mac):
+            target = ["QCScli", "-protocol", "local", "-t", "NDIS", "-f", "MAC", "-i", mac]
+            steps += [VendorStep("Geräteinfo", [*target, "info"]),
+                      VendorStep("Statistik", [*target, "stats"])]
+        return steps
     if binary in {"mlxfwmanager", "mlxconfig", "mlxlink"}:
         steps = []
         if find_tool("mlxfwmanager"):
@@ -324,6 +336,12 @@ def _execute(step: VendorStep, path: str, run: RunCommand, timeout: int) -> None
         return
     step.returncode = completed.returncode
     step.output = (completed.stdout or "") + (("\n" + completed.stderr) if completed.stderr else "")
+    if completed.returncode == 0 and step.command[0] == "QCScli":
+        # QCScli meldet Fehler nur im Text (Exitcode bleibt 0)
+        match = _QCSCLI_ERROR.search(step.output)
+        if match:
+            step.error = match.group(0).strip()
+            return
     if completed.returncode != 0:
         tail = [line.strip() for line in step.output.splitlines() if line.strip()]
         step.error = (tail[-1] if tail else "") or f"Exitcode {completed.returncode}"

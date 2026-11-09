@@ -598,7 +598,7 @@ ausgewählt, bindet Hardwaretest Ping und iperf3 gezielt an diese Schnittstelle.
       (<code>bnxt_en</code> → <code>niccli</code>, ersatzweise <code>bnxtnvm</code>), Intel
       (<code>i40e</code>/<code>ice</code>/<code>ixgbe</code>/<code>igb</code> →
       <code>nvmupdate64e -i</code>, <code>epct64e -devices</code>/<code>-nic=N -get</code>),
-      Marvell/QLogic FastLinQ (<code>qede</code>/<code>bnx2x</code> → <code>qlnxcli</code>),
+      Marvell/QLogic FastLinQ (<code>qede</code>/<code>bnx2x</code> → <code>QCScli</code>, ersatzweise <code>qlnxcli</code>),
       Mellanox/NVIDIA MFT (<code>mlxfwmanager --query</code>,
       <code>mlxconfig query</code>, <code>mlxlink</code>) und Solarflare/AMD (<code>sfc</code> →
       <code>sfupdate</code>, <code>sfboot</code>, ersatzweise <code>sfreport -m -</code>). Bei Intel
@@ -1480,7 +1480,7 @@ Linux chooses the route. Selecting an adapter binds ping and iperf3 to that inte
       <code>niccli</code>, fallback <code>bnxtnvm</code>), Intel (<code>i40e</code>/<code>ice</code>/
       <code>ixgbe</code>/<code>igb</code> → <code>nvmupdate64e -i</code>,
       <code>epct64e -devices</code>/<code>-nic=N -get</code>), Marvell/QLogic FastLinQ
-      (<code>qede</code>/<code>bnx2x</code> → <code>qlnxcli</code>),
+      (<code>qede</code>/<code>bnx2x</code> → <code>QCScli</code>, fallback <code>qlnxcli</code>),
       Mellanox/NVIDIA MFT (<code>mlxfwmanager --query</code>, <code>mlxconfig query</code>,
       <code>mlxlink</code>) and Solarflare/AMD (<code>sfc</code> → <code>sfupdate</code>,
       <code>sfboot</code>, fallback <code>sfreport -m -</code>). For Intel the

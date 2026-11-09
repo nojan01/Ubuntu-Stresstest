@@ -17,7 +17,10 @@ Die Reihenfolge entspricht der derzeitigen Priorität.
   seit 0.3.8 nicht mehr für Ethernet-Adapter verwendet. Seit 0.3.9 stattdessen
   QLogic Control Suite CLI (`QCScli` 40.0.81.0, `Linux_QCScli_40.0.81.0.zip` mit
   Agent `qlnxremote`): Ausgabeformat von `list`/`info`/`stats` und `-protocol local`
-  auf einem ProLiant mit QL45000 (`qede`) verifizieren; ggf. `rpcbind`+Agent nötig.
+  auf einem ProLiant mit QL45000 (`qede`) verifizieren; ggf. `rpcbind`+Agent nötig;
+  prüfen, ob unter Linux `-t NDIS` oder `-t L2NIC` als Zieltyp nötig ist. Bis 0.3.9
+  scheiterten alle Hersteller-Diagnosen ohne Root-Start an der Befehlsliste der
+  Root-Sitzung (seit 0.3.10 behoben) – die Werkzeuge selbst sind damit noch unbelegt.
 - Realtek (`r8169`/`r8125`/`r8168`, 0.3.8): Realtek liefert für Linux kein
   Diagnose-CLI (nur Windows-Utility; `rtnicpg` ist ein EEPROM-Programmiertool) –
   alle Prüfungen laufen über `ethtool`. Geplant: Hinweis im Netzwerk-Tab und

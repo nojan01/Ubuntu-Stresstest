@@ -109,13 +109,19 @@ launch() {
   fi
   echo "@@JOB $d"
 }
+vendor_path_ok() {
+  # Hersteller-Programm mit Pfad: Eintrag (auch Symlink) und Ziel muessen dem Root-Benutzer
+  # gehoeren, ausfuehrbar und nicht fuer Gruppe/Andere beschreibbar sein.
+  [ -n "$(find "$1" -maxdepth 0 -uid "$(id -u)" 2>/dev/null)" ] || return 1
+  [ -n "$(find -H "$1" -maxdepth 0 -type f -uid "$(id -u)" -perm -u+x ! -perm /022 2>/dev/null)" ] || return 1
+}
 echo "@@HARDWARETEST-ROOT-READY@@"
 while IFS= read -r line; do
   set -f; set -- $line; set +f
   op=${1:-}; [ $# -gt 0 ] && shift
   case "$op" in
   RUN)
-    ok=1; postchown=0
+    ok=1; postchown=0; vcd=0; vjoin=0; vbdf=""
     case "${1:-}" in
       dcgmi) ;;
       nvme) case "${2:-}" in smart-log|self-test-log|device-self-test) ;; *) ok=0;; esac ;;
@@ -206,15 +212,74 @@ while IFS= read -r line; do
         if [ $# -eq 7 ]; then case "$7" in --cpuset=?*) ;; *) ok=0;; esac; fi
         # Wegen umask 077 entsteht das Protokoll als root:0600; nach Abschluss dem Aufrufer uebereignen.
         postchown=2 ;;
-      *) ok=0 ;;
+      *)
+        # Hersteller-NIC-Werkzeuge (core/nic_vendor.py): nur lesende Inventar-/Link-Abfragen,
+        # Programm ueber Basisnamen; mit Pfad nur root-eigene, nicht fremdbeschreibbare Dateien.
+        vb=${1##*/}
+        rest=""; i=0; for a in "$@"; do i=$((i+1)); [ "$i" -gt 1 ] && rest="$rest $a"; done; rest=${rest# }
+        case "$vb" in
+          niccli)
+            case "$#:$rest" in
+              2:--list) ;;
+              "4:-i $3 show"|"5:-i $3 show --pkg_ver"|"5:-i $3 link -s"|"6:-i $3 cable -m --show")
+                case "$3" in ''|*[!0-9]*) ok=0;; esac ;;
+              *) ok=0 ;;
+            esac ;;
+          bnxtnvm)
+            [ $# -eq 3 ] && [ "$3" = device_info ] || ok=0
+            case "${2:-}" in -dev=[A-Za-z]*) ;; *) ok=0;; esac
+            [ ${#2} -le 20 ] || ok=0 ;;
+          nvmupdate64e|nvmupdate64e-*)
+            # Inventar; Intel erwartet nvmupdate.cfg im Programmordner -> dort starten.
+            [ "$#:$rest" = "2:-i" ] || ok=0; vcd=1 ;;
+          epct64e|epct)
+            case "$#:$rest" in
+              2:-devices) ;;
+              "3:-nic=${2#-nic=} -get") case "${2#-nic=}" in ''|*[!0-9]*) ok=0;; esac ;;
+              *) ok=0 ;;
+            esac ;;
+          qlnxcli) [ "$#:$rest" = "2:-i" ] || ok=0 ;;
+          QCScli)
+            # QLogic Control Suite CLI verlangt die Kommandozeichenkette als ein Argument;
+            # sie kommt tokenweise an und wird nach der Pruefung wieder zusammengesetzt.
+            case "$#:$rest" in
+              "7:-protocol local list -f BDF NDIS") vjoin=1 ;;
+              "10:-protocol local -t NDIS -f MAC -i $9 info"|"10:-protocol local -t NDIS -f MAC -i $9 stats")
+                case "$9" in
+                  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+                  *) ok=0 ;;
+                esac ;;
+              *) ok=0 ;;
+            esac ;;
+          mlxfwmanager) [ $# -eq 4 ] && [ "$2" = --query ] && [ "$3" = -d ] || ok=0; vbdf=${4:-} ;;
+          mlxconfig) [ $# -eq 4 ] && [ "$2" = -d ] && [ "$4" = query ] || ok=0; vbdf=${3:-} ;;
+          mlxlink)
+            [ $# -eq 5 ] && [ "$2" = -d ] && [ "$4" = --show_module ] && [ "$5" = --show_counters ] || ok=0
+            vbdf=${3:-} ;;
+          sfupdate|sfboot) [ $# -eq 1 ] || ok=0 ;;
+          sfreport) [ "$#:$rest" = "3:-m -" ] || ok=0 ;;
+          *) ok=0 ;;
+        esac
+        if [ -n "$vbdf" ]; then
+          case "$vbdf" in
+            [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F].[0-7]) ;;
+            [0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F].[0-7]) ;;
+            *) ok=0 ;;
+          esac
+        fi
+        case "$1" in */*) vendor_path_ok "$1" || ok=0 ;; esac ;;
     esac
     for a in "$@"; do case "$a" in *[!A-Za-z0-9/_=.,:%+-]*) ok=0;; esac; done
     if [ "$ok" != 1 ]; then echo "@@ERR Befehl nicht erlaubt"; continue; fi
+    if [ "$vjoin" = 1 ]; then set -- "$1" "$2" "$3" "$4 $5 $6 $7"; fi
     case "$1" in
       /*) ;;
       *) bin=$(command -v "$1" 2>/dev/null) || { echo "@@ERR Programm nicht gefunden: $1"; continue; }
          shift; set -- "$bin" "$@" ;;
     esac
+    if [ "$vcd" = 1 ]; then
+      set -- sh -c 'cd "$(dirname "$(readlink -f "$1")")" && shift && exec "$@"' hardwaretest-vendor "$1" "$@"
+    fi
     if [ "$postchown" = 1 ]; then
       # ssaducli: Bericht nach Abschluss dem Aufrufer übereignen.
       set -- sh -c '"$1" -f "$2"; rc=$?; [ -e "$2" ] && chown "$3" "$2"; exit $rc' hardwaretest-ssaducli "$1" "$3" "$caller"
@@ -501,7 +566,12 @@ class RootBroker:
         raise RuntimeError(reply.removeprefix("@@ERR ").strip() or "Root-Auftrag fehlgeschlagen")
 
     def submit(self, command: Sequence[str]) -> str:
-        return self._submit_line("RUN " + " ".join(self._check_tokens(command)))
+        tokens = [str(item) for item in command]
+        if tokens and os.path.basename(tokens[0]) == "QCScli":
+            # Kommandozeichenkette ("list -f BDF NDIS") tokenweise übertragen; das Root-Skript
+            # setzt sie nach der Prüfung wieder zu einem Argument zusammen.
+            tokens = [part for item in tokens for part in item.split(" ") if part]
+        return self._submit_line("RUN " + " ".join(self._check_tokens(tokens)))
 
     def submit_fio_job(self, tokens: Sequence[str]) -> str:
         """fio-Auftrag aus geprüften Tokens (``--flag``, ``@abschnitt``, ``schlüssel=wert``)."""

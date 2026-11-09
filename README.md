@@ -2,6 +2,9 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.10
+- **Fehlerbehebung Hersteller-Diagnose (Netzwerk-Tab):** Beim Start ohne Root-Rechte liefen die Hersteller-Werkzeuge über die Root-Sitzung (pkexec), deren Befehlsliste kein einziges NIC-Werkzeug kannte – die Diagnose scheiterte mit „Befehl nicht erlaubt“ / „Ungültiges Argument“. Freigegeben sind jetzt ausschließlich lesende Abfragen von `niccli`, `bnxtnvm`, `nvmupdate64e`, `epct64e`, `qlnxcli`, `QCScli`, `mlxfwmanager`, `mlxconfig`, `mlxlink`, `sfupdate`, `sfboot` und `sfreport`; Programme mit Pfad müssen Root gehören und dürfen nicht fremdbeschreibbar sein. `nvmupdate64e` startet in seinem Programmordner (`nvmupdate.cfg`), die QCScli-Kommandozeichenkette wird in der Root-Sitzung wieder als ein Argument übergeben.
+
 ### Neu in 0.3.9
 - **Hersteller-Diagnose für Marvell/QLogic FastLinQ (QL41000/QL45000, Treiber `qede`):** nutzt die QLogic Control Suite CLI (`QCScli`, Paket `QCS-CLI-40.x`, Installationspfad `/opt/QLogic_Corporation/QCS`) – Adapterliste, Geräteinfo und Statistik des gewählten Adapters (Ziel über MAC). Textfehler des Tools (Exitcode bleibt 0) werden als fehlgeschlagener Schritt gewertet. `qlnxcli` bleibt als Ersatz.
 

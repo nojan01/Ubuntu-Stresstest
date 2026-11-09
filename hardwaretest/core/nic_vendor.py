@@ -206,6 +206,7 @@ _KEY_VALUE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 _./()\[\]-]{1,48}?)\s*[:=]\s*(
 _FAIL_WORDS = re.compile(r"\b(fail(?:ed|ure)?|error|not supported|unknown device|no (?:adapters?|devices?) found|timeout)\b", re.I)
 _BENIGN = re.compile(r"\b(0 errors?|no errors?|errors?\s*[:=]\s*0\b|error_?count\s*[:=]\s*0\b)", re.I)
 _QCSCLI_ERROR = re.compile(r"^.*\b(Unknown command|invalid target identifier|No (?:such|matching) (?:target|device)|"
+                           r"Specified device (?:not found|cannot be selected)|Invalid cmd|"
                            r"QCSCLI_[A-Z_]*(?:ERR|FAIL|INVALID)[A-Z_]*)\b.*$", re.I | re.M)
 
 

@@ -279,7 +279,9 @@ while IFS= read -r line; do
             *) ok=0 ;;
           esac
         fi
-        case "$1" in */*) vendor_path_ok "$1" || { echo "@@ERR Programm nicht vertrauenswuerdig (Rechte/Eigentuemer): $1"; continue; } ;; esac ;;
+        if [ "$ok" = 1 ]; then
+          case "$1" in */*) vendor_path_ok "$1" || { echo "@@ERR Programm nicht vertrauenswuerdig (Rechte/Eigentuemer): $1"; continue; } ;; esac
+        fi ;;
     esac
     for a in "$@"; do case "$a" in *[!A-Za-z0-9/_=.,:%+-]*) ok=0;; esac; done
     if [ "$ok" != 1 ]; then echo "@@ERR Befehl nicht erlaubt"; continue; fi

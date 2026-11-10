@@ -540,18 +540,53 @@ def test_qcscli_command_string_is_rejoined_into_one_argument(tmp_path):
     broker.close()
 
 
-def test_vendor_tool_with_path_must_be_root_owned_and_not_writable(tmp_path):
+def _vendor_path_snippet():
+    lines = root_broker._ROOT_BROKER_TEMPLATE.splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("vendor_prefix_ok()"))
+    end = next(i for i, l in enumerate(lines) if i > start and l == "}")
+    return "\n".join(lines[start:end + 1]) + "\nvendor_prefix_ok() { return 0; }\n"
+
+
+def _vendor_path_ok(path, caller):
+    script = _vendor_path_snippet() + f'caller={caller}\nvendor_path_ok "$1" && echo OK || echo NO\n'
+    return subprocess.run(["sh", "-c", script, "x", str(path)], capture_output=True, text=True).stdout.strip()
+
+
+def test_vendor_tool_with_path_must_not_be_replaceable_by_caller(tmp_path):
+    other = 65534                      # fremde UID (nobody) als Aufrufer
+    tool = _install(tmp_path, "niccli", 'echo niccli')
+    link = tmp_path / "link"
+    link.symlink_to(tool)
+    assert _vendor_path_ok(tool, other) == "OK"
+    assert _vendor_path_ok(link, other) == "OK"
+    assert _vendor_path_ok(tool, os.getuid()) == "NO"           # gehört dem Aufrufer selbst
+    tool.chmod(0o777)
+    assert _vendor_path_ok(tool, other) == "NO"                 # weltbeschreibbar
+    tool.chmod(0o775)
+    assert _vendor_path_ok(tool, other) == "OK"                 # gruppenbeschreibbar, Aufrufer nicht in Gruppe
+    tool.chmod(0o644)
+    assert _vendor_path_ok(tool, other) == "NO"                 # nicht ausführbar
+    tool.chmod(0o755)
+    tmp_path.chmod(0o777)
+    assert _vendor_path_ok(tool, other) == "NO"                 # Ordner weltbeschreibbar
+    tmp_path.chmod(0o755)
+    assert _vendor_path_ok(tmp_path / "missing", other) == "NO"
+    # Pfadpräfix: nur /usr und /opt
+    script = _vendor_path_snippet().replace("vendor_prefix_ok() { return 0; }\n", "")
+    for path, expect in (("/opt/niccli/niccli", "OK"), ("/usr/local/sbin/x", "OK"), ("/home/u/niccli", "NO"), ("/tmp/x", "NO")):
+        out = subprocess.run(["sh", "-c", script + 'vendor_prefix_ok "$1" && echo OK || echo NO', "x", path],
+                             capture_output=True, text=True).stdout.strip()
+        assert out == expect, path
+
+
+def test_vendor_tool_with_untrusted_path_is_rejected_by_broker(tmp_path):
     tool = _install(tmp_path, "niccli", 'echo "niccli $*"; exit 0')
     broker = _broker(tmp_path)
     broker.start()
-    # Testdatei gehört dem Testbenutzer, der auch das Root-Skript ausführt -> Eigentümerprüfung bestanden.
-    assert broker.run([str(tool), "--list"], timeout=10).stdout.strip() == "niccli --list"
-    tool.chmod(0o777)
-    with pytest.raises(RuntimeError, match="nicht erlaubt"):
+    # Testdatei gehört dem Aufrufer und liegt nicht unter /usr|/opt -> abgelehnt
+    with pytest.raises(RuntimeError, match="nicht vertrauensw"):
         broker.run([str(tool), "--list"], timeout=10)
-    tool.chmod(0o755)
-    with pytest.raises(RuntimeError, match="nicht erlaubt"):
-        broker.run([str(tmp_path / "missing" / "niccli"), "--list"], timeout=10)
+    assert broker.run(["niccli", "--list"], timeout=10).stdout.strip() == "niccli --list"
     broker.close()
 
 
@@ -561,9 +596,10 @@ def test_nvmupdate_runs_in_its_program_directory(tmp_path):
     tool = sub / "nvmupdate64e"
     tool.write_text('#!/bin/sh\necho "$(pwd) $*"\n')
     tool.chmod(0o755)
+    (tmp_path / "nvmupdate64e").symlink_to(tool)   # Symlink im PATH (wie /usr/local/sbin)
     broker = _broker(tmp_path)
     broker.start()
-    assert broker.run([str(tool), "-i"], timeout=10).stdout.strip() == f"{sub.resolve()} -i"
+    assert broker.run(["nvmupdate64e", "-i"], timeout=10).stdout.strip() == f"{sub.resolve()} -i"
     with pytest.raises(RuntimeError, match="nicht erlaubt"):
-        broker.run([str(tool), "-u"], timeout=10)
+        broker.run(["nvmupdate64e", "-u"], timeout=10)
     broker.close()

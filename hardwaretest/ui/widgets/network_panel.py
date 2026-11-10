@@ -836,7 +836,8 @@ class NetworkPanel(QWidget):
                                details=details)
             status = STATUS_PASSED
         self._publish_ethtool_report("netzwerk-hersteller", tr(title, tool=result.tool), status, name, result.rows,
-                                     section="Hersteller-Ausgabe", parameters=parameters, hints=list(result.warnings))
+                                     section="Hersteller-Ausgabe", parameters=parameters,
+                                     hints=list(result.warnings) + list(result.notes))
 
     def close_privileged_session(self) -> None:
         if self._root_session is not None:

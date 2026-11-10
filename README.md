@@ -2,6 +2,9 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.13
+- **Hersteller-Diagnose:** Abfragen, die das Werkzeug für den Adapter nicht vorsieht (`niccli … cable -m --show` → „Module not supported“, `epct64e -devices` → „No supported adapters found“ bei i40e/X722), zählen als „vom Adapter nicht unterstützt“ und nicht mehr als Auffälligkeit; sie stehen als Hinweis im Bericht. Null-Zähler mit Doppelpunkt („Error Recovery Counter : 0“) sind unbedenklich.
+
 ### Neu in 0.3.12
 - **Fehlerbehebung Hersteller-Diagnose (Root-Sitzung):** `niccli --list` und `epct64e -devices` scheiterten mit „Befehl nicht erlaubt“, weil die Dateiprüfung zwingend root-eigene, nicht gruppenbeschreibbare Programme verlangte – Herstellerpakete liefern aber fremde UIDs (`niccli`: `ccxswbuild`) oder Modus `rw-rw-r--` (`EPCT.zip`). Jetzt gilt: Programm unter `/usr` oder `/opt`, Datei/Symlink/Ordner gehören nicht dem Aufrufer und sind nicht für ihn beschreibbar. Die Ablehnung meldet jetzt „Programm nicht vertrauenswürdig (Rechte/Eigentümer)“. QCScli auf QL45000 verifiziert.
 

@@ -166,6 +166,7 @@ class VendorStep:
     returncode: Optional[int] = None
     output: str = ""
     error: str = ""
+    unsupported: bool = False   # Werkzeug meldet: Abfrage für diesen Adapter nicht vorgesehen
 
     @property
     def ok(self) -> bool:
@@ -179,6 +180,7 @@ class VendorDiagResult:
     steps: list[VendorStep] = field(default_factory=list)
     rows: list[tuple[str, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
     error: str = ""
 
     @property
@@ -194,6 +196,9 @@ class VendorDiagResult:
     def summary(self) -> str:
         done = sum(1 for step in self.steps if step.ok)
         parts = [f"{self.tool}: {done}/{len(self.steps)} Abfragen erfolgreich"]
+        skipped = sum(1 for step in self.steps if step.unsupported)
+        if skipped:
+            parts[0] += f", {skipped} vom Adapter nicht unterstützt"
         for key in ("Firmware", "Package Version", "Device Name", "Link Status", "Speed", "NVM Version", "FW Version"):
             for row_key, value in self.rows:
                 if row_key.split("] ", 1)[-1].lower() == key.lower() and value:
@@ -206,7 +211,10 @@ _KEY_VALUE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 _./()\[\]-]{1,48}?)\s*[:=]\s*(
 _FAIL_WORDS = re.compile(r"\b(fail(?:ed|ure)?|error|not supported|unknown device|no (?:adapters?|devices?) found|timeout)\b", re.I)
 # Unbedenklich: Null-Zähler (auch tabellarisch wie "Total Transmit Error   0", QCScli stats) und
 # QCScli-Adapterlisten, deren pci.ids das Gerät nicht kennt ("L2NIC  -Unknown device 1656 rev 10 (ens3f0)").
+_UNSUPPORTED = re.compile(r"\b(not supported|unsupported|no supported (?:adapters?|devices?) found|"
+                          r"supported device\(s\) not found)", re.I)
 _BENIGN = re.compile(r"\b(0 errors?|no errors?|errors?\s*[:=]\s*0\b|error_?count\s*[:=]\s*0\b|"
+                     r"(?:error|fail(?:ed|ure)?|timeout)[^:=]*[:=]\s*0\s*$|"
                      r"(?:error|fail(?:ed|ure)?|timeout)(?: ?(?:err|cnt|count|total|frames?))?\s+0\s*$|"
                      r"L2NIC\s+-*Unknown device [0-9a-f]{4}\b)", re.I)
 _QCSCLI_ERROR = re.compile(r"^.*\b(Unknown command|invalid target identifier|No (?:such|matching) (?:target|device)|"
@@ -346,10 +354,14 @@ def _execute(step: VendorStep, path: str, run: RunCommand, timeout: int) -> None
         match = _QCSCLI_ERROR.search(step.output)
         if match:
             step.error = match.group(0).strip()
-            return
     if completed.returncode != 0:
         tail = [line.strip() for line in step.output.splitlines() if line.strip()]
         step.error = (tail[-1] if tail else "") or f"Exitcode {completed.returncode}"
+    if step.error and _UNSUPPORTED.search(step.output):
+        # z. B. niccli "Module not supported" (kein steckbares Modul), epct "No supported adapters found"
+        step.unsupported = True
+        hit = next((line.strip() for line in step.output.splitlines() if _UNSUPPORTED.search(line)), "")
+        step.error = hit.removeprefix("ERROR:").strip() or step.error
 
 
 def _collect_rows(result: VendorDiagResult, step: VendorStep) -> None:
@@ -395,6 +407,8 @@ def run_vendor_diagnostics(adapter: NetworkAdapter, run: RunCommand = subprocess
         result.steps.append(step)
         if step.ok:
             _collect_rows(result, step)
+        elif step.unsupported:
+            result.notes.append(f"{step.title} ({' '.join(step.command)}): {step.error}")
         else:
             result.warnings.append(f"{step.title} ({' '.join(step.command)}): {step.error}")
         queue = _follow_up(binary, step, adapter) + queue

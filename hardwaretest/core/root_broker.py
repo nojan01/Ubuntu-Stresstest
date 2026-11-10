@@ -109,11 +109,23 @@ launch() {
   fi
   echo "@@JOB $d"
 }
+vendor_prefix_ok() { case "$1" in /usr/*|/opt/*) return 0 ;; *) return 1 ;; esac; }
 vendor_path_ok() {
-  # Hersteller-Programm mit Pfad: Eintrag (auch Symlink) und Ziel muessen dem Root-Benutzer
-  # gehoeren, ausfuehrbar und nicht fuer Gruppe/Andere beschreibbar sein.
-  [ -n "$(find "$1" -maxdepth 0 -uid "$(id -u)" 2>/dev/null)" ] || return 1
-  [ -n "$(find -H "$1" -maxdepth 0 -type f -uid "$(id -u)" -perm -u+x ! -perm /022 2>/dev/null)" ] || return 1
+  # Hersteller-Programm mit Pfad: Der Aufrufer darf es nicht austauschen koennen. Herstellerpakete
+  # liefern Dateien oft mit fremder UID (niccli: ccxswbuild) oder gruppenbeschreibbar (EPCT.zip) ->
+  # gefordert: unter /usr oder /opt, Eintrag (Symlink), Ziel und dessen Ordner gehoeren nicht dem
+  # Aufrufer und sind nicht fuer Andere beschreibbar; das Ziel ist eine ausfuehrbare Datei.
+  vendor_prefix_ok "$1" || return 1
+  [ -n "$(find "$1" -maxdepth 0 ! -uid "$caller" 2>/dev/null)" ] || return 1
+  real=$(readlink -f "$1" 2>/dev/null) || return 1
+  [ -n "$(find "$real" -maxdepth 0 -type f ! -uid "$caller" -perm -u+x ! -perm /002 2>/dev/null)" ] || return 1
+  [ -n "$(find "${real%/*}" -maxdepth 0 -type d ! -uid "$caller" ! -perm /002 2>/dev/null)" ] || return 1
+  if [ -n "$(find "$real" -maxdepth 0 -perm /020 2>/dev/null)" ]; then
+    # gruppenbeschreibbar: nur zulassen, wenn der Aufrufer nicht in dieser Gruppe ist
+    g=$(stat -c %g "$real" 2>/dev/null) || return 1
+    for cg in $(id -G "$caller" 2>/dev/null); do [ "$cg" = "$g" ] && return 1; done
+  fi
+  return 0
 }
 echo "@@HARDWARETEST-ROOT-READY@@"
 while IFS= read -r line; do
@@ -267,7 +279,7 @@ while IFS= read -r line; do
             *) ok=0 ;;
           esac
         fi
-        case "$1" in */*) vendor_path_ok "$1" || ok=0 ;; esac ;;
+        case "$1" in */*) vendor_path_ok "$1" || { echo "@@ERR Programm nicht vertrauenswuerdig (Rechte/Eigentuemer): $1"; continue; } ;; esac ;;
     esac
     for a in "$@"; do case "$a" in *[!A-Za-z0-9/_=.,:%+-]*) ok=0;; esac; done
     if [ "$ok" != 1 ]; then echo "@@ERR Befehl nicht erlaubt"; continue; fi

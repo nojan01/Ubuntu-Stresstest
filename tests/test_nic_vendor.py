@@ -286,3 +286,32 @@ def test_solarflare_sfreport_fallback(monkeypatch):
     assert result.tool == "sfreport"
     assert [s.title for s in result.steps] == ["Systembericht"]
     assert result.steps[0].ok and not result.warnings
+
+
+def test_unsupported_queries_are_notes_not_warnings(monkeypatch):
+    monkeypatch.setattr(nic_vendor, "find_tool", lambda name: f"/usr/bin/{name}" if name == "niccli" else None)
+    run = FakeRun({
+        "niccli --list": (0, " 1) BCM57414 (5c:00.0)\n"),
+        "niccli -i 1 show": (0, "Device Name : BCM57414\nError Recovery Counter         : 0\n"),
+        "niccli -i 1 show --pkg_ver": (0, "Package Version : 231.1\n"),
+        "niccli -i 1 link -s": (1, "ERROR: Failed to get the link details.\nEXIT CODE : 0C00A002\n"),
+        "niccli -i 1 cable -m --show": (1, "ERROR: Module not supported\nEXIT CODE : 0C014013\n"),
+    })
+    result = nic_vendor.run_vendor_diagnostics(adapter("bnxt_en", bdf="0000:5c:00.0"), run=run)
+    assert [step.ok for step in result.steps] == [True, True, True, False, False]
+    assert [step.unsupported for step in result.steps] == [False, False, False, False, True]
+    assert result.notes == ["Transceiver (niccli -i 1 cable -m --show): Module not supported"]
+    assert len(result.warnings) == 1 and "0C00A002" in result.warnings[0]     # Null-Zähler ist keine Warnung
+    assert "1 vom Adapter nicht unterstützt" in result.summary
+
+
+def test_epct_without_supported_adapter_is_not_a_warning(monkeypatch):
+    monkeypatch.setattr(nic_vendor, "find_tool",
+                        lambda name: f"/usr/local/sbin/{name}" if name in {"nvmupdate64e", "epct64e"} else None)
+    run = FakeRun({
+        "nvmupdate64e -i": (0, "Intel(R) Ethernet NVM Update Tool\nNVMUpdate version 1.44.38.3\n"),
+        "epct64e -devices": (1, "Ethernet Port Configuration Tool\nNo supported adapters found.\n"),
+    })
+    result = nic_vendor.run_vendor_diagnostics(adapter("i40e"), run=run)
+    assert result.severity == "ok" and result.warnings == []
+    assert result.notes == ["Geräteliste (epct64e -devices): No supported adapters found."]

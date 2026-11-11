@@ -2,6 +2,9 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Neu in 0.3.14
+- **Hersteller-Diagnose (Broadcom `niccli`, geprüft auf BCM57414):** `niccli … link -s` liefert vollständige Daten, endet aber mit `EXIT CODE : 0C000003` (`STATUS_IGNORE`) – das zählt jetzt als erfolgreich, solange keine `ERROR`-Zeile vorliegt. „Device Health: Bad …“ wird als Auffälligkeit gemeldet. Zusammenfassung zeigt „Physical link state“ und „Current link speed“. Hinweis: Mit dem Kernel-Treiber `bnxt_en` braucht `niccli` den Bootparameter `iomem=relaxed` (im Live-ISO gesetzt), sonst liefert es keine Firmware-Daten.
+
 ### Neu in 0.3.13
 - **Hersteller-Diagnose:** Abfragen, die das Werkzeug für den Adapter nicht vorsieht (`niccli … cable -m --show` → „Module not supported“, `epct64e -devices` → „No supported adapters found“ bei i40e/X722), zählen als „vom Adapter nicht unterstützt“ und nicht mehr als Auffälligkeit; sie stehen als Hinweis im Bericht. Null-Zähler mit Doppelpunkt („Error Recovery Counter : 0“) sind unbedenklich.
 

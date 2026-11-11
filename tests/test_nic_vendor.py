@@ -315,3 +315,26 @@ def test_epct_without_supported_adapter_is_not_a_warning(monkeypatch):
     result = nic_vendor.run_vendor_diagnostics(adapter("i40e"), run=run)
     assert result.severity == "ok" and result.warnings == []
     assert result.notes == ["Geräteliste (epct64e -devices): No supported adapters found."]
+
+
+NICCLI_LINK = ("\nPhysical link state                      : Link Up\nCurrent link speed                       : 25Gbps\n"
+               "Active Lanes                             : 0 (Link Down)\nMedia Type                               : Fibre\n"
+               "\nEXIT CODE : 0C000003\n")
+
+
+def test_niccli_status_ignore_with_data_counts_as_success_and_bad_health_warns(monkeypatch):
+    monkeypatch.setattr(nic_vendor, "find_tool", lambda name: f"/usr/bin/{name}" if name == "niccli" else None)
+    run = FakeRun({
+        "niccli --list": (0, " 1) BCM57414 (5c:00.0)\n"),
+        "niccli -i 1 show": (0, "Chip Number : BCM57414\nDevice Health                  : Bad (Flash/Recover card)\n"),
+        "niccli -i 1 show --pkg_ver": (0, "Package Version : 218.0.303000\n"),
+        "niccli -i 1 link -s": (3, NICCLI_LINK),
+        "niccli -i 1 cable -m --show": (3, "ERROR: Something broke\nEXIT CODE : 0C000003\n"),
+    })
+    result = nic_vendor.run_vendor_diagnostics(adapter("bnxt_en", bdf="0000:5c:00.0"), run=run)
+    assert [step.ok for step in result.steps] == [True, True, True, True, False]   # ERROR-Zeile bleibt Fehler
+    assert ("[Link-Status] Physical link state", "Link Up") in result.rows
+    assert "Physical link state Link Up" in result.summary
+    assert "Geräteinfo: Device Health                  : Bad (Flash/Recover card)" in result.warnings
+    assert not any(w.startswith("Link-Status") for w in result.warnings)
+    assert not nic_vendor._BAD_HEALTH.search("Device Health : Good")

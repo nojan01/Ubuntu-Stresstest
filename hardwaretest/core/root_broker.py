@@ -2,7 +2,8 @@
 
 Der Root-Prozess nimmt zeilenweise nur freigegebene Aufträge entgegen: nvme mit
 lesenden/Selbsttest-Unterbefehlen, dcgmi, mitgeliefertes OpenDCDiag, lesendes
-ipmitool, dmidecode, IML per ilorest, lesende RAID-Abfragen (ssacli/hpssacli,
+ipmitool, dmidecode, IML per ilorest, das Löschen von SEL/IML/iLO Event Log
+(ProLiant Info, nach Rückfrage), lesende RAID-Abfragen (ssacli/hpssacli,
 storcli64/storcli2) sowie ein ssaducli-Diagnosebericht in eine neue .zip-Datei,
 ein eng geprüfter fio-Auftrag
 (``FIOJOB``; die Jobdatei schreibt der Root-Prozess selbst aus einzeln
@@ -141,7 +142,13 @@ while IFS= read -r line; do
         # Nur lesende SMART-Abfrage ganzer Datentraeger im JSON-Format.
         [ $# -eq 4 ] && [ "$2" = "-a" ] && [ "$3" = "-j" ] || ok=0
         case "${4:-}" in /dev/sd[a-z]|/dev/sd[a-z][a-z]|/dev/sd[a-z][a-z][a-z]|/dev/nvme[0-9]|/dev/nvme[0-9][0-9]) ;; *) ok=0;; esac ;;
-      ipmitool) case "${2:-} ${3:-}" in "sdr type"|"sdr elist"|"sel list"|"sel elist"|"sel info"|"mc info") ;; *) ok=0;; esac ;;
+      ipmitool)
+        case "${2:-} ${3:-}" in
+          "sdr type"|"sdr elist"|"sel list"|"sel elist"|"sel info"|"mc info") ;;
+          # Ereignisprotokoll loeschen (ProLiant Info, nach Rueckfrage)
+          "sel clear") [ $# -eq 3 ] || ok=0 ;;
+          *) ok=0 ;;
+        esac ;;
       dmidecode)
         # Nur lesende Tabellen: -t <typ> beliebig oft (System, CPU, Speicher, Netzteile).
         [ $# -ge 3 ] && [ $(( ($# - 1) % 2 )) -eq 0 ] || ok=0
@@ -170,7 +177,13 @@ while IFS= read -r line; do
         esac
         i=0; for a in "$@"; do i=$((i+1)); [ "$i" -le 3 ] && continue
           case "$a" in --show_module|--show_counters) ;; *) ok=0;; esac; done ;;
-      ilorest) [ "$*" = "ilorest --nologo serverlogs --selectlog=IML --json" ] || ok=0 ;;
+      ilorest)
+        # IML lesen; IML/iLO Event Log loeschen und IEL vorher sichern (ProLiant Info, nach Rueckfrage)
+        case "$*" in
+          "ilorest --nologo serverlogs --selectlog=IML --json"|"ilorest --nologo serverlogs --selectlog=IEL --json") ;;
+          "ilorest --nologo serverlogs --selectlog=IML --clearlog"|"ilorest --nologo serverlogs --selectlog=IEL --clearlog") ;;
+          *) ok=0 ;;
+        esac ;;
       modprobe) [ $# -eq 3 ] && [ "$2" = "-q" ] && case "$3" in ipmi_si|ipmi_devintf) true;; *) false;; esac || ok=0 ;;
       swapoff) [ $# -eq 2 ] && [ "$2" = "-a" ] || ok=0 ;;
       swapon)

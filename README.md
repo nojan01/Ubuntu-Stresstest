@@ -3,6 +3,7 @@
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
 ### Neu in 0.3.14
+- **ProLiant Info → „Protokolle löschen …“:** löscht nach Auswahl und Rückfrage das iLO-Ereignisprotokoll (IPMI SEL, `ipmitool sel clear`), das Integrated Management Log (IML) und das iLO Event Log (IEL, beide über `ilorest serverlogs --clearlog`). Vorher wird der aktuelle Bericht gespeichert, das IEL als JSON nach `~/Downloads`; schlägt diese Sicherung fehl, wird das IEL nicht gelöscht. Danach wird neu ausgelesen.
 - **Hersteller-Diagnose (Broadcom `niccli`, geprüft auf BCM57414):** `niccli … link -s` liefert vollständige Daten, endet aber mit `EXIT CODE : 0C000003` (`STATUS_IGNORE`) – das zählt jetzt als erfolgreich, solange keine `ERROR`-Zeile vorliegt. „Device Health: Bad …“ wird als Auffälligkeit gemeldet. Zusammenfassung zeigt „Physical link state“ und „Current link speed“. Hinweis: Mit dem Kernel-Treiber `bnxt_en` braucht `niccli` den Bootparameter `iomem=relaxed` (im Live-ISO gesetzt), sonst liefert es keine Firmware-Daten.
 
 ### Neu in 0.3.13

@@ -562,3 +562,51 @@ def read_iml(run: Runner) -> tuple[Optional[list[ImlEntry]], str]:
         return parse_iml(text), ""
     except ValueError as exc:
         return None, f"IML: {exc}"
+
+
+# ----- Protokolle löschen (ProLiant Info) -----
+
+ILOREST_IEL_CMD = ["ilorest", "--nologo", "serverlogs", "--selectlog=IEL", "--json"]
+# Schlüssel -> (Befehl, benötigtes Programm). SEL: IPMI-Ereignisprotokoll des BMC,
+# IML: Integrated Management Log, IEL: iLO Event Log (Ereignisse des iLO selbst).
+CLEAR_LOG_COMMANDS = {
+    "SEL": ["ipmitool", "sel", "clear"],
+    "IML": ["ilorest", "--nologo", "serverlogs", "--selectlog=IML", "--clearlog"],
+    "IEL": ["ilorest", "--nologo", "serverlogs", "--selectlog=IEL", "--clearlog"],
+}
+
+
+def clearable_logs() -> list[str]:
+    """Protokolle, für die das Löschwerkzeug installiert ist (IML/IEL nur auf ProLiant/Synergy)."""
+    logs = []
+    if shutil.which("ipmitool"):
+        logs.append("SEL")
+    if shutil.which("ilorest") and is_proliant():
+        logs += ["IML", "IEL"]
+    return logs
+
+
+def backup_iel(run: Runner, target: Path) -> tuple[bool, str]:
+    """iLO Event Log als JSON sichern (das Panel zeigt es nicht an, der Bericht enthält es also nicht)."""
+    text, error = _run_text(run, ILOREST_IEL_CMD, 240)
+    if text is None:
+        return False, _iml_error_text(error)
+    try:
+        target.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        return False, str(exc)
+    return True, str(target)
+
+
+def clear_log(run: Runner, log: str) -> tuple[bool, str]:
+    """Ein Protokoll unwiderruflich löschen; Rückgabe (Erfolg, Meldung des Werkzeugs)."""
+    global _sel_baseline
+    command = CLEAR_LOG_COMMANDS[log]
+    text, error = _run_text(run, command, 240)
+    if text is None:
+        return False, _iml_error_text(error) if command[0] == "ilorest" else error
+    if log == "SEL":
+        # Eintragsnummern beginnen neu – der Vergleichsstand „beim Start vorhanden“ gilt nicht mehr.
+        _sel_baseline = None
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return True, lines[-1] if lines else ""

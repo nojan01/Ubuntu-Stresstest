@@ -195,3 +195,91 @@ def test_environment_sensors_filters_and_sorts():
     picked = ipmi.environment_sensors(ipmi.parse_sensors(text))
     assert [s.name for s in picked] == ["01-Inlet Ambient", "Fan 1", "Power Meter"]
     assert [ipmi.sensor_kind(s) for s in picked] == ["temperature", "fan", "power"]
+
+
+# ----- Protokolle löschen (ProLiant Info) -----
+
+
+class _LogRun:
+    def __init__(self, fail=()):
+        self.calls, self.fail = [], set(fail)
+
+    def __call__(self, cmd, **kwargs):
+        import subprocess
+        self.calls.append(" ".join(cmd))
+        if any(word in self.calls[-1] for word in self.fail):
+            return subprocess.CompletedProcess(cmd, 1, "", "ERROR   : Chif driver not found")
+        out = '{"Members": []}' if "--json" in cmd else "Clearing log...\nThe operation completed successfully.\n"
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+
+def test_clear_log_runs_fixed_commands_and_resets_sel_baseline(monkeypatch):
+    monkeypatch.setattr(ipmi, "_sel_baseline", {"1", "2"})
+    run = _LogRun()
+    assert ipmi.clear_log(run, "IML") == (True, "The operation completed successfully.")
+    assert ipmi._sel_baseline == {"1", "2"}
+    assert ipmi.clear_log(run, "SEL")[0] is True
+    assert ipmi._sel_baseline is None          # Eintragsnummern beginnen neu
+    assert run.calls == ["ilorest --nologo serverlogs --selectlog=IML --clearlog", "ipmitool sel clear"]
+    ok, message = ipmi.clear_log(_LogRun(fail=["IEL"]), "IEL")
+    assert not ok and "Chif driver not found" in message
+
+
+def test_clear_logs_backs_up_iel_first_and_skips_clearing_when_backup_fails(tmp_path, monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from hardwaretest.ui.widgets import proliant_panel
+    target = tmp_path / "iel.json"
+    monkeypatch.setattr(proliant_panel.hwreport, "report_path", lambda *a, **k: target)
+    run = _LogRun()
+    results = proliant_panel.clear_logs(run, ["SEL", "IEL"])
+    assert [(log, ok) for log, ok, _m in results] == [("SEL", True), ("IEL", True)]
+    assert target.read_text() == '{"Members": []}' and str(target) in results[1][2]
+    assert run.calls == ["ipmitool sel clear", "ilorest --nologo serverlogs --selectlog=IEL --json",
+                         "ilorest --nologo serverlogs --selectlog=IEL --clearlog"]
+    failing = _LogRun(fail=["--json"])
+    results = proliant_panel.clear_logs(failing, ["IEL"])
+    assert results[0][1] is False and not any("--clearlog" in call for call in failing.calls)
+    assert [ok for _l, ok, _m in proliant_panel.clear_logs(None, ["IML"])] == [False]
+
+
+def test_clear_logs_dialog_requires_a_selection(monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QDialogButtonBox
+    QApplication.instance() or QApplication([])
+    from hardwaretest.ui.widgets import proliant_panel
+    dialog = proliant_panel.ClearLogsDialog(["SEL", "IML"])
+    ok = dialog.buttons.button(QDialogButtonBox.StandardButton.Ok)
+    assert not ok.isEnabled() and dialog.selected() == []
+    assert not dialog.boxes["IEL"].isEnabled()           # Werkzeug nicht verfügbar
+    dialog.boxes["IML"].setChecked(True)
+    assert ok.isEnabled() and dialog.selected() == ["IML"]
+
+
+def test_proliant_panel_clears_logs_saves_report_first_and_rereads(tmp_path, monkeypatch):
+    import os
+    import time
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from hardwaretest.ui.widgets import proliant_panel
+    monkeypatch.setattr(proliant_panel.ipmi, "is_proliant", lambda: False)
+    monkeypatch.setattr(proliant_panel.ipmi, "ipmi_available", lambda: False)
+    monkeypatch.setattr(proliant_panel.ipmi, "clearable_logs", lambda: ["SEL", "IML"])
+    panel = proliant_panel.ProliantPanel()
+    run, order = _LogRun(fail=["IML"]), []
+    monkeypatch.setattr(panel, "root_runner", lambda: run)
+    monkeypatch.setattr(panel, "export", lambda: order.append("export"))
+    monkeypatch.setattr(panel, "start", lambda: order.append("reread"))
+    panel._start_clear(["SEL", "IML"])
+    assert not panel.clear_btn.isEnabled()
+    deadline = time.time() + 10
+    while panel._clear_worker is not None and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert order == ["export", "reread"]                      # Bericht vor dem Löschen, danach neu auslesen
+    assert run.calls[0] == "ipmitool sel clear"
+    text = panel.clear_status.text()
+    assert "SEL: gelöscht" in text and "IML: FEHLER" in text and "Chif driver not found" in text
+    assert panel.clear_btn.isEnabled()

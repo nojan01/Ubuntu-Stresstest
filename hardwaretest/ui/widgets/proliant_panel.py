@@ -13,7 +13,8 @@ from pathlib import Path
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QPlainTextEdit, QPushButton,
     QScrollArea, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -185,6 +186,87 @@ class SsaducliWorker(QThread):
         self.done.emit(ok, message)
 
 
+_CLEAR_LABELS = {
+    "SEL": ("iLO-Ereignisprotokoll (IPMI SEL) – Reiter „iLO-Ereignisprotokoll“",
+            "iLO event log (IPMI SEL) – tab “iLO event log”"),
+    "IML": ("Integrated Management Log (IML) – Hardware-Ereignisse des Servers",
+            "Integrated Management Log (IML) – server hardware events"),
+    "IEL": ("iLO Event Log (IEL) – Ereignisse des iLO selbst (Anmeldungen, Konfiguration)",
+            "iLO Event Log (IEL) – events of the iLO itself (logins, configuration)"),
+}
+
+
+class ClearLogsWorker(QThread):
+    """Löscht die gewählten Protokolle über die Root-Sitzung des Panels."""
+    done = Signal(object)   # Liste (Protokoll, Erfolg, Meldung)
+
+    def __init__(self, panel, logs: list[str]):
+        super().__init__(panel)
+        self.panel = panel
+        self.logs = logs
+
+    def run(self):
+        try:
+            self.done.emit(clear_logs(self.panel.root_runner(), self.logs))
+        except Exception as exc:  # pragma: no cover - runtime safety
+            self.done.emit([(log, False, str(exc)) for log in self.logs])
+
+
+def clear_logs(run, logs: list[str]) -> list[tuple[str, bool, str]]:
+    """Protokolle löschen; das iLO Event Log wird vorher als JSON nach ~/Downloads gesichert."""
+    if run is None:
+        return [(log, False, _t("Keine Root-Rechte.", "No root privileges.")) for log in logs]
+    results = []
+    for log in logs:
+        backup = ""
+        if log == "IEL":
+            saved, backup = ipmi.backup_iel(run, hwreport.report_path("ilo-event-log", suffix=".json"))
+            if not saved:
+                results.append((log, False, _t("Sicherung fehlgeschlagen, nicht gelöscht: ",
+                                               "Backup failed, not cleared: ") + backup))
+                continue
+        ok, message = ipmi.clear_log(run, log)
+        if ok and backup:
+            message = _t("gesichert in ", "saved to ") + backup
+        results.append((log, ok, message))
+    return results
+
+
+class ClearLogsDialog(QDialog):
+    """Auswahl der zu löschenden Protokolle mit Warnhinweis; ohne Auswahl bleibt OK gesperrt."""
+
+    def __init__(self, available: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(_t("Protokolle löschen", "Clear logs"))
+        layout = QVBoxLayout(self)
+        warning = QLabel(_t(
+            "Die gewählten Protokolle werden im iLO unwiderruflich gelöscht. Der aktuelle Stand wird vorher "
+            "als Bericht (bzw. das iLO Event Log als JSON) in ~/Downloads gespeichert.",
+            "The selected logs are permanently cleared in the iLO. The current state is saved to ~/Downloads "
+            "first (report, iLO Event Log as JSON)."))
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        self.boxes: dict[str, QCheckBox] = {}
+        for log, (de, en) in _CLEAR_LABELS.items():
+            box = QCheckBox(_t(de, en))
+            box.setEnabled(log in available)
+            box.toggled.connect(self._update)
+            self.boxes[log] = box
+            layout.addWidget(box)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText(_t("Löschen", "Clear"))
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+        self._update()
+
+    def _update(self, *_):
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(self.selected()))
+
+    def selected(self) -> list[str]:
+        return [log for log, box in self.boxes.items() if box.isChecked()]
+
+
 def _table(headers: int) -> QTableWidget:
     table = QTableWidget(0, headers)
     table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -223,6 +305,8 @@ class ProliantPanel(QWidget):
         super().__init__(parent)
         self._worker = None
         self._ssaducli_worker = None
+        self._clear_worker = None
+        self._clear_results: list[tuple[str, bool, str]] = []
         self._broker = None
         self._broker_failed = False
         self._data = None
@@ -246,12 +330,20 @@ class ProliantPanel(QWidget):
         self.export_btn = QPushButton()
         self.export_btn.clicked.connect(self.export)
         self.export_btn.setEnabled(False)
+        self.clear_btn = QPushButton()
+        self.clear_btn.clicked.connect(self.clear_logs)
+        self.clear_btn.setEnabled(False)
         buttons.addWidget(self.read_btn, 1)
         buttons.addWidget(self.export_btn)
+        buttons.addWidget(self.clear_btn)
         layout.addLayout(buttons)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
+        self.clear_status = QLabel()
+        self.clear_status.setWordWrap(True)
+        self.clear_status.hide()
+        layout.addWidget(self.clear_status)
         self.report_bar = ReportBar()
         layout.addWidget(self.report_bar)
         self._manual_read = False
@@ -383,6 +475,8 @@ class ProliantPanel(QWidget):
             self._worker.wait(5000)
         if self._ssaducli_worker is not None:
             self._ssaducli_worker.wait(5000)
+        if self._clear_worker is not None:
+            self._clear_worker.wait(5000)
         if self._broker is not None:
             self._broker.close()
             self._broker = None
@@ -405,6 +499,12 @@ class ProliantPanel(QWidget):
             "at startup and every 5 minutes (password asked once)."))
         self.read_btn.setText(_t("Jetzt auslesen", "Read now"))
         self.export_btn.setText(_t("Bericht jetzt speichern", "Save report now"))
+        self.clear_btn.setText(_t("Protokolle löschen …", "Clear logs …"))
+        self.clear_btn.setToolTip(_t(
+            "iLO-Ereignisprotokoll (IPMI SEL), Integrated Management Log (IML) und iLO Event Log (IEL) im iLO löschen – "
+            "nach Auswahl und Rückfrage; der aktuelle Stand wird vorher gespeichert.",
+            "Clear the iLO event log (IPMI SEL), Integrated Management Log (IML) and iLO Event Log (IEL) in the iLO – "
+            "after selection and confirmation; the current state is saved first."))
         self.ssaducli_btn.setText(_t("Diagnosebericht (ssaducli) speichern …", "Save diagnostic report (ssaducli) …"))
         self.ssaducli_btn.setToolTip(_t(
             "Vollständiger HPE-Smart-Storage-Diagnosebericht als ZIP (für den HPE-Support); nur mit ssaducli.",
@@ -454,7 +554,7 @@ class ProliantPanel(QWidget):
             self.show_result(self._data)
 
     def start(self):
-        if self._worker is not None:
+        if self._worker is not None or self._clear_worker is not None:
             return
         if self.sender() is self.read_btn:
             self._broker_failed = False
@@ -480,6 +580,7 @@ class ProliantPanel(QWidget):
             return
         self._data = data
         self.export_btn.setEnabled(True)
+        self.clear_btn.setEnabled(self._clear_worker is None and bool(ipmi.clearable_logs()))
         self.overview.setPlainText("\n".join(self._overview_lines(data)))
         sensors = data["sensors"] or []
         _fill(self.sensors, [([s.name, s.reading, s.status, s.entity, _sev(s.severity)], s.severity) for s in sensors])
@@ -583,6 +684,54 @@ class ProliantPanel(QWidget):
         if release_worker(self, "_ssaducli_worker", worker):
             report = (self._data or {}).get("raid")
             self.ssaducli_btn.setEnabled(bool(report and "ssaducli" in report.tools))
+
+    # ----- Protokolle löschen -----
+
+    def clear_logs(self):
+        if self._clear_worker is not None or self._worker is not None:
+            return
+        dialog = ClearLogsDialog(ipmi.clearable_logs(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.selected():
+            return
+        self._start_clear(dialog.selected())
+
+    def _start_clear(self, logs: list[str]) -> None:
+        # Stand vor dem Löschen festhalten: der Bericht enthält SEL und IML.
+        self.export()
+        self.clear_btn.setEnabled(False)
+        self.read_btn.setEnabled(False)
+        self.summary.setStyleSheet("")
+        self.summary.setText(_t("Protokolle werden gelöscht … (Passwort-Abfrage beachten)",
+                                "Clearing logs … (watch for password prompt)"))
+        worker = ClearLogsWorker(self, logs)
+        self._clear_worker = worker
+        worker.done.connect(self._clear_done)
+        connect_finished(worker, self._clear_finished)
+        worker.start()
+
+    def _clear_done(self, results) -> None:
+        self._clear_results = list(results)
+
+    def _clear_text(self) -> tuple[str, str]:
+        results = self._clear_results
+        parts = []
+        for log, ok, message in results:
+            state = _t("gelöscht", "cleared") if ok else _t("FEHLER", "ERROR")
+            parts.append(f"{log}: {state}" + (f" ({message})" if message else ""))
+        failed = any(not ok for _log, ok, _message in results)
+        return ("error" if failed else "ok"), _t("Protokolle: ", "Logs: ") + "; ".join(parts)
+
+    def _clear_finished(self, worker=None):
+        if not release_worker(self, "_clear_worker", worker):
+            return
+        self.read_btn.setEnabled(True)
+        self.clear_btn.setEnabled(bool(ipmi.clearable_logs()))
+        state, text = self._clear_text()
+        self.clear_status.setStyleSheet(_CSS[state])
+        self.clear_status.setText(text)
+        self.clear_status.show()
+        # Neu auslesen, damit die Tabellen den geleerten Stand zeigen.
+        self.start()
 
     def _summary(self, data) -> tuple[str, str]:
         stamp = data["time"].strftime("%H:%M")

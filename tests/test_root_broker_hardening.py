@@ -603,3 +603,23 @@ def test_nvmupdate_runs_in_its_program_directory(tmp_path):
     with pytest.raises(RuntimeError, match="nicht erlaubt"):
         broker.run(["nvmupdate64e", "-u"], timeout=10)
     broker.close()
+
+
+# ------------------------------------------------- Protokolle löschen (ProLiant Info)
+
+
+def test_log_clear_commands_are_limited_to_the_fixed_forms(tmp_path):
+    _install(tmp_path, "ipmitool", 'echo "ipmitool $*"; exit 0')
+    _install(tmp_path, "ilorest", 'echo "ilorest $*"; exit 0')
+    broker = _broker(tmp_path)
+    broker.start()
+    from hardwaretest.core import ipmi
+    for command in (*ipmi.CLEAR_LOG_COMMANDS.values(), ipmi.ILOREST_IEL_CMD, ipmi.ILOREST_IML_CMD):
+        assert broker.run(command, timeout=10).stdout.strip() == " ".join(command)
+    for bad in (["ipmitool", "sel", "clear", "extra"], ["ipmitool", "sel", "delete", "1"],
+                ["ilorest", "--nologo", "serverlogs", "--selectlog=AHS", "--clearlog"],
+                ["ilorest", "--nologo", "serverlogs", "--selectlog=IML", "--clearlog", "--url=10.0.0.1"],
+                ["ilorest", "serverlogs", "--selectlog=IML", "--clearlog"], ["ilorest", "factorydefaults"]):
+        with pytest.raises(RuntimeError, match="nicht erlaubt"):
+            broker.run(bad, timeout=10)
+    broker.close()

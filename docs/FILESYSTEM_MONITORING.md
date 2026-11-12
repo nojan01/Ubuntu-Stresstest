@@ -179,7 +179,10 @@ Pool-Diagnose (siehe oben). Automatische Unmounts und Partitionsänderungen sind
 ## Langzeitmonitoring
 
 - Messintervall 5–3600 Sekunden, Dauer bis 720 Stunden, 0 = bis zum Stoppen.
-- Temperaturen und Lüfter über Linux/psutil; RAM-Belegung; ECC-Zähler über EDAC;
+- Temperaturen und Lüfter über Linux/psutil; zusätzlich Lüfter über die iLO-/IPMI-Sensorliste,
+  auch wenn hwmon bereits Lüfter meldet. Je nach Sensor werden Prozent oder RPM
+  aufgezeichnet; fehlende IPMI-Werte bzw. fehlender Zugriff werden vermerkt.
+  RAM-Belegung; ECC-Zähler über EDAC;
   ext4-Fehlerzähler über sysfs; NVIDIA-Temperatur, Leistung, Auslastung und
   unkorrigierbare ECC-Fehler über `nvidia-smi`, sofern verfügbar.
 - Neue relevante Kernelmeldungen über `journalctl`: u.a. MCE, PCIe/AER, GPU-Xid,

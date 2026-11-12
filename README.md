@@ -2,6 +2,43 @@
 
 PySide6-Anwendung zum Starten von Hardware-Stresstests für **PCs, Workstations und Server**. Nutzt bewährte Werkzeuge: `stress-ng`, `Prime95 (mprime)`, `OpenDCDiag`, `fio`. Zielplattformen sind **Ubuntu 24.04 und 26.04 (amd64)** sowie **AlmaLinux/RHEL/Rocky 9 und 10 (x86_64, RPM)**. Andere Distributionen werden nicht zugesichert. Optionale HPE-Smart-Array-Funktionen sind ausdrücklich als **HPE-spezifisch** gekennzeichnet und für normale PCs nicht erforderlich.
 
+### Optional im privaten ISO: Intel DCDiag
+
+Der eigene Reiter **Intel DCDiag** erscheint nur, wenn das CPU-Inventar
+`GenuineIntel` und das eigenständige Modellnamen-Token `Xeon` meldet und
+`dcdiag` im PATH liegt. Fehlende Daten blenden den Reiter aus. OpenDCDiag bleibt
+unverändert; Intel DCDiag ist **kein Bestandteil des automatischen Gesamttests**.
+Das proprietäre Intel-Paket wird separat im nichtöffentlichen ISO installiert,
+nicht mit Hardwaretest verteilt. Der Root-Broker erlaubt die vom Intel-Paket
+verwendeten Systempfade `/usr/bin/dcdiag` und `/bin/dcdiag` (root-eigen und nicht
+gruppen-/fremdbeschreibbar), ausschließlich ohne Argumente.
+
+Der Startknopf führt `dcdiag` manuell im Vordergrund aus: laut Intel etwa
+**45 Minuten, hohe CPU-Auslastung**. Der Dienst wird weder gestartet noch aktiviert.
+Die vorhandene Root-Autorisierung ermöglicht den Abbruch der gesamten
+Prozessgruppe; ob Root für jeden manuellen Intel-Test zwingend erforderlich ist,
+ist in den unten genannten Quellen nicht eindeutig beschrieben.
+Stop, Temperaturschutz und Schließen der Anwendung berücksichtigen den Lauf.
+Nach **90 Minuten** greift ein Sicherheitsabbruch (kein vollständiges Ergebnis).
+Die Anzeige ist absichtlich unbestimmt, da kein dokumentierter Fortschritt vorliegt.
+
+Dokumentierte Intel-Ausgaben unterscheiden Erfolg, Fehler, nicht unterstützte
+Prozessoren und uneindeutige Ergebnisse (z. B. Microcode, Temperatur oder Machine
+Checks). Unbekannte Ausgaben und widersprüchliche Prozessresultate werden nicht
+als bestanden ausgegeben. Ein Exitcode allein beweist keinen erfolgreichen
+Hardwaretest: Intel dokumentiert hier keine Exitcode-Tabelle. Status, Exitcode
+und Originalausgabe stehen im eigenen HTML-Bericht. Xeon-Erkennung ist keine
+Garantie, dass die installierte Tool-Version den konkreten Prozessor unterstützt.
+
+Quellen: Intel [Installation](https://www.intel.com/content/www/us/en/support/articles/000098269/processors.html),
+[manueller Test und Ergebnisse](https://www.intel.com/content/www/us/en/support/articles/000098270/processors/intel-xeon-processors.html)
+und `README.md.gz` im separat bereitgestellten Intel-Paket Version 693.
+
+### Neu in 0.3.15
+- **Neuer Reiter „Intel DCDiag“** (optional): startet das separat installierte Intel Data Center Diagnostic Tool (`dcdiag`) manuell im Vordergrund – laut Intel etwa 45 Minuten mit hoher CPU-Last. Der Reiter erscheint nur auf Intel-Xeon-Systemen mit `dcdiag` im PATH, gehört nicht zum Gesamttest und aktiviert keinen Dienst. Bewertet wird die dokumentierte Abschlussmeldung, nicht der Exit-Code; unbekannte Ausgaben gelten nie als bestanden. OpenDCDiag bleibt unverändert. Details im Abschnitt „Optional im privaten ISO: Intel DCDiag“ oben. Geprüft auf HPE Synergy mit `dcdiag` 693.
+- **Langzeitmonitoring: Lüfter über iLO/IPMI.** Lüfter aus der iLO-Sensorliste (`ipmitool sdr elist`) werden jetzt zusätzlich zu hwmon aufgezeichnet (`fan.ipmi.<Name>` in Prozent oder RPM), nicht mehr nur ersatzweise. Kann IPMI nicht gelesen werden, steht der Grund unter „Nicht verfügbar“.
+- **Fehlerbehebung:** Unter deutscher Locale gibt `ipmitool` Dezimalkommas aus (`15,68 percent`); solche Lüfterwerte wurden im Monitoring verworfen („Nicht verfügbar: fan, fan.ipmi“), obwohl ProLiant Info und der System-Tab sie anzeigten.
+
 ### Neu in 0.3.14
 - **ProLiant Info → „Protokolle löschen …“:** löscht nach Auswahl und Rückfrage das iLO-Ereignisprotokoll (IPMI SEL, `ipmitool sel clear`), das Integrated Management Log (IML) und das iLO Event Log (IEL, beide über `ilorest serverlogs --clearlog`). Vorher wird der aktuelle Bericht gespeichert, das IEL als JSON nach `~/Downloads`; schlägt diese Sicherung fehl, wird das IEL nicht gelöscht. Danach wird neu ausgelesen.
 - **Hersteller-Diagnose (Broadcom `niccli`, geprüft auf BCM57414):** `niccli … link -s` liefert vollständige Daten, endet aber mit `EXIT CODE : 0C000003` (`STATUS_IGNORE`) – das zählt jetzt als erfolgreich, solange keine `ERROR`-Zeile vorliegt. „Device Health: Bad …“ wird als Auffälligkeit gemeldet. Zusammenfassung zeigt „Physical link state“ und „Current link speed“. Hinweis: Mit dem Kernel-Treiber `bnxt_en` braucht `niccli` den Bootparameter `iomem=relaxed` (im Live-ISO gesetzt), sonst liefert es keine Firmware-Daten.

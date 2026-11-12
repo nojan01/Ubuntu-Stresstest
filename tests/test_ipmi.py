@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 
 from hardwaretest.core import ipmi
@@ -8,6 +10,58 @@ def test_parse_sdr_fans():
     readings = ipmi.parse_sdr(text)
     assert len(readings) == 1
     assert readings[0].name == "Fan 1" and readings[0].unit == "%" and readings[0].value == 30.58
+
+
+def test_fan_metrics_use_system_sensor_list_and_only_numeric_fan_readings():
+    text = "\n".join([
+        "Fan 1            | 30h | ok | 29.1 | 30.58 percent",
+        "Fan 2            | 31h | cr | 29.2 | 3000 RPM",
+        "Fan 3            | 32h | ns | 29.3 | 75 percent",
+        "Fan 4            | 33h | ok | 29.4 | No Reading",
+        "Fan 5            | 34h | ok | 29.5 | 0 RPM",
+        "Fan Redundancy   | 35h | ok | 29.6 | Fully Redundant",
+        "Power Supply     | 40h | ok | 10.1 | 45 percent",
+    ])
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command == ["ipmitool", "sdr", "elist"]:
+            return subprocess.CompletedProcess(command, 0, text, "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    metrics, unavailable = ipmi.fan_metrics(run)
+    assert calls == [["ipmitool", "sdr", "elist"]]
+    assert metrics == {
+        "fan.ipmi.Fan 1 (%)": 30.58,
+        "fan.ipmi.Fan 2 (rpm)": 3000,
+        "fan.ipmi.Fan 5 (rpm)": 0,
+    }
+    assert unavailable == []
+
+
+def test_fan_metrics_accept_decimal_comma_of_german_locale():
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 0, "Fan 1 | 01h | ok | 29.1 | 15,68 percent\nFan 2 | 31h | ok | 29.2 | 3000 RPM\n", "")
+
+    assert ipmi.fan_metrics(run) == ({"fan.ipmi.Fan 1 (%)": 15.68, "fan.ipmi.Fan 2 (rpm)": 3000}, [])
+
+
+def test_fan_metrics_reports_ipmi_read_failure():
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, "", "BMC unavailable")
+
+    metrics, unavailable = ipmi.fan_metrics(run)
+    assert metrics == {}
+    assert any("fan.ipmi" in item and "BMC unavailable" in item for item in unavailable)
+
+
+def test_fan_metrics_reports_missing_readings():
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, "Fan 1 | 30h | ns | 29.1 | No Reading\n", "")
+
+    assert ipmi.fan_metrics(run) == ({}, ["fan.ipmi"])
 
 
 def test_parse_sel_memory():

@@ -96,6 +96,15 @@ class SdrReading:
     status: str
 
 
+def _numeric_sdr_reading(text: str) -> Optional[tuple[float, str]]:
+    # ipmitool folgt der Locale: unter de_DE steht ein Dezimalkomma („15,68 percent“).
+    match = re.match(r"(-?\d+(?:[.,]\d+)?)\s*(.*)", text.strip())
+    if not match:
+        return None
+    unit = match.group(2).strip().lower()
+    return float(match.group(1).replace(",", ".")), {"percent": "%", "degrees c": "°C"}.get(unit, unit)
+
+
 def parse_sdr(text: str) -> list[SdrReading]:
     """``ipmitool sdr type …``: ``Fan 1 | 30h | ok | 29.1 | 30.58 percent``."""
     readings = []
@@ -103,27 +112,28 @@ def parse_sdr(text: str) -> list[SdrReading]:
         parts = [part.strip() for part in line.split("|")]
         if len(parts) < 5:
             continue
-        match = re.match(r"(-?\d+(?:\.\d+)?)\s*(.*)", parts[4])
-        if not match:
+        reading = _numeric_sdr_reading(parts[4])
+        if reading is None:
             continue  # "no reading", "Disabled", "Transition to Running" …
-        unit = match.group(2).strip().lower()
-        unit = {"percent": "%", "degrees c": "°C"}.get(unit, unit)
-        readings.append(SdrReading(parts[0], float(match.group(1)), unit, parts[2].lower()))
+        readings.append(SdrReading(parts[0], *reading, parts[2].lower()))
     return readings
 
 
 def fan_metrics(run: Runner) -> tuple[dict[str, float], list[str]]:
     """Lüfter als Monitoring-Messreihen ``fan.ipmi.<Name> (<Einheit>)``."""
-    try:
-        result = run(["ipmitool", "sdr", "type", "Fan"], capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError, RuntimeError):
-        return {}, ["fan.ipmi"]
-    if result.returncode:
-        return {}, ["fan.ipmi"]
+    sensors, error = read_sensors(run, timeout=60)
+    if sensors is None:
+        detail = " ".join(error.split())[:160]
+        return {}, [f"fan.ipmi ({detail})" if detail else "fan.ipmi"]
     metrics = {}
-    for reading in parse_sdr(result.stdout):
-        if reading.unit in {"%", "rpm"}:
-            metrics[f"fan.ipmi.{reading.name} ({reading.unit})"] = reading.value
+    for sensor in environment_sensors(sensors):
+        if sensor_kind(sensor) != "fan":
+            continue
+        reading = _numeric_sdr_reading(sensor.reading)
+        if reading is not None:
+            value, unit = reading
+            if unit in {"%", "rpm"}:
+                metrics[f"fan.ipmi.{sensor.name} ({unit})"] = value
     return metrics, ([] if metrics else ["fan.ipmi"])
 
 
@@ -350,8 +360,8 @@ def parse_sensors(text: str) -> list[Sensor]:
     return sensors
 
 
-def read_sensors(run: Runner) -> tuple[Optional[list[Sensor]], str]:
-    text, error = _run_text(run, ["ipmitool", "sdr", "elist"], 120)
+def read_sensors(run: Runner, timeout: float = 120) -> tuple[Optional[list[Sensor]], str]:
+    text, error = _run_text(run, ["ipmitool", "sdr", "elist"], timeout)
     return (parse_sensors(text) if text is not None else None), error
 
 

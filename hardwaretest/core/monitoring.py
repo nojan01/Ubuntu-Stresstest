@@ -61,14 +61,17 @@ def collect_metrics(root_run=None) -> tuple[dict[str, float], list[str]]:
             for index, sensor in enumerate(sensors):
                 metrics[f"fan.{chip}.{index}.{sensor.label}"] = sensor.current
     except (OSError, AttributeError, RuntimeError):
-        unavailable.append("fan")
-    ipmi_run = root_run or ipmi.default_runner()
-    use_ipmi = ipmi_run is not None and ipmi.ipmi_available()
-    if use_ipmi and not any(key.startswith("fan.") for key in metrics):
-        # Server wie HPE ProLiant melden Lüfter nur über den BMC (iLO).
+        unavailable.append("fan.hwmon")
+    ipmi_run = root_run if root_run is not None else ipmi.default_runner()
+    has_ipmi = ipmi.ipmi_available()
+    use_ipmi = ipmi_run is not None and has_ipmi
+    if use_ipmi:
+        # iLO kann zusätzliche Lüfter melden, auch wenn hwmon bereits Werte liefert.
         fans, missing_fans = ipmi.fan_metrics(ipmi_run)
         metrics.update(fans)
         unavailable.extend(missing_fans)
+    elif has_ipmi:
+        unavailable.append("fan.ipmi")
     if not any(key.startswith("fan.") for key in metrics):
         # Desktop-Boards ohne Super-I/O-Treiber (z. B. Lenovo IdeaCentre) melden nur
         # ACPI-Kühlgeräte: kein RPM, aber die Stufe (cur_state/max_state) in Prozent.

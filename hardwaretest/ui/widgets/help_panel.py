@@ -237,6 +237,30 @@ und vergleicht. Läuft auf Intel und AMD.
 
 <hr>
 
+<h2>Tab: Intel DCDiag</h2>
+<p>
+Startet das <b>Intel Data Center Diagnostic Tool</b> (<code>dcdiag</code>, proprietär, nicht
+im Paket enthalten). Der Tab erscheint nur, wenn eine Intel-Xeon-CPU erkannt wird und
+<code>dcdiag</code> installiert ist. OpenDCDiag bleibt daneben unverändert verfügbar.
+</p>
+<ul>
+  <li><b>Ablauf:</b> manueller Vordergrundtest ohne Optionen, laut Intel etwa 45 Minuten mit
+      hoher CPU-Auslastung; keine Fortschrittsanzeige in Prozent. Nach 90 Minuten bricht ein
+      Sicherheitslimit ab. Der Test gehört nicht zum Gesamttest, der Intel-Dienst wird nicht
+      aktiviert.</li>
+  <li><b>Rechte:</b> läuft über die Root-Sitzung (einmalige Passwortabfrage); „Stop“ beendet
+      den Test vollständig.</li>
+  <li><b>Ergebnis:</b> Bewertet wird die Abschlussmeldung von <code>dcdiag</code>, nicht der
+      Exit-Code. Nur „No issues detected“ gilt als bestanden; „nicht unterstützt“,
+      uneindeutige Ergebnisse (Microcode, Temperatur, Machine Checks) und Fehler werden
+      getrennt ausgewiesen, unbekannte Ausgaben nie als bestanden. Originalausgabe und
+      Exit-Code stehen im HTML-Bericht.</li>
+  <li><b>Worauf achten:</b> Xeon-Erkennung garantiert nicht, dass die installierte
+      Tool-Version genau diesen Prozessor unterstützt.</li>
+</ul>
+
+<hr>
+
 <h2>Tab: Speichercontroller</h2>
 <p>
 Dieser Test zielt speziell auf den <b>Speichercontroller</b> (Memory Controller),
@@ -1128,6 +1152,30 @@ and compares them. Works on Intel and AMD.
 
 <hr>
 
+<h2>Tab: Intel DCDiag</h2>
+<p>
+Runs the <b>Intel Data Center Diagnostic Tool</b> (<code>dcdiag</code>, proprietary, not part
+of the package). The tab only appears when an Intel Xeon CPU is detected and
+<code>dcdiag</code> is installed. OpenDCDiag remains available unchanged.
+</p>
+<ul>
+  <li><b>Procedure:</b> manual foreground test without options, about 45 minutes with high
+      CPU utilization according to Intel; no percentage progress. A safety timeout aborts
+      after 90 minutes. The test is not part of the test plan and the Intel service is not
+      enabled.</li>
+  <li><b>Privileges:</b> runs through the root session (password asked once); "Stop" ends
+      the test completely.</li>
+  <li><b>Result:</b> the final message of <code>dcdiag</code> is evaluated, not the exit
+      code. Only "No issues detected" counts as passed; "not supported", inconclusive
+      results (microcode, temperature, machine checks) and failures are reported
+      separately, unknown output never counts as passed. Original output and exit code are
+      in the HTML report.</li>
+  <li><b>What to watch:</b> Xeon detection does not guarantee that the installed tool
+      version supports this particular processor.</li>
+</ul>
+
+<hr>
+
 <h2>Tab: Memory Controller</h2>
 <p>
 This test specifically targets the <b>memory controller</b>, <b>memory bus</b>,
@@ -1882,8 +1930,11 @@ stress tests on temperature limit / new uncorrectable ECC errors" (default on).
 <b>Useful</b> alongside long individual tests, for overnight/weekend runs and for
 hunting sporadic temperature/ECC problems; <b>not useful</b> without adjusted limits –
 100 °C is too high for SSDs and chipsets.</p>
-<p><b>Fans:</b> speeds come from hwmon (<code>sensors</code>) or IPMI. If neither reports
-fans, ACPI fan cooling devices (<code>/sys/class/thermal/cooling_device*</code>, type
+<p><b>Fans:</b> hwmon (<code>sensors</code>) and IPMI fan readings are recorded together.
+On ProLiants, the iLO sensor list also includes readings exposed by the Agentless
+Management Service (<code>amsd</code>). IPMI fans appear as <code>fan.ipmi.&lt;name&gt;</code>
+with percent or RPM, according to the sensor; missing access or readings are reported.
+If neither source reports fans, ACPI fan cooling devices (<code>/sys/class/thermal/cooling_device*</code>, type
 "Fan") are recorded as <code>fan.acpi.N.percent</code>: fan stage in percent of the
 maximum (usually 0 or 100 %), no RPM. Typical for desktop boards without a Super-I/O
 driver (e.g. Lenovo IdeaCentre). If that is missing too, no fan is monitored – check in
@@ -1971,8 +2022,12 @@ unkorrigierbaren ECC-Fehlern laufende App-Stresstests stoppen“ (Standard an).
 <b>Sinnvoll</b> parallel zu langen Einzeltests, für Nacht-/Wochenendläufe und zur
 Suche nach sporadischen Temperatur-/ECC-Problemen; <b>nicht sinnvoll</b> ohne
 angepasste Grenzen – 100 °C ist für SSDs und Chipsätze zu hoch.</p>
-<p><b>Lüfter:</b> Drehzahlen kommen aus hwmon (<code>sensors</code>) oder IPMI. Melden
-beide keine Lüfter, werden ACPI-Lüfter-Kühlgeräte (<code>/sys/class/thermal/
+<p><b>Lüfter:</b> Werte aus hwmon (<code>sensors</code>) und IPMI werden gemeinsam erfasst.
+Auf ProLiants enthält die iLO-Sensorliste auch Werte, die der Agentless Management
+Service (<code>amsd</code>) bereitstellt. IPMI-Lüfter erscheinen als
+<code>fan.ipmi.&lt;Name&gt;</code> mit Prozent oder RPM, je nach Sensor; fehlender Zugriff
+oder fehlende Messwerte werden gemeldet. Melden beide Quellen keine Lüfter, werden
+ACPI-Lüfter-Kühlgeräte (<code>/sys/class/thermal/
 cooling_device*</code>, Typ „Fan“) als <code>fan.acpi.N.percent</code> erfasst:
 Lüfterstufe in Prozent des Maximums (meist 0 oder 100 %), keine Drehzahl. Typisch
 für Desktop-Boards ohne Super-I/O-Treiber (z. B. Lenovo IdeaCentre). Fehlt auch

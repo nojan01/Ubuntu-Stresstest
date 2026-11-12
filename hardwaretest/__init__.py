@@ -5,6 +5,6 @@ from __future__ import annotations
 # Diese Angabe bleibt absichtlich unabhängig von installierten Paket-Metadaten.
 # Sonst könnte eine ältere Build-venv ihre Versionsnummer in das portable
 # PyInstaller-Programm übertragen.
-__version__ = "0.3.14"
+__version__ = "0.3.15"
 
 __all__ = ["__version__"]

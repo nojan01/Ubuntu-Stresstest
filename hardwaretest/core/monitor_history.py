@@ -63,7 +63,7 @@ class MetricHistory:
 def metric_unit(key: str) -> str:
     if is_temperature(key):
         return "°C"
-    if key.endswith((".percent", ".utilization")):
+    if key.endswith((".percent", ".utilization")) or (key.startswith("fan.") and key.endswith(" (%)")):
         return "%"
     if key.endswith(".power"):
         return "W"

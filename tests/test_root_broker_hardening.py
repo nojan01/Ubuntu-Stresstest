@@ -54,6 +54,21 @@ def _broker(tmp_path, **kwargs):
     return RootBroker(str(fake), **kwargs)
 
 
+def test_monitoring_ipmi_fans_through_root_broker(tmp_path):
+    from hardwaretest.core import ipmi
+
+    _install(tmp_path, "ipmitool",
+             '[ "$*" = "sdr elist" ] || exit 1\nprintf "Fan 1 | 30h | ok | 29.1 | 35 percent\\n"')
+    broker = _broker(tmp_path)
+    broker.start()
+    try:
+        metrics, unavailable = ipmi.fan_metrics(broker.run)
+    finally:
+        broker.close()
+    assert metrics == {"fan.ipmi.Fan 1 (%)": 35.0}
+    assert unavailable == []
+
+
 # ----------------------------------------------------------------- Befund 1: fio-Jobdatei
 
 

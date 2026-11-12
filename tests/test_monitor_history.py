@@ -149,3 +149,17 @@ def test_monitor_snapshot_chart_switch_and_language(monkeypatch):
     assert panel.sensor_limits_btn.text() == "Individual temperature limits …"
     assert "Monitoring running" in panel.status.text()
     panel.deleteLater()
+
+
+def test_monitor_snapshot_displays_ipmi_fan_with_percent_chart():
+    key = "fan.ipmi.Fan 1 (%)"
+    buckets = (Bucket(0, 0, 30, 30, 30, 1),)
+    panel = MonitoringPanel()
+    panel.show_snapshot(dict(history={key: buckets}, limits={}, metrics={key: 30},
+                             timestamp="now", samples=1, csv="test.csv", alerts=[],
+                             critical=False, alert_count=0))
+    assert panel.chart_box.findText(key) >= 0
+    assert f"{key}: 30" in panel.metrics.toPlainText()
+    assert ">%</text>" in render_chart(key, buckets)
+    assert ">RPM</text>" in render_chart("fan.ipmi.Fan 2 (rpm)", buckets)
+    panel.deleteLater()

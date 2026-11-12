@@ -1,4 +1,5 @@
 import csv
+import subprocess
 from types import SimpleNamespace
 
 from hardwaretest.core import monitoring
@@ -100,3 +101,55 @@ def test_acpi_fan_metrics_reports_state_percent(tmp_path):
         (device / "cur_state").write_text(f"{cur}\n")
         (device / "max_state").write_text(f"{maximum}\n")
     assert monitoring.acpi_fan_metrics(tmp_path) == {"fan.acpi.4.percent": 100, "fan.acpi.5.percent": 25}
+
+
+def test_ipmi_fans_are_recorded_alongside_hwmon_fans(monkeypatch, tmp_path):
+    monkeypatch.setattr(monitoring.psutil, "virtual_memory", lambda: SimpleNamespace(percent=30))
+    monkeypatch.setattr(monitoring.psutil, "sensors_temperatures", lambda: {})
+    monkeypatch.setattr(monitoring.psutil, "sensors_fans",
+                        lambda: {"hwmon": [SimpleNamespace(label="CPU", current=900)]})
+    monkeypatch.setattr(monitoring.ipmi, "ipmi_available", lambda: True)
+    monkeypatch.setattr(monitoring.ipmi, "sel_ecc_metrics", lambda run: ({"ecc.ipmi_sel.ue_count": 0}, []))
+    monkeypatch.setattr(monitoring.shutil, "which", lambda name: None)
+    value = [30.5]
+
+    def run(command, **kwargs):
+        assert command == ["ipmitool", "sdr", "elist"]
+        reading = "No Reading" if value[0] is None else f"{value[0]} percent"
+        return subprocess.CompletedProcess(command, 0, f"Fan 1 | 30h | ok | 29.1 | {reading}\n", "")
+
+    session = monitoring.MonitorSession(tmp_path, collect=lambda: monitoring.collect_metrics(root_run=run),
+                                        journal=Journal())
+    try:
+        first = session.sample()
+        value[0] = 45.0
+        second = session.sample()
+        value[0] = None
+        missing = session.sample()
+        history = session.chart_snapshot()["history"]
+    finally:
+        _txt, html = session.close()
+
+    key = "fan.ipmi.Fan 1 (%)"
+    assert first["metrics"][key] == 30.5 and second["metrics"][key] == 45.0
+    assert second["metrics"]["fan.hwmon.0.CPU"] == 900
+    assert "fan.ipmi" not in second["unavailable"]
+    assert key not in missing["metrics"] and "fan.ipmi" in missing["unavailable"]
+    assert [bucket.maximum for bucket in history[key]] == [30.5, 45.0, None]
+    with session.csv_path.open() as file:
+        rows = list(csv.reader(file))
+    assert [row[2] for row in rows if row[1] == key] == ["30.5", "45.0"]
+    assert key in html.read_text()
+
+
+def test_unavailable_ipmi_fans_are_reported_even_with_hwmon_fans(monkeypatch):
+    monkeypatch.setattr(monitoring.psutil, "virtual_memory", lambda: SimpleNamespace(percent=30))
+    monkeypatch.setattr(monitoring.psutil, "sensors_temperatures", lambda: {})
+    monkeypatch.setattr(monitoring.psutil, "sensors_fans",
+                        lambda: {"hwmon": [SimpleNamespace(label="CPU", current=900)]})
+    monkeypatch.setattr(monitoring.ipmi, "ipmi_available", lambda: True)
+    monkeypatch.setattr(monitoring.ipmi, "default_runner", lambda: None)
+    monkeypatch.setattr(monitoring.shutil, "which", lambda name: None)
+    metrics, unavailable = monitoring.collect_metrics()
+    assert metrics["fan.hwmon.0.CPU"] == 900
+    assert "fan.ipmi" in unavailable

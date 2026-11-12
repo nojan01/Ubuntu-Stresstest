@@ -20,6 +20,8 @@ from hardwaretest.core.update_check import (
 from hardwaretest.ui.widgets.test_panel import TestPanel
 from hardwaretest.ui.widgets.mprime_panel import MprimePanel
 from hardwaretest.ui.widgets.opendcdiag_panel import OpenDcDiagPanel
+from hardwaretest.tests.dcdiag import available_dcdiag_path
+from hardwaretest.ui.widgets.dcdiag_panel import DcDiagPanel
 from hardwaretest.ui.widgets.memory_controller_panel import MemoryControllerPanel
 from hardwaretest.ui.widgets.memory_fill_panel import MemoryFillPanel
 from hardwaretest.ui.widgets.info_panel import InfoPanel
@@ -78,6 +80,10 @@ class MainWindow(QMainWindow):
         opendcdiag_panel = OpenDcDiagPanel()
         self._tabs.addTab(opendcdiag_panel, "OpenDCDiag")
 
+        dcdiag_panel = DcDiagPanel() if available_dcdiag_path() else None
+        if dcdiag_panel is not None:
+            self._tabs.addTab(dcdiag_panel, "Intel DCDiag")
+
         mem_ctrl_panel = MemoryControllerPanel()
         self._tabs.addTab(mem_ctrl_panel, "Speichercontroller")
 
@@ -130,6 +136,9 @@ class MainWindow(QMainWindow):
             nvme_panel._stop_io_test, nvidia_panel._stop_diagnostic, gpu_panel.stop_test,
             network_panel._stop, test_plan_panel._stop,
         ]
+        if dcdiag_panel is not None:
+            self._test_panels.append(dcdiag_panel)
+            self._stop_callbacks.append(dcdiag_panel.stop_test)
         self._filesystem_active = False
         self._temperature_lock = False
         self.filesystem_panel.can_start = self._can_check_filesystem

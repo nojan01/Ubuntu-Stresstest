@@ -1,7 +1,8 @@
 """Langlebige Root-Sitzung über eine einzige Autorisierung (sudo -A, Fallback pkexec).
 
 Der Root-Prozess nimmt zeilenweise nur freigegebene Aufträge entgegen: nvme mit
-lesenden/Selbsttest-Unterbefehlen, dcgmi, mitgeliefertes OpenDCDiag, lesendes
+lesenden/Selbsttest-Unterbefehlen, dcgmi, mitgeliefertes OpenDCDiag, installiertes
+Intel DCDiag ohne Argumente (Vordergrundtest), lesendes
 ipmitool, dmidecode, IML per ilorest, das Löschen von SEL/IML/iLO Event Log
 (ProLiant Info, nach Rückfrage), lesende RAID-Abfragen (ssacli/hpssacli,
 storcli64/storcli2) sowie ein ssaducli-Diagnosebericht in eine neue .zip-Datei,
@@ -136,6 +137,19 @@ while IFS= read -r line; do
   RUN)
     ok=1; postchown=0; vcd=0; vjoin=0; vbdf=""
     case "${1:-}" in
+      /usr/bin/dcdiag|/bin/dcdiag)
+        # Intel package: foreground diagnostic only, never --service or other options.
+        [ $# -eq 1 ] || ok=0
+        real=$(readlink -f "$1") || ok=0
+        [ -f "$real" ] && [ -x "$real" ] || ok=0
+        # No caller-controlled executable or writable ancestor, including symlink targets.
+        for p in "$1" "$real"; do
+          while [ -n "$p" ]; do
+            [ -n "$(find -L "$p" -maxdepth 0 -uid 0 ! -perm /022 2>/dev/null)" ] || ok=0
+            [ "$p" = / ] && break
+            p=${p%/*}; [ -n "$p" ] || p=/
+          done
+        done ;;
       dcgmi) ;;
       nvme) case "${2:-}" in smart-log|self-test-log|device-self-test) ;; *) ok=0;; esac ;;
       smartctl|/usr/sbin/smartctl)

@@ -27,6 +27,38 @@ from PySide6.QtWidgets import (
 # The source language of the UI is German.  Keeping the keys as the actual
 # source text also means that an untranslated new label stays readable.
 _EN: dict[str, str] = {
+    "Intel DCDiag starten": "Start Intel DCDiag",
+    "Intel Data Center Diagnostic Tool: manueller Vordergrundtest, etwa 45 Minuten "
+    "mit hoher CPU-Auslastung. Sicherheitslimit: 90 Minuten. Nicht im Gesamttest. "
+    "Xeon-Erkennung garantiert keine Unterstützung durch diese Tool-Version. "
+    "Start über die Root-Sitzung; ein Dienst wird nicht aktiviert.":
+        "Intel Data Center Diagnostic Tool: manual foreground test, about 45 minutes "
+        "with high CPU utilization. Safety timeout: 90 minutes. Not part of the test plan. "
+        "Xeon detection does not guarantee support by this tool version. "
+        "Runs through the root session; no service is enabled.",
+    "DCDiag: Intel-Xeon-CPU oder Binary fehlt.": "DCDiag: Intel Xeon CPU or binary missing.",
+    "DCDiag: Autorisierung läuft; im Passwortdialog abbrechbar.":
+        "DCDiag: authorization in progress; can be cancelled in the password dialog.",
+    "DCDiag: Stopp angefordert; laufenden Passwortdialog bitte abbrechen.":
+        "DCDiag: stop requested; please cancel the pending password dialog.",
+    "DCDiag läuft seit {minutes} min; etwa 45 min erwartet (keine Fortschrittsdaten).":
+        "DCDiag running for {minutes} min; about 45 min expected (no progress data).",
+    "DCDiag: Keine Probleme erkannt.": "DCDiag: no issues detected.",
+    "DCDiag: Test fehlgeschlagen. Originalausgabe beachten.":
+        "DCDiag: test failed. See original output.",
+    "DCDiag: Prozessor wird von dieser Version nicht unterstützt.":
+        "DCDiag: processor not supported by this version.",
+    "DCDiag: Ergebnis nicht eindeutig. Originalausgabe und Systemlogs prüfen.":
+        "DCDiag: result inconclusive. Check original output and system logs.",
+    "DCDiag: Ergebnis unbekannt; Exit-Code allein wird nicht als Erfolg gewertet.":
+        "DCDiag: result unknown; exit code alone is not treated as success.",
+    "DCDiag: Abgebrochen; kein vollständiges Ergebnis.":
+        "DCDiag: cancelled; no complete result.",
+    "DCDiag: Sicherheitslimit erreicht; kein vollständiges Ergebnis.":
+        "DCDiag: safety timeout reached; no complete result.",
+    " Exit-Code: {code} (keine dokumentierte Exitcode-Tabelle).":
+        " Exit code: {code} (no documented exit-code table).",
+    "Fehler beim Start: {error}": "Failed to start: {error}",
     "Kernsensor-Details anzeigen": "Show core sensor details",
     "Kernsensor-Details anzeigen ({count})": "Show core sensor details ({count})",
     "Kernsensor-Details ausblenden ({count})": "Hide core sensor details ({count})",

@@ -18,6 +18,7 @@ die Sitzung (oder stirbt sie), beendet der Root-Prozess alle Aufträge.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import os
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
 from hardwaretest.core import privilege, ras
+from hardwaretest.core.ilo_local_worker import WORKER_SCRIPT as ILO_WORKER_SCRIPT
 from hardwaretest.core.paths import resource_path
 
 READY_MARKER = "@@HARDWARETEST-ROOT-READY@@"
@@ -75,6 +77,10 @@ mkdir -m 700 "$work/jobs" || exit 1
 cat >"$work/jobs/rasquery.py" <<'HARDWARETEST_RAS_QUERY_PY'
 @@RAS_QUERY_SCRIPT@@
 HARDWARETEST_RAS_QUERY_PY
+cat >"$work/jobs/ilo-local.py" <<'HARDWARETEST_ILO_LOCAL_PY'
+@@ILO_WORKER_SCRIPT@@
+HARDWARETEST_ILO_LOCAL_PY
+ilocache=""
 jobs=""
 njob=0
 kill_group() {
@@ -93,6 +99,11 @@ wait_status() {
 cleanup() {
   for d in $jobs; do kill_group "$d" TERM; done
   for d in $jobs; do wait_status "$d" 20; kill_group "$d" KILL; done
+  if [ -n "$ilocache" ]; then
+    # Best effort logout; private session material is removed even if offline.
+    printf '%s' 'eyJvcGVyYXRpb24iOiJsb2dvdXQifQ==' | python3 "$work/jobs/ilo-local.py" "$ilocache" >/dev/null 2>&1
+    rm -rf "$ilocache"
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -330,6 +341,28 @@ while IFS= read -r line; do
     fi
     launch "$@"
     ;;
+  ILOLOCAL)
+    [ $# -eq 1 ] && [ ${#1} -le 16384 ] || { echo "@@ERR Ungueltiger iLO-Auftrag"; continue; }
+    case "$1" in ''|*[!A-Za-z0-9+/=]*) echo "@@ERR Ungueltiger iLO-Auftrag"; continue;; esac
+    if [ -z "$ilocache" ]; then
+      ilocache=$(mktemp -d /dev/shm/hardwaretest-ilo.XXXXXXXX) || { echo "@@ERR RAM-Sitzungscache nicht verfuegbar"; continue; }
+      chmod 700 "$ilocache"
+    fi
+    d=$(mktemp -d "$work/job.XXXXXXXX") || { echo "@@ERR mktemp"; continue; }
+    chmod 711 "$d"
+    mkfifo -m 600 "$d/out" && : >"$d/err" && : >"$d/status" || { echo "@@ERR mkfifo"; continue; }
+    chmod 600 "$d/err" "$d/status"
+    chown "$caller" "$d/out" "$d/err" "$d/status" 2>/dev/null
+    jobs="$jobs $d"
+    payload=$1
+    (
+      exec >"$d/out" 2>"$d/err" </dev/null
+      printf '%s' "$payload" | setsid python3 "$work/jobs/ilo-local.py" "$ilocache" &
+      p=$!; echo "$p" >"$d/pid"; wait "$p"; echo "$?" >"$d/status"
+    ) &
+    payload=""
+    echo "@@JOB $d"
+    ;;
   FIOJOB)
     # Tokens: --flag[=wert] (CLI), @name (neuer Abschnitt), schluessel=wert.
     ok=1; flags=""; body=""; section=0; nfile=0; writes=0; devonly=1
@@ -412,7 +445,7 @@ $k=$v" ;;
 done
 """
 
-ROOT_BROKER_SCRIPT = _ROOT_BROKER_TEMPLATE.replace("@@RAS_QUERY_SCRIPT@@", ras.QUERY_SCRIPT.strip("\n"))
+ROOT_BROKER_SCRIPT = _ROOT_BROKER_TEMPLATE.replace("@@RAS_QUERY_SCRIPT@@", ras.QUERY_SCRIPT.strip("\n")).replace("@@ILO_WORKER_SCRIPT@@", ILO_WORKER_SCRIPT.strip("\n"))
 
 _RELAY_SCRIPT = (
     'cat "$1/out"; cat "$1/err" >&2; '
@@ -652,6 +685,23 @@ class RootBroker:
             **_kwargs: object) -> subprocess.CompletedProcess[str]:
         """subprocess.run-kompatibel (capture_output/text) über die Root-Sitzung."""
         return self._run_job(self.submit(command), command, timeout)
+
+    def ilo_local(self, operation: str, username: str = '', password: str = ''):
+        if operation not in {'login', 'logout', 'iml_read', 'iel_read', 'iml_clear', 'iel_clear'}:
+            raise ValueError('Ungültiger iLO-Auftrag')
+        payload = {'operation': operation}
+        if operation == 'login':
+            if (not username.strip() or not password or len(username)>256 or len(password)>4096
+                    or any(c in username+password for c in '\r\n\0')):
+                raise ValueError('Ungültige iLO-Zugangsdaten')
+            payload.update(username=username, password=password)
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode('ascii')
+        try:
+            job = self._submit_line('ILOLOCAL '+encoded)
+        finally:
+            payload.clear()
+            encoded = ''
+        return self._run_job(job, ['ilorest-local', operation], timeout=100)
 
     def ras_query(self, baseline: Optional[dict], db_path: str = ras.DB_PATH,
                   limit: int = ras.MAX_EVENTS, timeout: float = 20) -> Optional[dict]:

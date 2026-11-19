@@ -13,6 +13,7 @@ wiederholt den Zyklus bis die eingestellte Dauer abgelaufen ist.
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 from typing import List
 
@@ -46,7 +47,7 @@ class MemoryFillRunner(BaseTestRunner):
         self,
         params: TestParameters,
         memory_mb: int = 0,
-        reserve_mb: int = 512,
+        reserve_mb: int = 2048,
         chunk_mb: int = 256,
         pause_seconds: float = 3.0,
         **kwargs,
@@ -74,6 +75,7 @@ class MemoryFillRunner(BaseTestRunner):
             cmd = [sys.executable, script]
         cmd += [
             "--duration", str(script_duration),
+            "--parent-pid", str(os.getpid()),
             "--reserve-mb", str(self.reserve_mb),
             "--chunk-mb", str(self.chunk_mb),
             "--pause-seconds", str(self.pause_seconds),

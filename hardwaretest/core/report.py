@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from hardwaretest import __version__
+from hardwaretest.core import session_log
 
 STATUS_PASSED = "passed"
 STATUS_FAILED = "failed"
@@ -45,6 +46,7 @@ _TEXT = {
     "Beginn": "Start", "Ende": "End", "Dauer": "Duration", "Ergebnis": "Result",
     "Parameter": "Parameters", "Hinweise": "Notes", "Rohausgabe": "Raw output",
     "Keine Daten": "No data",
+    "Sitzungsprotokoll (10 Minuten vor dem Fehler)": "Session log (10 minutes before the failure)",
 }
 _SLUG_UNSAFE = re.compile(r"[^a-z0-9]+")
 
@@ -205,6 +207,13 @@ def render_html(report: Report) -> str:
         parts.append(render_section(section, lang))
     if report.hints:
         parts.append(render_section(Section(_t("Hinweise", lang), "list", report.hints), lang))
+    if report.status == STATUS_FAILED and session_log.active():
+        # Zeitachse vor dem Fehler: Testausgaben, Kernel-Meldungen und Zustandszeilen.
+        excerpt = session_log.excerpt(minutes_before=10)
+        if excerpt:
+            excerpt += f"\n\n{session_log.directory()}"
+            parts.append(render_section(Section(_t("Sitzungsprotokoll (10 Minuten vor dem Fehler)", lang), "text",
+                                                text=excerpt, collapsed=True), lang))
     if report.raw_output.strip():
         parts.append(render_section(Section(_t("Rohausgabe", lang), "text", text=report.raw_output, collapsed=True), lang))
     parts.append(f"<footer>Hardwaretest {escape(__version__)} · hwtest-{escape(slugify(report.test))}</footer></main></body></html>")

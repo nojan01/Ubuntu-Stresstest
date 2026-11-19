@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QScrollArea, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from hardwaretest.ui.ilo_login import IloLoginDialog
+from hardwaretest.core.ilo_local import LocalIloSession, is_ilo7
 from hardwaretest.core import distro
 from hardwaretest.core import hpe_raid, ipmi, privilege
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
@@ -218,13 +220,16 @@ def clear_logs(run, logs: list[str]) -> list[tuple[str, bool, str]]:
         return [(log, False, _t("Keine Root-Rechte.", "No root privileges.")) for log in logs]
     results = []
     for log in logs:
-        backup = ""
-        if log == "IEL":
-            saved, backup = ipmi.backup_iel(run, hwreport.report_path("ilo-event-log", suffix=".json"))
-            if not saved:
-                results.append((log, False, _t("Sicherung fehlgeschlagen, nicht gelöscht: ",
-                                               "Backup failed, not cleared: ") + backup))
-                continue
+        try:
+            suffix = ".txt" if log == "SEL" else ".json"
+            target = hwreport.report_path(f"ilo-{log.lower()}", suffix=suffix)
+            saved, backup = ipmi.backup_log(run, log, target)
+        except OSError as exc:
+            saved, backup = False, str(exc)
+        if not saved:
+            results.append((log, False, _t("Sicherung fehlgeschlagen, nicht gelöscht: ",
+                                           "Backup failed, not cleared: ") + backup))
+            continue
         ok, message = ipmi.clear_log(run, log)
         if ok and backup:
             message = _t("gesichert in ", "saved to ") + backup
@@ -241,9 +246,9 @@ class ClearLogsDialog(QDialog):
         layout = QVBoxLayout(self)
         warning = QLabel(_t(
             "Die gewählten Protokolle werden im iLO unwiderruflich gelöscht. Der aktuelle Stand wird vorher "
-            "als Bericht (bzw. das iLO Event Log als JSON) in ~/Downloads gespeichert.",
+            "je Protokoll als TXT (SEL) oder JSON (IML/IEL) in ~/Downloads gespeichert.",
             "The selected logs are permanently cleared in the iLO. The current state is saved to ~/Downloads "
-            "first (report, iLO Event Log as JSON)."))
+            "first (SEL as text, IML/IEL as JSON)."))
         warning.setWordWrap(True)
         layout.addWidget(warning)
         self.boxes: dict[str, QCheckBox] = {}
@@ -300,6 +305,15 @@ def _fill(table: QTableWidget, rows: list[tuple[list[str], str]]) -> None:
     table.setSortingEnabled(True)
 
 
+class IloLogoutWorker(QThread):
+    def __init__(self, session, parent=None):
+        super().__init__(parent)
+        self.session = session
+
+    def run(self):
+        self.session.close()
+
+
 class ProliantPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -308,6 +322,11 @@ class ProliantPanel(QWidget):
         self._clear_worker = None
         self._clear_results: list[tuple[str, bool, str]] = []
         self._broker = None
+        self._ilo_session = None
+        self._ilo_logout_worker = None
+        self._ilo_dialog_open = False
+        self._ilo_prompted = False
+        self._closing_ilo = False
         self._broker_failed = False
         self._data = None
         self._proliant = ipmi.is_proliant()
@@ -337,6 +356,17 @@ class ProliantPanel(QWidget):
         buttons.addWidget(self.export_btn)
         buttons.addWidget(self.clear_btn)
         layout.addLayout(buttons)
+        ilo_buttons = QHBoxLayout()
+        self.ilo_login_btn = QPushButton()
+        self.ilo_login_btn.clicked.connect(self.ilo_login)
+        self.ilo_logout_btn = QPushButton()
+        self.ilo_logout_btn.clicked.connect(self.ilo_logout)
+        self.ilo_status = QLabel()
+        self.ilo_status.setWordWrap(True)
+        ilo_buttons.addWidget(self.ilo_login_btn)
+        ilo_buttons.addWidget(self.ilo_logout_btn)
+        ilo_buttons.addWidget(self.ilo_status, 1)
+        layout.addLayout(ilo_buttons)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
@@ -404,7 +434,7 @@ class ProliantPanel(QWidget):
         self.retranslate()
         if self._proliant or ipmi.ipmi_available():
             # Server mit BMC: automatisch auslesen und regelmäßig aktualisieren.
-            QTimer.singleShot(1500, self.start)
+            QTimer.singleShot(1500, self._initial_read)
             self._timer.start()
 
     def _build_raid_page(self) -> QWidget:
@@ -453,6 +483,12 @@ class ProliantPanel(QWidget):
     # ----- Root-Sitzung -----
 
     def root_runner(self):
+        fallback = self._local_root_runner()
+        if self._ilo_session is not None:
+            return self._ilo_session.runner(fallback)
+        return fallback
+
+    def _local_root_runner(self):
         """Läuft im Worker-Thread. Hält eine Root-Sitzung offen (nur eine Passwortabfrage)."""
         if os.geteuid() == 0:
             return subprocess.run
@@ -470,6 +506,7 @@ class ProliantPanel(QWidget):
         return broker.run
 
     def close_privileged_session(self):
+        self._closing_ilo = True
         self._timer.stop()
         if self._worker is not None:
             self._worker.wait(5000)
@@ -477,13 +514,91 @@ class ProliantPanel(QWidget):
             self._ssaducli_worker.wait(5000)
         if self._clear_worker is not None:
             self._clear_worker.wait(5000)
+        if self._ilo_logout_worker is not None:
+            self._ilo_logout_worker.wait()
+        if self._ilo_session is not None:
+            self._ilo_session.close()
+            self._ilo_session = None
         if self._broker is not None:
             self._broker.close()
             self._broker = None
 
     # ----- UI -----
 
+    def _update_ilo_controls(self):
+        busy = self._worker is not None or self._clear_worker is not None or self._ilo_logout_worker is not None
+        connected = self._ilo_session is not None and self._ilo_session.connected
+        self.ilo_login_btn.setEnabled(not busy and not connected)
+        self.ilo_logout_btn.setEnabled(not busy and self._ilo_session is not None)
+        self.ilo_status.setText(_t('iLOrest: lokal angemeldet', 'iLOrest: locally logged in') if connected
+                               else _t('iLO7: nicht angemeldet; iLO5/6 lokal wie bisher', 'iLO7: not logged in; iLO5/6 local access unchanged'))
+
+    def _new_local_ilo_session(self):
+        if self._broker is None:
+            self._broker = RootBroker(reason=_t('Lokalen iLO7-Zugriff autorisieren', 'Authorize local iLO7 access'))
+        self._broker.start()
+        return LocalIloSession(self._broker)
+
+    def _initial_read(self):
+        if self._closing_ilo:
+            return
+        self._prompt_ilo7()
+        self.start()
+
+    def _prompt_ilo7(self):
+        if (self._closing_ilo or self._ilo_prompted or self._ilo_dialog_open
+                or self._worker is not None or self._clear_worker is not None
+                or (self._ilo_session is not None and self._ilo_session.connected)):
+            return
+        evidence = self._data or {'proliant': self._proliant, 'identity': ipmi.system_identity()}
+        if is_ilo7(evidence):
+            self._ilo_prompted = True
+            self.ilo_login()
+
+    def ilo_login(self):
+        if self._worker is not None or self._clear_worker is not None or self._ilo_logout_worker is not None:
+            return
+        was_active = self._timer.isActive()
+        self._timer.stop()
+        self._ilo_dialog_open = True
+        old = self._ilo_session
+        self._ilo_prompted = True
+        dialog = IloLoginDialog(self, session_factory=self._new_local_ilo_session)
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted and dialog.session is not None:
+                if old is not None:
+                    old.close()
+                self._ilo_session = dialog.session
+                self._update_ilo_controls()
+                self.start()
+        finally:
+            self._ilo_dialog_open = False
+            if was_active:
+                self._timer.start()
+            dialog.deleteLater()
+
+    def ilo_logout(self):
+        if self._ilo_session is None or self._worker is not None or self._clear_worker is not None or self._ilo_logout_worker is not None:
+            return
+        worker = IloLogoutWorker(self._ilo_session, self)
+        self._ilo_session = None
+        self._ilo_logout_worker = worker
+        connect_finished(worker, self._ilo_logout_finished)
+        self._update_ilo_controls()
+        worker.start()
+
+    def _ilo_logout_finished(self, worker=None):
+        if release_worker(self, '_ilo_logout_worker', worker):
+            self._update_ilo_controls()
+            if self._data:
+                self._data['iml'] = None
+                self._data['iml_error'] = _t('Abgemeldet – nicht geprüft.', 'Logged out – not checked.')
+                self.show_result(self._data)
+
     def retranslate(self, *_):
+        self.ilo_login_btn.setText(_t('iLO 7 anmelden …', 'iLO 7 login …'))
+        self.ilo_logout_btn.setText(_t('Abmelden', 'Log out'))
+        self._update_ilo_controls()
         self.notice.setText(_t(
             "Kein HPE ProLiant/Synergy erkannt – die iLO-Informationen (Sensoren, Ereignisprotokoll) sind auf diesem System "
             "nicht aktiv. Speicher/ECC und ggf. ein anderer BMC (IPMI) können trotzdem manuell ausgelesen werden.",
@@ -492,11 +607,11 @@ class ProliantPanel(QWidget):
         self.hint.setText(_t(
             "Liest über ipmitool direkt vom iLO: Systemdaten, alle Sensoren (Temperaturen, Lüfter, Netzteile, "
             "Spannungen) und das komplette Ereignisprotokoll (IPMI SEL), über iLOrest das Integrated Management Log "
-            "(IML), dazu Speicher/ECC. Auf einem ProLiant wird beim "
+            "(IML), nach iLO7-Anmeldung lokal über iLOrest; dazu Speicher/ECC. Auf einem ProLiant wird beim "
             "Start automatisch und danach alle 5 Minuten ausgelesen (einmalige Passwortabfrage).",
             "Reads directly from iLO via ipmitool: system data, all sensors (temperatures, fans, power supplies, "
             "voltages) and the complete event log (IPMI SEL), the Integrated Management Log (IML) via iLOrest, plus memory/ECC. On a ProLiant it reads automatically "
-            "at startup and every 5 minutes (password asked once)."))
+            "at startup and every 5 minutes (root password asked once). iLO7: local login is requested automatically."))
         self.read_btn.setText(_t("Jetzt auslesen", "Read now"))
         self.export_btn.setText(_t("Bericht jetzt speichern", "Save report now"))
         self.clear_btn.setText(_t("Protokolle löschen …", "Clear logs …"))
@@ -554,7 +669,7 @@ class ProliantPanel(QWidget):
             self.show_result(self._data)
 
     def start(self):
-        if self._worker is not None or self._clear_worker is not None:
+        if self._worker is not None or self._clear_worker is not None or self._ilo_logout_worker is not None:
             return
         if self.sender() is self.read_btn:
             self._broker_failed = False
@@ -565,6 +680,7 @@ class ProliantPanel(QWidget):
             self.summary.setText(_t("Wird ausgelesen … (Passwort-Abfrage beachten)", "Reading … (watch for password prompt)"))
         worker = ProliantWorker(self)
         self._worker = worker
+        self._update_ilo_controls()
         worker.done.connect(self.show_result)
         connect_finished(worker, self._finished)
         worker.start()
@@ -572,6 +688,8 @@ class ProliantPanel(QWidget):
     def _finished(self, worker=None):
         if release_worker(self, "_worker", worker):
             self.read_btn.setEnabled(True)
+            self._update_ilo_controls()
+            QTimer.singleShot(0, self._prompt_ilo7)
 
     def show_result(self, data):
         if "exception" in data:
@@ -580,7 +698,7 @@ class ProliantPanel(QWidget):
             return
         self._data = data
         self.export_btn.setEnabled(True)
-        self.clear_btn.setEnabled(self._clear_worker is None and bool(ipmi.clearable_logs()))
+        self.clear_btn.setEnabled(self._clear_worker is None and bool(self._available_logs()))
         self.overview.setPlainText("\n".join(self._overview_lines(data)))
         sensors = data["sensors"] or []
         _fill(self.sensors, [([s.name, s.reading, s.status, s.entity, _sev(s.severity)], s.severity) for s in sensors])
@@ -687,17 +805,21 @@ class ProliantPanel(QWidget):
 
     # ----- Protokolle löschen -----
 
+    def _available_logs(self):
+        logs = ipmi.clearable_logs()
+        if self._ilo_session is not None:
+            logs = list(dict.fromkeys(logs + self._ilo_session.available_logs))
+        return logs
+
     def clear_logs(self):
-        if self._clear_worker is not None or self._worker is not None:
+        if self._clear_worker is not None or self._worker is not None or self._ilo_logout_worker is not None:
             return
-        dialog = ClearLogsDialog(ipmi.clearable_logs(), self)
+        dialog = ClearLogsDialog(self._available_logs(), self)
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.selected():
             return
         self._start_clear(dialog.selected())
 
     def _start_clear(self, logs: list[str]) -> None:
-        # Stand vor dem Löschen festhalten: der Bericht enthält SEL und IML.
-        self.export()
         self.clear_btn.setEnabled(False)
         self.read_btn.setEnabled(False)
         self.summary.setStyleSheet("")
@@ -705,6 +827,7 @@ class ProliantPanel(QWidget):
                                 "Clearing logs … (watch for password prompt)"))
         worker = ClearLogsWorker(self, logs)
         self._clear_worker = worker
+        self._update_ilo_controls()
         worker.done.connect(self._clear_done)
         connect_finished(worker, self._clear_finished)
         worker.start()
@@ -725,7 +848,8 @@ class ProliantPanel(QWidget):
         if not release_worker(self, "_clear_worker", worker):
             return
         self.read_btn.setEnabled(True)
-        self.clear_btn.setEnabled(bool(ipmi.clearable_logs()))
+        self._update_ilo_controls()
+        self.clear_btn.setEnabled(bool(self._available_logs()))
         state, text = self._clear_text()
         self.clear_status.setStyleSheet(_CSS[state])
         self.clear_status.setText(text)
@@ -746,8 +870,15 @@ class ProliantPanel(QWidget):
             state = "info" if ecc_state == "ok" else ecc_state
             if raid_state in ("warn", "error"):
                 state = hpe_raid.worst(state if state != "info" else "ok", raid_state)
-            return (state, _t(f"[{stamp}] Kein iLO/BMC erreichbar: {data['bmc_error']} | {ecc_summary}{raid_text}",
-                              f"[{stamp}] No iLO/BMC reachable: {data['bmc_error']} | {ecc_summary}{raid_text}"))
+            entries = data.get("iml")
+            iml_status = _t(" | IML: nicht geprüft", " | IML: not checked") if entries is None else _t(f" | IML: {len(entries)} Einträge", f" | IML: {len(entries)} entries")
+            if entries:
+                if any(e.severity == 'error' for e in entries):
+                    state = 'error'
+                elif state != 'error' and any(e.severity == 'warn' for e in entries):
+                    state = 'warn'
+            return (state, _t(f"[{stamp}] IPMI nicht erreichbar: {data['bmc_error']} | {ecc_summary}{raid_text}{iml_status}",
+                              f"[{stamp}] IPMI unavailable: {data['bmc_error']} | {ecc_summary}{raid_text}{iml_status}"))
         events = data["events"] or []
         sensors = data["sensors"] or []
         err = sum(e.severity == "error" for e in events)
@@ -758,6 +889,8 @@ class ProliantPanel(QWidget):
         i_err = sum(e.severity == "error" for e in iml)
         i_warn = sum(e.severity == "warn" for e in iml)
         iml_text = ""
+        if data.get("iml") is None:
+            iml_text = _t(" | IML: nicht geprüft", " | IML: not checked")
         if data.get("iml") is not None:
             iml_text = _t(f" | IML: {len(iml)} Einträge ({i_err} Fehler, {i_warn} Warnungen offen)",
                           f" | IML: {len(iml)} entries ({i_err} errors, {i_warn} warnings open)")
@@ -765,11 +898,23 @@ class ProliantPanel(QWidget):
                   f"Ereignisprotokoll: {len(events)} Einträge ({err} Fehler, {warn} Warnungen){iml_text} | {data['ecc'][1]}",
                   f"[{stamp}] Sensors: {len(sensors)} ({s_err} critical, {s_warn} warning) | "
                   f"Event log: {len(events)} entries ({err} errors, {warn} warnings){iml_text} | {data['ecc'][1]}")
+        if data.get("sensors") is None:
+            text = text.replace(f"Sensoren: {len(sensors)} ({s_err} kritisch, {s_warn} Warnung)", "Sensoren: nicht geprüft")
+            text = text.replace(f"Sensors: {len(sensors)} ({s_err} critical, {s_warn} warning)", "Sensors: not checked")
+        if data.get("events") is None:
+            text = text.replace(f"Ereignisprotokoll: {len(events)} Einträge ({err} Fehler, {warn} Warnungen)", "Ereignisprotokoll: nicht geprüft")
+            text = text.replace(f"Event log: {len(events)} entries ({err} errors, {warn} warnings)", "Event log: not checked")
         text += raid_text
         if s_err or err or i_err or data["ecc"][0] == "error" or raid_state == "error":
             return "error", text
         if s_warn or warn or i_warn or data["ecc"][0] == "warn" or raid_state == "warn":
             return "warn", text
+        missing = []
+        for key, label in (("sensors", "Sensoren / Sensors"), ("events", "IPMI SEL"), ("iml", "IML")):
+            if data.get(key) is None:
+                missing.append(label)
+        if missing:
+            return "info", text + _t(" | Nicht geprüft: ", " | Not checked: ") + ", ".join(missing)
         return "ok", text
 
     def _overview_lines(self, data) -> list[str]:

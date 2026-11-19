@@ -94,7 +94,7 @@ def test_aborted_read_test_without_errors_is_rated_clean(monkeypatch, keep):
     assert runner.stopped_with is True
     text = panel.io_result.text()
     assert "ABGEBROCHEN" in text and "keine Fehler" in text and "42s" in text
-    assert "#44ff44" in panel.io_result.styleSheet()
+    assert "#39d353" in panel.io_result.styleSheet()
 
 
 def test_aborted_read_test_with_errors_shows_them(monkeypatch, keep):
@@ -105,5 +105,5 @@ def test_aborted_read_test_with_errors_shows_them(monkeypatch, keep):
     )
     panel._stop_io_test()
     assert "2 Problem(e)" in panel.io_result.text()
-    assert "#ff4444" in panel.io_result.styleSheet()
+    assert "#ff6257" in panel.io_result.styleSheet()
     assert "bad magic header" in panel.io_status.text()

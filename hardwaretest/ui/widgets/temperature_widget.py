@@ -42,10 +42,10 @@ from hardwaretest.ui.i18n import language_manager
 _WARN_TEMP = 85.0   # Ab hier gelb
 _CRIT_TEMP = 95.0   # Fallback, falls kein Sensor-kritisch-Wert
 
-_CSS_GREEN = "color: #44ff44;"
-_CSS_YELLOW = "color: #ffaa00;"
-_CSS_RED = "color: #ff4444; font-weight: bold;"
-_CSS_GREY = "color: #888888;"
+_CSS_GREEN = "color: #39d353;"
+_CSS_YELLOW = "color: #ffb52e;"
+_CSS_RED = "color: #ff6257; font-weight: bold;"
+_CSS_GREY = "color: #95a6ad;"
 
 
 def _temp_css(temp: float, high: float = 0.0, critical: float = 0.0) -> str:

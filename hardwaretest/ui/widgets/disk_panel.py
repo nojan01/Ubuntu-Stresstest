@@ -695,7 +695,7 @@ class FileDiskPanel(QWidget):
 			else:
 				self.result_label.setText("✓ BESTANDEN – Keine Fehler erkannt")
 			self.result_label.setStyleSheet(
-				"color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
+				"color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 		else:
 			if aborted:
@@ -707,7 +707,7 @@ class FileDiskPanel(QWidget):
 					f"✗ FEHLER – {len(result.errors)} Problem(e) erkannt"
 				)
 			self.result_label.setStyleSheet(
-				"color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
+				"color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 
 	def _append_log(self, text: str) -> None:
@@ -1004,7 +1004,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 			else:
 				self.result_label.setText("✓ BESTANDEN – Alle Blöcke fehlerfrei gelesen")
 			self.result_label.setStyleSheet(
-				"color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
+				"color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 		else:
 			if aborted:
@@ -1016,7 +1016,7 @@ class DeviceDiskPanel(DeviceSelectionMixin, QWidget):
 					f"✗ FEHLER – {len(result.errors)} I/O-Problem(e) erkannt"
 				)
 			self.result_label.setStyleSheet(
-				"color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
+				"color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 
 	def _append_log(self, text: str) -> None:
@@ -1388,7 +1388,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 			else:
 				self.result_label.setText("✓ BESTANDEN – Schreib-/Lese-Verifikation fehlerfrei")
 			self.result_label.setStyleSheet(
-				"color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
+				"color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 		else:
 			if aborted:
@@ -1400,7 +1400,7 @@ class DestructiveDiskPanel(DeviceSelectionMixin, QWidget):
 					f"✗ FEHLER – {len(result.errors)} Verifikations-/I/O-Problem(e)"
 				)
 			self.result_label.setStyleSheet(
-				"color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
+				"color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;"
 			)
 
 	def _append_log(self, text: str) -> None:

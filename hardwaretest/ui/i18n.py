@@ -553,6 +553,13 @@ _EN: dict[str, str] = {
     "Alle abwählen": "Clear selection",
     "Datenträger aushängen…": "Unmount drive…",
     "Nach Updates suchen": "Check for updates",
+    "Sitzungsprotokoll öffnen (Ordner)": "Open session log (folder)",
+    "Die letzte Sitzung wurde nicht sauber beendet (Absturz, Einfrieren oder Ausschalten).":
+        "The last session did not end cleanly (crash, freeze or power-off).",
+    "Letzter Eintrag: {time}": "Last entry: {time}",
+    "Laufende Tests: {tests}": "Running tests: {tests}",
+    "Protokoll: {path}": "Log: {path}",
+    "keine": "none",
     "Update-Prüfung fehlgeschlagen: {error}": "Update check failed: {error}",
     "Hardwaretest {version} ist aktuell.": "Hardwaretest {version} is up to date.",
     "Update verfügbar": "Update available",

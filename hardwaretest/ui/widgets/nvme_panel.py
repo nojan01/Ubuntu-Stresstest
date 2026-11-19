@@ -322,7 +322,7 @@ class NvmePanel(QWidget):
             return
         self._set_runtime_text(self.status, "NVMe-Selbsttest-Protokoll wird gelesen …")
         self._set_runtime_text(self.result, "⌛ NVMe-Selbsttest-Protokoll wird gelesen …")
-        self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
         self.self_test_progress.setRange(0, 0)
         self.self_test_progress.setVisible(True)
         self._set_device_actions_enabled(False)
@@ -569,7 +569,7 @@ class NvmePanel(QWidget):
             runner.start()
         except Exception as exc:  # pragma: no cover - system and polkit dependent
             self._set_runtime_text(self.io_result, "✗ NVMe-Lese-Test konnte nicht gestartet werden")
-            self.io_result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.io_result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_raw_text(self.io_status, str(exc))
             return
         self._io_runner = runner
@@ -578,7 +578,7 @@ class NvmePanel(QWidget):
         self._io_status_text = status
         self._io_waiting_for_auth = not getattr(runner, "authorized", True)
         self._set_runtime_text(self.io_result, "⌛ NVMe-Lese-Test läuft")
-        self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.io_result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
         self._set_runtime_text(self.io_status, status)
         self.io_progress.setVisible(True)
         if timed:
@@ -605,7 +605,7 @@ class NvmePanel(QWidget):
         if not getattr(runner, "authorized", True):
             if runner.is_running():
                 self._set_runtime_text(self.io_result, "🔑 Warte auf Passwort-Eingabe …")
-                self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+                self.io_result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
                 self._set_runtime_text(
                     self.io_status, "Der Lese-Test startet nach der Autorisierung."
                 )
@@ -614,7 +614,7 @@ class NvmePanel(QWidget):
         elif self._io_waiting_for_auth:
             self._io_waiting_for_auth = False
             self._set_runtime_text(self.io_result, "⌛ NVMe-Lese-Test läuft")
-            self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.io_result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.io_status, self._io_status_text)
             if self._io_timed:
                 self.io_progress.setRange(0, 100)
@@ -630,7 +630,7 @@ class NvmePanel(QWidget):
         """Bewertet einen manuell beendeten Lese-Test anhand der bis dahin gesammelten Ausgabe."""
         if result is None:
             self._set_runtime_text(self.io_result, "? NVMe-Lese-Test abgebrochen")
-            self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.io_result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.io_status, "Lese-Test wurde manuell beendet.")
             return
         seconds = float(getattr(result, "duration_actual", 0.0) or 0.0)
@@ -640,7 +640,7 @@ class NvmePanel(QWidget):
                 "✓ NVMe-Lese-Test ABGEBROCHEN – bis zum Abbruch keine Fehler erkannt ({seconds:.0f}s)",
                 seconds=seconds,
             )
-            self.io_result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.io_result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.io_status, "Lese-Test wurde manuell beendet.")
             return
         self._set_runtime_text(
@@ -648,7 +648,7 @@ class NvmePanel(QWidget):
             "✗ NVMe-Lese-Test ABGEBROCHEN – {count} Problem(e) bis zum Abbruch erkannt",
             count=len(result.errors),
         )
-        self.io_result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.io_result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
         if result.errors:
             self._set_raw_text(self.io_status, "\n".join(result.errors))
         else:
@@ -673,16 +673,16 @@ class NvmePanel(QWidget):
             return
         if not getattr(runner, "authorized", True):
             self._set_runtime_text(self.io_result, "? NVMe-Lese-Test nicht gestartet")
-            self.io_result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.io_result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.io_status, "Die Passwort-Eingabe wurde abgebrochen oder abgelehnt.")
             return
         if result is None:
             self._set_runtime_text(self.io_result, "✗ NVMe-Lese-Test ohne Ergebnis beendet")
-            self.io_result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.io_result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             return
         if not result.passed:
             self._set_runtime_text(self.io_result, "✗ NVMe-Lese-Test FEHLGESCHLAGEN")
-            self.io_result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.io_result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             if result.errors:
                 self._set_raw_text(self.io_status, "\n".join(result.errors))
             else:
@@ -716,7 +716,7 @@ class NvmePanel(QWidget):
                 "Keine Lese-Fehler auf {count} Laufwerk(en) erkannt.",
                 count=len(getattr(runner, "devices", [])),
             )
-        self.io_result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.io_result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
 
     def _write_io_report(self, runner: BaseTestRunner, result, aborted: bool) -> None:
         tr = language_manager.tr
@@ -774,11 +774,11 @@ class NvmePanel(QWidget):
                 "NVMe-Selbsttest läuft. Der Fortschritt kann von diesem Laufwerk derzeit nicht abgefragt werden.",
             )
             self._set_runtime_text(self.result, "⌛ NVMe-Selbsttest läuft")
-            self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
             return
         self._set_runtime_text(self.status, "NVMe-Aktion fehlgeschlagen.")
         self._set_runtime_text(self.result, "✗ NVMe-Aktion fehlgeschlagen")
-        self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
         if show_failure:
             QMessageBox.warning(self, language_manager.tr("NVMe-Aktion fehlgeschlagen"), message)
 
@@ -802,7 +802,7 @@ class NvmePanel(QWidget):
                 progress=completion_percent,
             )
         self._set_runtime_text(self.result, "⌛ NVMe-Selbsttest läuft")
-        self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
         if not self._status_timer.isActive():
             self._status_timer.start()
         self._set_device_actions_enabled(self.device_box.count() > 0)
@@ -818,7 +818,7 @@ class NvmePanel(QWidget):
         if status.passed is True:
             self._set_runtime_text(self.status, "NVMe-Selbsttest bestanden.")
             self._set_runtime_text(self.result, "✓ NVMe-Selbsttest BESTANDEN")
-            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
         elif status.passed is False:
             self._set_runtime_text(self.status, "NVMe-Selbsttest fehlgeschlagen.")
             self._set_runtime_text(
@@ -826,7 +826,7 @@ class NvmePanel(QWidget):
                 "✗ NVMe-Selbsttest FEHLGESCHLAGEN (Code {code})",
                 code=status.result_code,
             )
-            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
         else:
             self._set_runtime_text(
                 self.status,
@@ -836,7 +836,7 @@ class NvmePanel(QWidget):
                 self.result,
                 "? NVMe-Selbsttest abgeschlossen – Ergebnis nicht verfügbar",
             )
-            self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
 
     def _nvme_run(self, command, **kwargs):
         """nvme-cli direkt als root oder über eine gemeinsame Root-Sitzung."""

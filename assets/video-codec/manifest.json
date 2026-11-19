@@ -1,0 +1,17 @@
+{
+  "h264": {
+    "file": "h264.mkv",
+    "frames": 30,
+    "sha256": "97b357ad100051c49b46f41e7c5970810d69f96c3c8a33f45defef554977ad67"
+  },
+  "hevc": {
+    "file": "hevc.mkv",
+    "frames": 30,
+    "sha256": "7c7fb922665f8a81ea6c3b849fe50baa9e862e634f18c22266f7ca1a44ba33a8"
+  },
+  "av1": {
+    "file": "av1.mkv",
+    "frames": 30,
+    "sha256": "4161a8c78054a6a93c2d64041e52efa5d98d1ba7875bbd4281b8a51be7ffa618"
+  }
+}

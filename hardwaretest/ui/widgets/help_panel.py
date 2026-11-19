@@ -29,9 +29,9 @@ _HELP_DE = """\
   th { background: #333; padding: 4px 10px; text-align: left; }
   td { padding: 4px 10px; border-bottom: 1px solid #444; }
   code { background: #333; padding: 1px 4px; border-radius: 3px; }
-  .warn { color: #ffaa00; }
-  .good { color: #44ff44; }
-  .bad  { color: #ff4444; }
+  .warn { color: #ffb52e; }
+  .good { color: #39d353; }
+  .bad  { color: #ff6257; }
 </style>
 
 <h1>🛠️ Hardwaretest – Hilfe</h1>
@@ -57,6 +57,18 @@ nicht-destruktiv – mit Ausnahme von <b>Disk (Destruktiv)</b>.
 
 <h2>Allgemeine Bedienhinweise</h2>
 <ul>
+  <li><b>Sitzungsprotokoll:</b> Hardwaretest schreibt ab dem Start fortlaufend nach
+      <code>~/Downloads/hwtest-protokoll/</code> (Menü Hilfe → „Sitzungsprotokoll öffnen“): jede
+      Ausgabezeile der Tests mit Zeitstempel, Start/Ende/Ergebnis, Kernel-Fehler (MCE, EDAC, I/O),
+      Monitoring-Ereignisse und alle 5&nbsp;Sekunden eine Zustandszeile (Last, RAM, Takt,
+      Temperaturen, Lüfter, ECC, laufende Tests; iLO-/BMC-Lüfter alle 30&nbsp;Sekunden; mit installiertem
+      <code>gputaskman</code> zusätzlich eine GPU-Zeile je Karte) sowie alle 30&nbsp;Sekunden eine
+      Zeile <code>SENSOREN</code> mit jeder einzelnen Temperatur und jedem Lüfter. Die Zeilen
+      werden sofort auf den Datenträger geschrieben, stündlich beginnt eine neue Datei, 72&nbsp;Stunden
+      bleiben erhalten. Nach einem Absturz oder Einfrieren meldet der nächste Start, wann die
+      Sitzung endete und welche Tests liefen. Fehlerberichte enthalten die 10&nbsp;Minuten davor.
+      <b>Im Live-System ohne Persistenz liegt das Protokoll im RAM und geht beim Einfrieren
+      verloren</b> – für Langzeittests einen USB-Stick mit Persistenz verwenden.</li>
   <li><b>Berichte:</b> Jeder Tab schreibt nach jedem Test automatisch einen HTML-Bericht
       nach <code>~/Downloads/hwtest-&lt;test&gt;-JJJJMMTT-HHMMSS.html</code> (z.&nbsp;B.
       <code>hwtest-stress-ng-…</code>, <code>hwtest-gesamttest-…</code>). Alle Berichte haben
@@ -946,9 +958,9 @@ _HELP_EN = """\
   th { background: #333; padding: 4px 10px; text-align: left; }
   td { padding: 4px 10px; border-bottom: 1px solid #444; }
   code { background: #333; padding: 1px 4px; border-radius: 3px; }
-  .warn { color: #ffaa00; }
-  .good { color: #44ff44; }
-  .bad  { color: #ff4444; }
+  .warn { color: #ffb52e; }
+  .good { color: #39d353; }
+  .bad  { color: #ff6257; }
 </style>
 
 <h1>🛠️ Hardware Test – Help</h1>
@@ -974,6 +986,17 @@ non-destructive – except <b>Disk (Destructive)</b>.
 
 <h2>General Usage Notes</h2>
 <ul>
+  <li><b>Session log:</b> from startup Hardwaretest continuously writes to
+      <code>~/Downloads/hwtest-protokoll/</code> (Help menu → "Open session log"): every test
+      output line with a timestamp, start/end/result, kernel errors (MCE, EDAC, I/O), monitoring
+      events and a status line every 5&nbsp;seconds (load, RAM, clock, temperatures, fans, ECC,
+      running tests; iLO/BMC fans every 30&nbsp;seconds; with <code>gputaskman</code> installed also
+      one GPU line per card) plus a <code>SENSOREN</code> line every 30&nbsp;seconds with every
+      single temperature and fan. Lines are written to disk immediately, a
+      new file starts every hour, 72&nbsp;hours are kept. After a crash or freeze the next start
+      reports when the session ended and which tests were running. Failure reports include the
+      10&nbsp;minutes before. <b>On the live system without persistence the log lives in RAM and
+      is lost on a freeze</b> – use a USB stick with persistence for long runs.</li>
   <li><b>Reports:</b> every tab automatically writes an HTML report after each test to
       <code>~/Downloads/hwtest-&lt;test&gt;-YYYYMMDD-HHMMSS.html</code> (e.g.
       <code>hwtest-stress-ng-…</code>, <code>hwtest-gesamttest-…</code>). All reports share

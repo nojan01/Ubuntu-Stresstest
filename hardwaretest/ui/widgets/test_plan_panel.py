@@ -131,7 +131,7 @@ class TestPlanPanel(QWidget):
         self.ram_fill_duration = self._seconds_spin(300)
         self.ram_fill_reserve = QSpinBox()
         self.ram_fill_reserve.setRange(0, 65536)
-        self.ram_fill_reserve.setValue(512)
+        self.ram_fill_reserve.setValue(2048)
         self.ram_fill_reserve.setSuffix(" MB")
 
         stress_form = QFormLayout()
@@ -495,7 +495,7 @@ class TestPlanPanel(QWidget):
         self.progress.setValue(0)
         self.step_progress.setValue(0)
         self._set_runtime_text(self.result, "⌛ Gesamttest läuft")
-        self.result.setStyleSheet("color: #ffaa00; font-weight: bold;")
+        self.result.setStyleSheet("color: #ffb52e; font-weight: bold;")
         worker = _TestPlanWorker(config, self)
         self._worker = worker
         worker.log.connect(self.log_view.append)
@@ -540,21 +540,21 @@ class TestPlanPanel(QWidget):
         self.current_step.setText(self.current_step.text() + "\nCSV: " + str(value.csv_report))
         if value.status == STATUS_PASSED:
             self._set_runtime_text(self.result, "✓ Gesamttest BESTANDEN")
-            self.result.setStyleSheet("color: #44ff44; font-weight: bold;")
+            self.result.setStyleSheet("color: #39d353; font-weight: bold;")
         elif value.status == STATUS_CANCELLED:
             self._set_runtime_text(self.result, "? Gesamttest ABGEBROCHEN – Protokoll wurde gespeichert")
-            self.result.setStyleSheet("color: #ffaa00; font-weight: bold;")
+            self.result.setStyleSheet("color: #ffb52e; font-weight: bold;")
         elif value.status == STATUS_SKIPPED:
             self._set_runtime_text(self.result, "– Gesamttest ÜBERSPRUNGEN – keine Prüfung ausgeführt")
-            self.result.setStyleSheet("color: #ffaa00; font-weight: bold;")
+            self.result.setStyleSheet("color: #ffb52e; font-weight: bold;")
         else:
             self._set_runtime_text(self.result, "✗ Gesamttest FEHLGESCHLAGEN")
-            self.result.setStyleSheet("color: #ff4444; font-weight: bold;")
+            self.result.setStyleSheet("color: #ff6257; font-weight: bold;")
         self.report_bar.set_path(value.html_report)
 
     def _failed(self, message: str) -> None:
         self._set_runtime_text(self.result, "✗ Gesamttest konnte nicht abgeschlossen werden")
-        self.result.setStyleSheet("color: #ff4444; font-weight: bold;")
+        self.result.setStyleSheet("color: #ff6257; font-weight: bold;")
         self._set_raw_text(self.current_step, message)
 
     def _worker_finished(self, worker=None) -> None:
@@ -564,9 +564,9 @@ class TestPlanPanel(QWidget):
     def _populate_results(self, result: TestPlanResult) -> None:
         self.results.setRowCount(len(result.steps))
         colors = {
-            STATUS_PASSED: QColor("#44ff44"),
-            STATUS_FAILED: QColor("#ff4444"),
-            STATUS_CANCELLED: QColor("#ffaa00"),
+            STATUS_PASSED: QColor("#39d353"),
+            STATUS_FAILED: QColor("#ff6257"),
+            STATUS_CANCELLED: QColor("#ffb52e"),
         }
         for row, step in enumerate(result.steps):
             values = [

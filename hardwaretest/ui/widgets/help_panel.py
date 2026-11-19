@@ -57,7 +57,7 @@ nicht-destruktiv – mit Ausnahme von <b>Disk (Destruktiv)</b>.
 
 <h2>Allgemeine Bedienhinweise</h2>
 <ul>
-  <li><b>Sitzungsprotokoll:</b> Hardwaretest schreibt ab dem Start fortlaufend nach
+  <li><b>Sitzungsprotokoll:</b> Nach einem Klick auf „Hardware-Log starten“ im Tab Langzeitmonitoring schreibt Hardwaretest bis zum Beenden der App nach
       <code>~/Downloads/hwtest-protokoll/</code> (Menü Hilfe → „Sitzungsprotokoll öffnen“): jede
       Ausgabezeile der Tests mit Zeitstempel, Start/Ende/Ergebnis, Kernel-Fehler (MCE, EDAC, I/O),
       Monitoring-Ereignisse und alle 5&nbsp;Sekunden eine Zustandszeile (Last, RAM, Takt,
@@ -65,7 +65,7 @@ nicht-destruktiv – mit Ausnahme von <b>Disk (Destruktiv)</b>.
       <code>gputaskman</code> zusätzlich eine GPU-Zeile je Karte) sowie alle 30&nbsp;Sekunden eine
       Zeile <code>SENSOREN</code> mit jeder einzelnen Temperatur und jedem Lüfter. Die Zeilen
       werden sofort auf den Datenträger geschrieben, stündlich beginnt eine neue Datei, 72&nbsp;Stunden
-      bleiben erhalten. Nach einem Absturz oder Einfrieren meldet der nächste Start, wann die
+      bleiben erhalten. Nach einem Absturz oder Einfrieren meldet der nächste manuelle Logstart, wann die
       Sitzung endete und welche Tests liefen. Fehlerberichte enthalten die 10&nbsp;Minuten davor.
       <b>Im Live-System ohne Persistenz liegt das Protokoll im RAM und geht beim Einfrieren
       verloren</b> – für Langzeittests einen USB-Stick mit Persistenz verwenden.</li>
@@ -986,14 +986,14 @@ non-destructive – except <b>Disk (Destructive)</b>.
 
 <h2>General Usage Notes</h2>
 <ul>
-  <li><b>Session log:</b> from startup Hardwaretest continuously writes to
+  <li><b>Session log:</b> click “Start hardware log” in the Long-term monitoring tab to record until the app exits. Files are written to
       <code>~/Downloads/hwtest-protokoll/</code> (Help menu → "Open session log"): every test
       output line with a timestamp, start/end/result, kernel errors (MCE, EDAC, I/O), monitoring
       events and a status line every 5&nbsp;seconds (load, RAM, clock, temperatures, fans, ECC,
       running tests; iLO/BMC fans every 30&nbsp;seconds; with <code>gputaskman</code> installed also
       one GPU line per card) plus a <code>SENSOREN</code> line every 30&nbsp;seconds with every
       single temperature and fan. Lines are written to disk immediately, a
-      new file starts every hour, 72&nbsp;hours are kept. After a crash or freeze the next start
+      new file starts every hour, 72&nbsp;hours are kept. After a crash or freeze the next manual log start
       reports when the session ended and which tests were running. Failure reports include the
       10&nbsp;minutes before. <b>On the live system without persistence the log lives in RAM and
       is lost on a freeze</b> – use a USB stick with persistence for long runs.</li>
@@ -1945,6 +1945,7 @@ file. The sudo password is asked once.</p>
 <p><b>Clear logs …:</b> clears the iLO event log (IPMI SEL, <code>ipmitool sel clear</code>), the Integrated Management Log and the iLO Event Log (IEL, both via <code>ilorest serverlogs --clearlog</code>) after selection and confirmation. This cannot be undone; the current report is saved to ~/Downloads first, the iLO Event Log as JSON.</p>
 <p><b>RAID page:</b> HPE Smart Array controllers (<code>ssacli</code>/<code>hpssacli</code>) and Broadcom MegaRAID “MR” controllers (<code>storcli64</code>/<code>storcli2</code>) are evaluated in a structured way within the same root session: controller status, cache and battery/capacitor, temperatures, logical drives (RAID level, status, rebuild progress, OS device) and physical drives (position, type, size, status, model, serial, firmware, temperature, power-on hours, SSD life, link speed). Rating: red = controller/drive failed, predictive failure, SSD life below 10&nbsp;% or missing/failed battery with cache present; orange = rebuild/recovery, cache disabled, medium errors, temperature ≥ 60&nbsp;°C (drive) or ≥ 85&nbsp;°C (controller), SSD life below 25&nbsp;%. The raw tool output is shown below the tables; <i>Save diagnostic report (ssaducli)</i> writes the full HPE Smart Storage diagnostic ZIP for HPE support. The RAID rating is part of the overview, summary and HTML export. The RAID button in the disk tabs jumps to this page. The test plan takes a snapshot of RAID, IML and sensors before and after the tests and reports the step <i>ProLiant / RAID controller</i>: it fails only on a new RAID error; new IML entries and sensor warnings are listed as warnings.</p>
 <h2>Tab: Long-term monitoring</h2>
+<p><b>Start monitoring</b> records measurements to CSV at the selected interval, plots trends and checks the configured limits. <b>Start hardware log</b> records timestamped test output, kernel errors and system status for troubleshooting. You can start either recording independently. The hardware log runs until the app exits.</p>
 <p><b>Options:</b> sampling interval (default 10 s), duration in hours (0 = until
 stopped), temperature limit (default 100 °C), log folder (default
 "Downloads") and the option "Stop running app
@@ -2037,6 +2038,7 @@ speichert ihn als Datei. Sudo-Passwort wird einmal abgefragt.</p>
 <p><b>Protokolle löschen …:</b> löscht nach Auswahl und Rückfrage das iLO-Ereignisprotokoll (IPMI SEL, <code>ipmitool sel clear</code>), das Integrated Management Log und das iLO Event Log (IEL, beide über <code>ilorest serverlogs --clearlog</code>). Das lässt sich nicht rückgängig machen; vorher wird der aktuelle Bericht in ~/Downloads gespeichert, das iLO Event Log als JSON.</p>
 <p><b>Seite RAID:</b> HPE-Smart-Array-Controller (<code>ssacli</code>/<code>hpssacli</code>) und Broadcom-MegaRAID-„MR“-Controller (<code>storcli64</code>/<code>storcli2</code>) werden in derselben Root-Sitzung strukturiert ausgewertet: Controller-Status, Cache und Akku/Kondensator, Temperaturen, logische Laufwerke (RAID-Level, Status, Rebuild-Fortschritt, OS-Gerät) und physische Laufwerke (Position, Typ, Größe, Status, Modell, Seriennummer, Firmware, Temperatur, Betriebsstunden, SSD-Restlebensdauer, Link-Geschwindigkeit). Bewertung: rot = Controller/Laufwerk ausgefallen, Predictive Failure, SSD-Rest unter 10&nbsp;% oder fehlender/defekter Akku bei vorhandenem Cache; orange = Rebuild/Recovery, Cache deaktiviert, Medium-Fehler, Temperatur ≥ 60&nbsp;°C (Laufwerk) bzw. ≥ 85&nbsp;°C (Controller), SSD-Rest unter 25&nbsp;%. Die Rohausgabe der Werkzeuge steht unter den Tabellen; <i>Diagnosebericht (ssaducli) speichern</i> erzeugt das vollständige HPE-Smart-Storage-Diagnose-ZIP für den HPE-Support. Die RAID-Ampel fließt in Übersicht, Zusammenfassung und HTML-Export ein. Der RAID-Button in den Disk-Tabs springt auf diese Seite. Der Gesamttest nimmt vor und nach den Tests eine Momentaufnahme von RAID, IML und Sensoren und berichtet den Schritt <i>ProLiant / RAID-Controller</i>: Er schlägt nur bei einem neuen RAID-Fehler fehl; neue IML-Einträge und Sensorwarnungen werden als Warnung aufgeführt.</p>
 <h2>Tab: Langzeitmonitoring</h2>
+<p><b>Monitoring starten</b> zeichnet Messwerte im gewählten Intervall als CSV auf, zeigt Verläufe und überwacht die eingestellten Grenzwerte. <b>Hardware-Log starten</b> protokolliert Testausgaben, Kernel-Fehler und den Systemzustand mit Zeitstempeln zur Fehlersuche. Beide Aufzeichnungen lassen sich unabhängig starten. Das Hardware-Log läuft bis zum Beenden der App.</p>
 <p><b>Optionen:</b> Messintervall (Standard 10 s), Dauer in Stunden (0 = bis zum
 Stoppen), Temperaturgrenze (Standard 100 °C), Protokollordner (Standard
 „Downloads“) und die Option „Bei Temperaturgrenze/neuen

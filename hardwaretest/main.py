@@ -5,13 +5,11 @@ from __future__ import annotations
 import os
 import sys
 
-from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from hardwaretest.core import session_log
 from hardwaretest.core.privilege import ensure_askpass_env
-from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.main_window import MainWindow
 
 
@@ -20,27 +18,12 @@ def run() -> int:
     ensure_askpass_env()
     app = QApplication(sys.argv)
     _apply_dark_theme(app)
-    unclean = session_log.start()
     window = MainWindow()
     window.show()
-    if unclean is not None:
-        QTimer.singleShot(800, lambda: _report_unclean_session(window, unclean))
     try:
         return app.exec()
     finally:
         session_log.stop()
-
-
-def _report_unclean_session(window: MainWindow, unclean: session_log.UncleanSession) -> None:
-    tr = language_manager.tr
-    text = tr("Die letzte Sitzung wurde nicht sauber beendet (Absturz, Einfrieren oder Ausschalten).")
-    text += "\n\n" + tr("Letzter Eintrag: {time}", time=unclean.last_time.strftime("%d.%m.%Y %H:%M:%S"))
-    text += "\n" + tr("Laufende Tests: {tests}", tests=unclean.active_tests or tr("keine"))
-    text += "\n" + tr("Protokoll: {path}", path=unclean.file)
-    box = QMessageBox(QMessageBox.Icon.Warning, "Hardwaretest", text, QMessageBox.StandardButton.Ok, window)
-    box.setDetailedText("\n".join(unclean.last_lines))
-    box.setModal(False)
-    box.show()
 
 
 def _apply_dark_theme(app: QApplication) -> None:

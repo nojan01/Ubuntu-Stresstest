@@ -259,3 +259,21 @@ def test_qt_background_sampler_once_for_all_gpus_no_auth_and_stable_id(tmp_path)
     assert any(line.startswith('gpu1[NVIDIA A40]') for line in written)
     assert 'EREIGNIS: gpu3 gedrosselt: thermal' in written
     assert set(sampler._previous)=={'uuid:A','uuid:B'}
+
+
+def test_manual_log_button_starts_only_the_log(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from hardwaretest.core import session_log
+    from hardwaretest.ui.widgets.monitoring_panel import MonitoringPanel
+
+    app = QApplication.instance() or QApplication([])
+    starts = []
+    monkeypatch.setattr(session_log, "active", lambda: bool(starts))
+    monkeypatch.setattr(session_log, "start", lambda: starts.append(True))
+    panel = MonitoringPanel()
+    assert not starts and panel.log_button.isEnabled()
+    panel.log_button.click()
+    panel.log_button.click()
+    assert starts == [True] and not panel.log_button.isEnabled()
+    assert panel._worker is None
+    panel.close()

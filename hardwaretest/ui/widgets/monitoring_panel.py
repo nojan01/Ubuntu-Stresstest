@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from hardwaretest.core import ipmi, privilege
+from hardwaretest.core import ipmi, privilege, session_log
 from hardwaretest.core.monitoring import MonitorSession, collect_metrics
 from hardwaretest.core.root_broker import RootAuthorizationError, RootBroker
 from hardwaretest.core.monitor_history import is_temperature, render_chart
@@ -22,6 +22,18 @@ from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 from hardwaretest.ui.sensor_limits import edit_sensor_limits, load_sensor_limits
+
+
+def _report_unclean_session(window: QWidget, unclean: session_log.UncleanSession) -> None:
+    tr = language_manager.tr
+    text = tr("Die letzte Sitzung wurde nicht sauber beendet (Absturz, Einfrieren oder Ausschalten).")
+    text += "\n\n" + tr("Letzter Eintrag: {time}", time=unclean.last_time.strftime("%d.%m.%Y %H:%M:%S"))
+    text += "\n" + tr("Laufende Tests: {tests}", tests=unclean.active_tests or tr("keine"))
+    text += "\n" + tr("Protokoll: {path}", path=unclean.file)
+    box = QMessageBox(QMessageBox.Icon.Warning, "Hardwaretest", text, QMessageBox.StandardButton.Ok, window)
+    box.setDetailedText("\n".join(unclean.last_lines))
+    box.setModal(False)
+    box.show()
 
 
 class MonitorWorker(QThread):
@@ -156,6 +168,9 @@ class MonitoringPanel(QWidget):
             self.bind(button, de, en)
             buttons.addWidget(button)
         layout.addLayout(buttons)
+        self.log_button = QPushButton()
+        self.log_button.clicked.connect(self.start_hardware_log)
+        layout.addWidget(self.log_button)
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -196,7 +211,24 @@ class MonitoringPanel(QWidget):
     def bind(self, widget, de, en):
         self._labels.append((widget, de, en))
 
+    def start_hardware_log(self):
+        unclean = session_log.start()
+        self.update_log_button()
+        if not session_log.active():
+            QMessageBox.warning(self, "Hardwaretest", self.text(
+                "Das Hardware-Log konnte nicht gestartet werden.",
+                "The hardware log could not be started."))
+        elif unclean is not None:
+            _report_unclean_session(self, unclean)
+
+    def update_log_button(self):
+        active = session_log.active()
+        self.log_button.setEnabled(not active)
+        self.log_button.setText(self.text("Hardware-Log läuft", "Hardware log running") if active
+                                else self.text("Hardware-Log starten", "Start hardware log"))
+
     def retranslate(self, *_):
+        self.update_log_button()
         for widget, de, en in self._labels:
             widget.setText(self.text(de, en))
         self.chart_box.setToolTip(self.text("Diagramme für maximal 256 Messreihen; alle Messwerte in CSV.",

@@ -17,7 +17,7 @@ import uuid
 
 import psutil
 
-from hardwaretest.core import ipmi
+from hardwaretest.core import ipmi, session_log
 from hardwaretest.core.monitor_history import MetricHistory, is_temperature, render_chart, validated_sensor_limits
 
 
@@ -252,6 +252,7 @@ class MonitorSession:
         self._csv.writerow(["timestamp", "metric", "value"])
         self._closed = False
         self.last_sample_time = 0.0
+        session_log.test_started(str(id(self)), "Monitoring", f"CSV {self.csv_path}")
 
     def text(self, de: str, en: str) -> str:
         return en if self.language == "en" else de
@@ -307,6 +308,7 @@ class MonitorSession:
         if getattr(self.journal, "backlog", False):
             self.unavailable.add("kernel journal (backlog)")
         for alert in alerts:
+            session_log.write("Monitoring", "EREIGNIS: " + alert, important=True)
             self.alert_count += 1
             if len(self.alerts) < 100:
                 self.alerts.append(f"{stamp}: {alert}")
@@ -325,6 +327,7 @@ class MonitorSession:
                 "limits": {key: self.sensor_limits.get(key, self.limit) for key in self.history if is_temperature(key)}}
 
     def record_error(self, message: str) -> None:
+        session_log.write("Monitoring", "FEHLER: " + message, important=True)
         self.recording_error = message
         self.critical = True
         self.alert_count += 1
@@ -361,6 +364,8 @@ class MonitorSession:
         if not self._closed:
             self._file.close()
             self._closed = True
+            session_log.test_finished(str(id(self)), "Monitoring",
+                                      f"{self.samples} Messungen, {self.alert_count} Ereignisse")
         text = self.summary()
         txt, html = self.base.with_suffix(".txt"), self.base.with_suffix(".html")
         txt.write_text(text, encoding="utf-8")

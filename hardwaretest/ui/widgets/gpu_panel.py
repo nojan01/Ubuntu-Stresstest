@@ -309,7 +309,7 @@ class GpuPanel(QWidget):
                              if gpu["index"] in indices]
         self.output.clear()
         self._set_text(self.result, "⌛ GPU-Lasttest läuft")
-        self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
         self._set_text(self.status, "GPU-Lasttest läuft {minutes} min auf {count} GPU(s) …",
                        minutes=minutes, count=len(indices))
         self.progress.setRange(0, 1000)
@@ -356,27 +356,27 @@ class GpuPanel(QWidget):
         self._set_running(False)
         if aborted and result is None:
             self._set_text(self.result, "? GPU-Lasttest abgebrochen")
-            self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_text(self.status, "GPU-Lasttest wurde manuell beendet.")
         elif aborted and result.passed:
             self._set_text(self.result,
                            "✓ GPU-Lasttest ABGEBROCHEN – bis zum Abbruch keine Fehler erkannt ({seconds:.0f}s)",
                            seconds=float(result.duration_actual or 0.0))
-            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_text(self.status, "GPU-Lasttest wurde manuell beendet.")
         elif aborted:
             self._set_text(self.result, "✗ GPU-Lasttest ABGEBROCHEN – {count} Fehlermeldung(en) bis zum Abbruch",
                            count=len(result.errors))
-            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_text(self.status, "{count} Fehlermeldung(en). Details stehen im Protokoll.",
                            count=len(result.errors))
         elif result is not None and result.passed:
             self._set_text(self.result, "✓ GPU-Lasttest BESTANDEN")
-            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_text(self.status, "Keine Rechen- oder Speicherfehler gefunden.")
         else:
             self._set_text(self.result, "✗ GPU-Lasttest FEHLGESCHLAGEN")
-            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_text(self.status, "{count} Fehlermeldung(en). Details stehen im Protokoll.",
                            count=len(result.errors) if result is not None else 0)
         self.report_bar.publish(runner_report("gpu-vulkan", language_manager.tr("GPU – Vulkan-Lasttest"), result,

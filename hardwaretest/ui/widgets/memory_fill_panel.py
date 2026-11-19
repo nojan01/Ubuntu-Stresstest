@@ -28,6 +28,7 @@ from hardwaretest.core.system_info import (
 )
 from hardwaretest.core.test_runner import BaseTestRunner, TestParameters
 from hardwaretest.tests.memory_fill import MemoryFillRunner
+from hardwaretest.tests.memory_fill_policy import minimum_reserve_mb
 from hardwaretest.ui.utils import launch_command_in_terminal, build_klog_command, build_mcelog_command
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.system_events import system_events
@@ -124,17 +125,18 @@ class MemoryFillPanel(QWidget):
         self.memory_mb.setSpecialValueText("automatisch")
         self.memory_mb.setValue(0)
         self.memory_mb.setToolTip(
-            "0 = automatisch (nutzt den gesamten verfuegbaren Speicher abzueglich Reserve). "
+            "0 = automatisch (nutzt die sichere Testmenge nach Abzug von Reserve und Prozessbedarf). "
             "Manueller Wert: fester Allokationsbetrag pro Zyklus."
         )
 
         self.reserve_mb = QSpinBox()
-        self.reserve_mb.setRange(128, 4096)
+        self.reserve_mb.setRange(2048, 65536)
         self.reserve_mb.setSuffix(" MB")
-        self.reserve_mb.setValue(512)
+        self.reserve_mb.setValue(2048)
         self.reserve_mb.setToolTip(
-            "Speicher der fuer das Betriebssystem und die GUI frei bleibt. "
-            "Wird nur bei automatischer Speichermenge beruecksichtigt."
+            "Mindestreserve fuer Betriebssystem und GUI. Mindestens 2 GiB bzw. 2 % des RAM "
+            "(automatisches Minimum bis 16 GiB). Puffer und Seitentabellen der Testprozesse "
+            "werden zusaetzlich abgezogen, auch bei manueller Testmenge."
         )
 
         self.chunk_mb = QSpinBox()
@@ -171,7 +173,7 @@ class MemoryFillPanel(QWidget):
 
         # --- Beschreibung ---
         desc = QLabel(
-            "Allokiert den gesamten verfuegbaren RAM, schreibt in jedem Zyklus "
+            "Testet den sicher nutzbaren RAM mit Reserve fuer OS, GUI und Worker; schreibt in jedem Zyklus "
             "wechselnde Bitmuster (0xAA, 0x55, 0xFF, 0x00, Walking-Bits sowie "
             "zyklus-abhaengige Wort- und Zufallsmuster), verifiziert, gibt frei "
             "und wiederholt. Findet defekte Speicherzellen und Timing-Fehler im RAM."
@@ -302,6 +304,9 @@ class MemoryFillPanel(QWidget):
         return True
 
     def _launch_runner(self) -> None:
+        if not getattr(self, "can_start", lambda: True)():
+            self._append_log("RAM-Fuelltest nicht gestartet: Bitte zuerst andere Tests beenden.")
+            return
         if self.runner and self.runner.is_running():
             return
         duration = self._total_duration_seconds()
@@ -401,7 +406,7 @@ class MemoryFillPanel(QWidget):
                 "✓ BESTANDEN – Keine Fehler gefunden ({seconds:.0f}s)", seconds=result.duration_actual
             ))
             self.result_label.setStyleSheet(
-                "color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
+                "color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;"
             )
         else:
             error_summary = "; ".join(result.errors[:3])
@@ -409,7 +414,7 @@ class MemoryFillPanel(QWidget):
                 error_summary += f" … (+{len(result.errors) - 3} weitere)"
             self.result_label.setText(language_manager.tr("✗ FEHLER GEFUNDEN – {error}", error=error_summary))
             self.result_label.setStyleSheet(
-                "color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
+                "color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;"
             )
 
     # --------------------------------------------------------------------- #
@@ -419,6 +424,7 @@ class MemoryFillPanel(QWidget):
     def _refresh_system_info(self, update_memory_value: bool = False) -> None:
         info = self.system_info_provider()
         self._system_info = info
+        self.reserve_mb.setMinimum(minimum_reserve_mb(info.total_memory_bytes // (1024 * 1024)))
         swap_state = "aktiv" if info.swap_enabled else "deaktiviert"
         if info.physical_cpu_cores > 0:
             core_text = (

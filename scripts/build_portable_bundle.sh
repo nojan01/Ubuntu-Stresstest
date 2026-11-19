@@ -40,6 +40,7 @@ mkdir -p "$DIST_ROOT" "$BUILD_ROOT/work" "$BUILD_ROOT/spec"
     --distpath "$DIST_ROOT" \
     --workpath "$BUILD_ROOT/work" \
     --specpath "$BUILD_ROOT/spec" \
+    --add-data "$REPO_DIR/hardwaretest/tests/video_codec_script.py:hardwaretest/tests" \
     --add-data "$REPO_DIR/assets:assets" \
     --add-data "$REPO_DIR/docs:docs" \
     --add-data "$REPO_DIR/profiles:profiles" \

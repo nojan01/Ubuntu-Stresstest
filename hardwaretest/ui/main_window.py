@@ -6,10 +6,11 @@ from typing import Optional
 
 from PySide6.QtCore import QRect, QSettings, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication
-from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox, QTabWidget
+from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox, QScrollArea, QTabWidget
 
 from hardwaretest import __version__
-from hardwaretest.core import ipmi
+from hardwaretest.tests.memory_fill_guard import ram_fill_active
+from hardwaretest.core import ipmi, session_log
 from hardwaretest.core.privilege import publish_parent_geometry
 from hardwaretest.core.update_check import (
     ReleaseInfo,
@@ -34,6 +35,7 @@ from hardwaretest.ui.widgets.help_panel import HelpPanel
 from hardwaretest.ui.widgets.network_panel import NetworkPanel
 from hardwaretest.ui.widgets.nvme_panel import NvmePanel
 from hardwaretest.ui.widgets.gpu_panel import GpuPanel
+from hardwaretest.ui.widgets.video_codec_panel import VideoCodecPanel
 from hardwaretest.ui.widgets.nvidia_panel import NvidiaPanel
 from hardwaretest.ui.widgets.test_plan_panel import TestPlanPanel
 from hardwaretest.ui.widgets.filesystem_panel import FilesystemPanel
@@ -42,6 +44,7 @@ from hardwaretest.ui.widgets.zfs_panel import ZfsPanel
 from hardwaretest.ui.widgets.proliant_panel import ProliantPanel
 from hardwaretest.ui.widgets.system_panel import SystemPanel
 from hardwaretest.ui.i18n import language_manager
+from hardwaretest.ui.report_browser import open_folder
 
 
 class _UpdateWorker(QThread):
@@ -64,8 +67,8 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         # Scroll-Pfeile der Tableiste etwas breiter – bei iLO-Auflösung sonst schwer zu treffen.
         self._tabs.setStyleSheet(
-            "QTabBar QToolButton { min-width: 20px; }"
-            "QTabBar::scroller { width: 44px; }"
+            "QTabBar QToolButton { width: 22px; min-width: 22px; max-width: 22px; padding: 0px; margin: 0px; }"
+            "QTabBar::scroller { width: 52px; }"
         )
         screen = QGuiApplication.primaryScreen()
         available_geom = screen.availableGeometry() if screen else None
@@ -136,9 +139,28 @@ class MainWindow(QMainWindow):
             nvme_panel._stop_io_test, nvidia_panel._stop_diagnostic, gpu_panel.stop_test,
             network_panel._stop, test_plan_panel._stop,
         ]
+        video_panel = VideoCodecPanel(
+            None,
+            lambda: all(getattr(panel, '_runner', None) is None
+                        for panel in (gpu_panel, nvidia_panel, nvidia_panel.video_panel)),
+            vaapi=True,
+        )
+        self._tabs.insertTab(self._tabs.indexOf(gpu_panel) + 1, video_panel, "Video (Intel / AMD)")
+        self._test_panels.append(video_panel)
+        self._stop_callbacks.append(video_panel._stop)
+        self._test_panels.append(nvidia_panel.video_panel)
+        self._stop_callbacks.append(nvidia_panel.video_panel._stop)
         if dcdiag_panel is not None:
             self._test_panels.append(dcdiag_panel)
             self._stop_callbacks.append(dcdiag_panel.stop_test)
+        self._ram_fill_panel = mem_fill_panel
+        self._test_plan_panel = test_plan_panel
+        self._ram_start_lock = False
+        mem_fill_panel.can_start = self._can_check_filesystem
+        self._ram_guard_timer = QTimer(self)
+        self._ram_guard_timer.setInterval(100)
+        self._ram_guard_timer.timeout.connect(self._poll_ram_guard)
+        self._ram_guard_timer.start()
         self._filesystem_active = False
         self._temperature_lock = False
         self.filesystem_panel.can_start = self._can_check_filesystem
@@ -157,7 +179,12 @@ class MainWindow(QMainWindow):
         help_panel = HelpPanel()
         self._tabs.addTab(help_panel, "Hilfe / Help")
 
-        self.setCentralWidget(self._tabs)
+        # Keep the existing tab identities; the viewport absorbs large panel
+        # minimum sizes instead of forcing the top-level window off screen.
+        self._content_scroll = QScrollArea()
+        self._content_scroll.setWidgetResizable(True)
+        self._content_scroll.setWidget(self._tabs)
+        self.setCentralWidget(self._content_scroll)
         self._add_menus()
         language_manager.language_changed.connect(self._retranslate)
         self._retranslate()
@@ -195,12 +222,31 @@ class MainWindow(QMainWindow):
         self.zfs_panel.setEnabled(not self.filesystem_panel.is_busy())
         self._update_test_lock()
 
+    def _poll_ram_guard(self) -> None:
+        active = ram_fill_active()
+        if active != self._ram_start_lock:
+            self._ram_start_lock = active
+            self._update_test_lock()
+
     def _update_test_lock(self) -> None:
+        ram_lock = getattr(self, "_ram_start_lock", False)
         for panel in self._test_panels:
-            panel.setEnabled(not (self._filesystem_active or self._temperature_lock))
+            # Keep the active RAM panel / automatic plan usable for Stop and logs.
+            plan = getattr(self, "_test_plan_panel", None)
+            plan_running = panel is plan and getattr(plan, "_worker", None) is not None
+            allow_ram = panel is getattr(self, "_ram_fill_panel", None) or plan_running
+            panel.setEnabled(not (self._filesystem_active or self._temperature_lock
+                                  or (ram_lock and not allow_ram)))
+        if hasattr(self, "system_panel"):
+            self.system_panel.setEnabled(not ram_lock)
+        if hasattr(self, "filesystem_panel"):
+            self.filesystem_panel.setEnabled(not ram_lock and not self.zfs_panel.is_busy())
+            self.zfs_panel.setEnabled(not ram_lock and not self.filesystem_panel.is_busy())
 
     def _safety_stop(self) -> None:
         self._temperature_lock = True
+        session_log.write("Sicherheit", "Sicherheitsstopp durch das Monitoring: laufende Tests werden beendet.",
+                          important=True)
         self._update_test_lock()
         for callback in self._stop_callbacks:
             callback()
@@ -330,6 +376,9 @@ class MainWindow(QMainWindow):
         self._about_action = QAction("Über Hardwaretest / About", self)
         self._about_action.triggered.connect(self._show_about)
         self._help_menu.addAction(self._about_action)
+        self._log_folder_action = QAction("Sitzungsprotokoll öffnen (Ordner)", self)
+        self._log_folder_action.triggered.connect(lambda: open_folder(session_log.directory(), self))
+        self._help_menu.addAction(self._log_folder_action)
         self._update_action = QAction("Nach Updates suchen", self)
         self._update_action.triggered.connect(lambda: self._check_for_updates(manual=True))
         if not update_check_disabled():
@@ -430,16 +479,18 @@ class MainWindow(QMainWindow):
         return available_geom.width() <= 1280 or available_geom.height() <= 800
 
     def _apply_initial_geometry(self, compact_mode: bool, available_geom: Optional[QRect]) -> None:
-        default_width = 900 if not compact_mode else 820
-        default_height = 750 if not compact_mode else 680
-        min_width = 800 if not compact_mode else 760
-        min_height = 680 if not compact_mode else 620
+        default_width, default_height = (820, 680) if compact_mode else (900, 750)
+        min_width, min_height = 480, 320
         if available_geom is not None:
-            margin = 80
-            width = min(default_width, max(min_width, available_geom.width() - margin))
-            height = min(default_height, max(min_height, available_geom.height() - margin))
+            # Leave room for window decorations and desktop panels at 800x600.
+            width = min(default_width, max(1, available_geom.width() - 24))
+            height = min(default_height, max(1, available_geom.height() - 48))
+            min_width = min(min_width, width)
+            min_height = min(min_height, height)
         else:
-            width = default_width
-            height = default_height
+            width, height = default_width, default_height
         self.setMinimumSize(min_width, min_height)
         self.resize(width, height)
+        if available_geom is not None:
+            self.move(available_geom.x() + max(0, (available_geom.width() - width) // 2),
+                      available_geom.y() + 12)

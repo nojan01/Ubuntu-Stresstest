@@ -284,12 +284,12 @@ def test_clear_logs_backs_up_iel_first_and_skips_clearing_when_backup_fails(tmp_
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from hardwaretest.ui.widgets import proliant_panel
     target = tmp_path / "iel.json"
-    monkeypatch.setattr(proliant_panel.hwreport, "report_path", lambda *a, **k: target)
+    monkeypatch.setattr(proliant_panel.hwreport, "report_path", lambda name, **k: target if name.endswith("iel") else tmp_path / name)
     run = _LogRun()
     results = proliant_panel.clear_logs(run, ["SEL", "IEL"])
     assert [(log, ok) for log, ok, _m in results] == [("SEL", True), ("IEL", True)]
     assert target.read_text() == '{"Members": []}' and str(target) in results[1][2]
-    assert run.calls == ["ipmitool sel clear", "ilorest --nologo serverlogs --selectlog=IEL --json",
+    assert run.calls == ["ipmitool sel elist", "ipmitool sel clear", "ilorest --nologo serverlogs --selectlog=IEL --json",
                          "ilorest --nologo serverlogs --selectlog=IEL --clearlog"]
     failing = _LogRun(fail=["--json"])
     results = proliant_panel.clear_logs(failing, ["IEL"])
@@ -324,7 +324,7 @@ def test_proliant_panel_clears_logs_saves_report_first_and_rereads(tmp_path, mon
     panel = proliant_panel.ProliantPanel()
     run, order = _LogRun(fail=["IML"]), []
     monkeypatch.setattr(panel, "root_runner", lambda: run)
-    monkeypatch.setattr(panel, "export", lambda: order.append("export"))
+    monkeypatch.setattr(proliant_panel.hwreport, "report_path", lambda name, **kw: tmp_path / name)
     monkeypatch.setattr(panel, "start", lambda: order.append("reread"))
     panel._start_clear(["SEL", "IML"])
     assert not panel.clear_btn.isEnabled()
@@ -332,8 +332,17 @@ def test_proliant_panel_clears_logs_saves_report_first_and_rereads(tmp_path, mon
     while panel._clear_worker is not None and time.time() < deadline:
         app.processEvents()
         time.sleep(0.01)
-    assert order == ["export", "reread"]                      # Bericht vor dem Löschen, danach neu auslesen
-    assert run.calls[0] == "ipmitool sel clear"
+    assert order == ["reread"]
+    assert run.calls[:2] == ["ipmitool sel elist", "ipmitool sel clear"]
     text = panel.clear_status.text()
     assert "SEL: gelöscht" in text and "IML: FEHLER" in text and "Chif driver not found" in text
     assert panel.clear_btn.isEnabled()
+
+
+@pytest.mark.parametrize("log", ["SEL", "IML", "IEL"])
+def test_failed_backup_write_blocks_clear(log, tmp_path, monkeypatch):
+    from hardwaretest.ui.widgets import proliant_panel
+    monkeypatch.setattr(proliant_panel.hwreport, "report_path", lambda *a, **kw: tmp_path / "missing" / log)
+    run = _LogRun()
+    assert not proliant_panel.clear_logs(run, [log])[0][1]
+    assert len(run.calls) == 1

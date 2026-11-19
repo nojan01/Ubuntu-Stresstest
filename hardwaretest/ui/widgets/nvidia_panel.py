@@ -42,6 +42,7 @@ from hardwaretest.tests.nvidia_runner import (
 )
 from hardwaretest.ui.i18n import language_manager
 from hardwaretest.ui.report_browser import open_html_report
+from hardwaretest.ui.widgets.video_codec_panel import VideoCodecPanel
 from hardwaretest.ui.widgets.report_bar import ReportBar
 from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_worker
 
@@ -255,6 +256,10 @@ class NvidiaPanel(QWidget):
         layout.addWidget(self.inventory)
         layout.addWidget(monitor_group)
         layout.addWidget(stress_group)
+        self.video_panel = VideoCodecPanel(
+            lambda: [g for g in self._gpus if g.index in self._selected_indices()],
+            lambda: self._runner is None or not self._runner.is_running(), self)
+        layout.addWidget(self.video_panel)
         layout.addWidget(diag_group)
         layout.addWidget(result_group, 1)
         self.output.setMinimumHeight(160)
@@ -335,7 +340,7 @@ class NvidiaPanel(QWidget):
             self._set_runtime_text(
                 self.driver_result, "Linux-Basisprüfung: Keine NVIDIA-PCIe-GPU erkannt."
             )
-            self.driver_result.setStyleSheet("color: #ffaa00; font-weight: bold;")
+            self.driver_result.setStyleSheet("color: #ffb52e; font-weight: bold;")
             self._set_runtime_text(
                 self.inventory_status, "Nur die Linux-Basisprüfung ist verfügbar."
             )
@@ -343,7 +348,7 @@ class NvidiaPanel(QWidget):
             self._set_runtime_text(
                 self.driver_result, "✓ NVIDIA-Treiberinstallation BESTANDEN"
             )
-            self.driver_result.setStyleSheet("color: #44ff44; font-weight: bold;")
+            self.driver_result.setStyleSheet("color: #39d353; font-weight: bold;")
             self._set_runtime_text(
                 self.inventory_status, "NVIDIA-Treiber und nvidia-smi funktionieren."
             )
@@ -351,7 +356,7 @@ class NvidiaPanel(QWidget):
             self._set_runtime_text(
                 self.driver_result, "✗ NVIDIA-Treiber fehlt oder funktioniert nicht korrekt"
             )
-            self.driver_result.setStyleSheet("color: #ff4444; font-weight: bold;")
+            self.driver_result.setStyleSheet("color: #ff6257; font-weight: bold;")
             self._set_runtime_text(
                 self.inventory_status,
                 "Aktive NVIDIA-Tests sind deaktiviert. Die Linux-Basisprüfung zeigt die Ursache.",
@@ -397,6 +402,9 @@ class NvidiaPanel(QWidget):
             self.scan_btn.setEnabled(True)
 
     def _start_diagnostic(self) -> None:
+        if self.video_panel._runner is not None:
+            QMessageBox.warning(self, "Videotest aktiv", "Bitte den laufenden Videotest zuerst beenden.")
+            return
         indices = [index for index, checkbox in self._gpu_checks.items() if checkbox.isChecked()]
         if not indices:
             QMessageBox.warning(
@@ -453,7 +461,7 @@ class NvidiaPanel(QWidget):
         self._collect_specs(indices, self._store_diag_specs)
         self.output.clear()
         self._set_runtime_text(self.result, "⌛ DCGM-Diagnose läuft")
-        self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
         self._set_runtime_text(
             self.diag_status,
             "DCGM-Stufe {level} läuft auf {count} GPU(s) …",
@@ -467,6 +475,9 @@ class NvidiaPanel(QWidget):
         self._timer.start()
 
     def _start_stress(self) -> None:
+        if self.video_panel._runner is not None:
+            QMessageBox.warning(self, "Videotest aktiv", "Bitte den laufenden Videotest zuerst beenden.")
+            return
         indices = self._selected_indices()
         if not indices:
             QMessageBox.warning(
@@ -501,7 +512,7 @@ class NvidiaPanel(QWidget):
         self._runner = runner
         self.output.clear()
         self._set_runtime_text(self.result, "⌛ GPU-Lasttest läuft")
-        self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+        self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
         self._set_runtime_text(
             self.diag_status,
             "GPU-Lasttest läuft {minutes} min auf {count} GPU(s) …",
@@ -629,7 +640,7 @@ class NvidiaPanel(QWidget):
                 "✗ DCGM-Diagnose ABGEBROCHEN – {failed} fehlgeschlagene Prüfung(en) bis zum Abbruch",
                 failed=counts["fail"],
             )
-            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(
                 self.diag_status,
                 fail_key,
@@ -641,7 +652,7 @@ class NvidiaPanel(QWidget):
                 "✓ DCGM-Diagnose ABGEBROCHEN – {passed} Prüfung(en) bis zum Abbruch bestanden",
                 passed=counts["pass"],
             )
-            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(
                 self.diag_status,
                 "Ergebnisse: {passed} bestanden, {warned} Warnungen, {skipped} übersprungen.",
@@ -649,15 +660,15 @@ class NvidiaPanel(QWidget):
             )
         elif aborted:
             self._set_runtime_text(self.result, "? DCGM-Diagnose abgebrochen")
-            self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.diag_status, "DCGM-Diagnose wurde manuell beendet – kein auswertbares Teilergebnis.")
         elif evaluation_error is not None:
             self._set_runtime_text(self.result, "✗ DCGM-Diagnose FEHLGESCHLAGEN")
-            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.diag_status, "DCGM-Ergebnis nicht auswertbar: {reason}", reason=evaluation_error)
         elif result is not None and result.passed and counts["fail"] == 0:
             self._set_runtime_text(self.result, "✓ DCGM-Diagnose BESTANDEN")
-            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(
                 self.diag_status,
                 "Ergebnisse: {passed} bestanden, {warned} Warnungen, {skipped} übersprungen.",
@@ -665,7 +676,7 @@ class NvidiaPanel(QWidget):
             )
         else:
             self._set_runtime_text(self.result, "✗ DCGM-Diagnose FEHLGESCHLAGEN")
-            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(
                 self.diag_status,
                 fail_key,
@@ -710,7 +721,7 @@ class NvidiaPanel(QWidget):
         if specs is None:
             specs = nvidia_report.collect_gpu_specs(meta.get("indices"), errors=spec_errors)
         verdict = self.result.text()
-        color = {"#44ff44": "#2e7d32", "#ff4444": "#c62828", "#ffaa00": "#e65100"}
+        color = {"#39d353": "#2e7d32", "#ff6257": "#c62828", "#ffb52e": "#e65100"}
         verdict_color = next((v for k, v in color.items() if k in self.result.styleSheet()), "#000")
         details = [self.diag_status.text()]
         if evaluation_error:
@@ -794,7 +805,7 @@ class NvidiaPanel(QWidget):
         self._set_running(False)
         if aborted and result is None:
             self._set_runtime_text(self.result, "? GPU-Lasttest abgebrochen")
-            self.result.setStyleSheet("color: #ffaa00; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.diag_status, "GPU-Lasttest wurde manuell beendet.")
         elif aborted and result.passed:
             self._set_runtime_text(
@@ -802,7 +813,7 @@ class NvidiaPanel(QWidget):
                 "✓ GPU-Lasttest ABGEBROCHEN – bis zum Abbruch keine Fehler erkannt ({seconds:.0f}s)",
                 seconds=float(result.duration_actual or 0.0),
             )
-            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.diag_status, "GPU-Lasttest wurde manuell beendet.")
         elif aborted:
             self._set_runtime_text(
@@ -810,7 +821,7 @@ class NvidiaPanel(QWidget):
                 "✗ GPU-Lasttest ABGEBROCHEN – {count} Fehlermeldung(en) bis zum Abbruch",
                 count=len(result.errors),
             )
-            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(
                 self.diag_status,
                 "{count} Fehlermeldung(en). Details stehen im Protokoll.",
@@ -818,11 +829,11 @@ class NvidiaPanel(QWidget):
             )
         elif result is not None and result.passed:
             self._set_runtime_text(self.result, "✓ GPU-Lasttest BESTANDEN")
-            self.result.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
             self._set_runtime_text(self.diag_status, "Keine Rechen- oder Speicherfehler gefunden.")
         else:
             self._set_runtime_text(self.result, "✗ GPU-Lasttest FEHLGESCHLAGEN")
-            self.result.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
             errors = len(result.errors) if result is not None else 0
             self._set_runtime_text(
                 self.diag_status,

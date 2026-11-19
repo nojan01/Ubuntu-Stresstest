@@ -89,7 +89,7 @@ def test_vulkan_abort_without_errors_is_green(monkeypatch, keep):
     panel._runner = _Runner(_result(True, seconds=31.2))
     panel._finish(aborted=True)
     assert "ABGEBROCHEN" in panel.result.text() and "keine Fehler" in panel.result.text() and "31s" in panel.result.text()
-    assert "#44ff44" in panel.result.styleSheet()
+    assert "#39d353" in panel.result.styleSheet()
 
 
 def test_vulkan_abort_with_errors_is_red(monkeypatch, keep):
@@ -99,7 +99,7 @@ def test_vulkan_abort_with_errors_is_red(monkeypatch, keep):
     panel._runner = _Runner(_result(False, ["GPU 0: FEHLER: 3 Speicherfehler"]))
     panel._finish(aborted=True)
     assert "1 Fehlermeldung" in panel.result.text()
-    assert "#ff4444" in panel.result.styleSheet()
+    assert "#ff6257" in panel.result.styleSheet()
 
 
 def test_cuda_abort_is_evaluated(monkeypatch, keep):
@@ -120,10 +120,10 @@ def test_dcgm_abort_uses_partial_counts(monkeypatch, keep):
     keep(panel)
     panel._runner = _FakeDcgm(_result(True), {"pass": 4, "fail": 0, "warn": 1, "skip": 0})
     panel._finish_diagnostic(aborted=True)
-    assert "4 Prüfung(en)" in panel.result.text() and "#44ff44" in panel.result.styleSheet()
+    assert "4 Prüfung(en)" in panel.result.text() and "#39d353" in panel.result.styleSheet()
     panel._runner = _FakeDcgm(_result(True), {"pass": 2, "fail": 1, "warn": 0, "skip": 0})
     panel._finish_diagnostic(aborted=True)
-    assert "1 fehlgeschlagene" in panel.result.text() and "#ff4444" in panel.result.styleSheet()
+    assert "1 fehlgeschlagene" in panel.result.text() and "#ff6257" in panel.result.styleSheet()
     panel._runner = _FakeDcgm(_result(True), {"pass": 0, "fail": 0, "warn": 0, "skip": 0})
     panel._finish_diagnostic(aborted=True)
     assert panel.result.text().startswith("?") and "kein auswertbares Teilergebnis" in panel.diag_status.text()

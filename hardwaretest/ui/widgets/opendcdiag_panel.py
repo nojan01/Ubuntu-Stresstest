@@ -235,10 +235,10 @@ class OpenDcDiagPanel(QWidget):
             return
         if result.passed:
             self.result_label.setText(language_manager.tr("✓ BESTANDEN ({seconds:.0f}s)", seconds=result.duration_actual))
-            self.result_label.setStyleSheet("color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result_label.setStyleSheet("color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;")
         else:
             self.result_label.setText(language_manager.tr("✗ FEHLER – {error}", error="; ".join(result.errors[:3])))
-            self.result_label.setStyleSheet("color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;")
+            self.result_label.setStyleSheet("color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;")
 
     def _launch_btop(self) -> None:
         if not launch_command_in_terminal(["btop"], geometry=(110, 44)):

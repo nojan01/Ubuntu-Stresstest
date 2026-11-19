@@ -274,7 +274,7 @@ def test_ram_fill_step_disables_swap_and_restores_it_at_the_end(tmp_path, monkey
     result = plan.execute()
     assert result.status == "passed"
     assert calls == [["swapoff", "-a"], ["swapon", "/dev/sda2"]]
-    assert captured["runner"].reserve_mb == 512
+    assert captured["runner"].reserve_mb == 2048
     assert captured["runner"].params.duration_seconds == 30
     assert result.steps[0].name.startswith("RAM-Fülltest")
     assert "Swap: aus" in result.steps[0].summary

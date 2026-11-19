@@ -29,3 +29,9 @@ def _no_real_rasdaemon(monkeypatch):
     """Runner-Tests dürfen nicht die rasdaemon-Datenbank des Rechners lesen."""
     from hardwaretest.core import ras
     monkeypatch.setattr(ras, "rasdaemon_installed", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_ram_gate(tmp_path, monkeypatch):
+    from hardwaretest.tests import memory_fill_guard
+    monkeypatch.setattr(memory_fill_guard, "lock_path", lambda: tmp_path / "ram-test.lock")

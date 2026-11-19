@@ -462,7 +462,7 @@ class NetworkPanel(QWidget):
         summary = self._last_summary
         if self._last_aborted:
             self._set_runtime_text(self.result, "? ABGEBROCHEN – Netzwerktest manuell beendet")
-            self.result.setStyleSheet(self._result_style("#ffaa00"))
+            self.result.setStyleSheet(self._result_style("#ffb52e"))
             return
         if result is None:
             return
@@ -486,11 +486,11 @@ class NetworkPanel(QWidget):
                 }.get(code)
                 if source:
                     self._set_runtime_text(self.result, source)
-                    self.result.setStyleSheet(self._result_style("#ff4444"))
+                    self.result.setStyleSheet(self._result_style("#ff6257"))
                     return
             details = "; ".join(result.errors[:2]) or language_manager.tr("Unbekannter Fehler")
             self._set_runtime_text(self.result, "✗ FEHLER – {details}", details=details)
-            self.result.setStyleSheet(self._result_style("#ff4444"))
+            self.result.setStyleSheet(self._result_style("#ff6257"))
             return
 
         failures = threshold_failures(
@@ -503,7 +503,7 @@ class NetworkPanel(QWidget):
         if failures:
             details = "; ".join(self._format_threshold_failure(*failure) for failure in failures)
             self._set_runtime_text(self.result, "✗ GRENZWERT ÜBERSCHRITTEN – {details}", details=details)
-            self.result.setStyleSheet(self._result_style("#ff4444"))
+            self.result.setStyleSheet(self._result_style("#ff6257"))
             return
 
         if summary and "throughput_mbit_s" in summary:
@@ -534,7 +534,7 @@ class NetworkPanel(QWidget):
             )
         else:
             self._set_runtime_text(self.result, "✓ BESTANDEN – Netzwerktest ohne Fehler abgeschlossen")
-        self.result.setStyleSheet(self._result_style("#44ff44"))
+        self.result.setStyleSheet(self._result_style("#39d353"))
 
     @staticmethod
     def _format_threshold_failure(code: str, actual: float, limit: float) -> str:
@@ -569,7 +569,7 @@ class NetworkPanel(QWidget):
         note = language_manager.tr("Fehlerzähler gewachsen: {counters}", counters=self._counters_text())
         self.result.setText(self.result.text() + "\n⚠ " + note)
         if self._last_result is not None and self._last_result.passed:
-            self.result.setStyleSheet(self._result_style("#ffaa00"))
+            self.result.setStyleSheet(self._result_style("#ffb52e"))
 
     def _selected_adapter(self) -> Optional[NetworkAdapter]:
         return self._adapters.get(str(self.adapter_box.currentData() or ""))
@@ -683,7 +683,7 @@ class NetworkPanel(QWidget):
         rows = [(test, tr("bestanden") if code == 0 else tr("Code {code}", code=code)) for test, code in result.entries]
         hints: list[str] = []
         if result.passed is None:
-            self._show_ethtool("? Selbsttest auf {interface} ohne Ergebnis – {details}", "#ffaa00", interface=name,
+            self._show_ethtool("? Selbsttest auf {interface} ohne Ergebnis – {details}", "#ffb52e", interface=name,
                                details=result.error or language_manager.tr("Treiber unterstützt keinen Selbsttest"))
             status = STATUS_WARNING
         else:
@@ -698,7 +698,7 @@ class NetworkPanel(QWidget):
                     "({details}). Der Test konnte nicht ausgeführt werden – bei bnxt_en z. B. Offline-Test auf "
                     "NPAR-/geteilter PF oder mit aktiven VFs, oder Schnittstelle nicht aktiv (Grund in dmesg). "
                     "Kein Hinweis auf einen Hardwarefehler; ggf. Online-Test versuchen.",
-                    "#ffaa00", interface=name, details=details)
+                    "#ffb52e", interface=name, details=details)
                 status = STATUS_WARNING
                 hints.append(tr("Treiber meldet FAIL ohne fehlgeschlagenen Einzeltest – Test konnte nicht laufen "
                                 "(kein Hardwarefehler nachgewiesen); Grund in dmesg prüfen."))
@@ -737,7 +737,7 @@ class NetworkPanel(QWidget):
         alarms = values.pop("Alarms", "")
         text = " | ".join(f"{key}: {val}" for key, val in values.items())
         if alarms:
-            self._show_ethtool("⚠ SFP {interface}: {details} | Alarme: {alarms}", "#ffaa00", interface=name, details=text, alarms=alarms)
+            self._show_ethtool("⚠ SFP {interface}: {details} | Alarme: {alarms}", "#ffb52e", interface=name, details=text, alarms=alarms)
             status = STATUS_WARNING
         else:
             self._show_ethtool("SFP {interface}: {details}", "#bbbbbb", interface=name, details=text)
@@ -782,7 +782,7 @@ class NetworkPanel(QWidget):
             self._show_ethtool("✗ mstlink {interface}: kein Link – {details}", "#ff5555", interface=name, details=details)
             status = STATUS_FAILED
         elif result.severity == "warn":
-            self._show_ethtool("⚠ mstlink {interface}: {details} | Auffällig: {warnings}", "#ffaa00", interface=name,
+            self._show_ethtool("⚠ mstlink {interface}: {details} | Auffällig: {warnings}", "#ffb52e", interface=name,
                                details=details, warnings="; ".join(result.warnings))
             status = STATUS_WARNING
         else:
@@ -828,7 +828,7 @@ class NetworkPanel(QWidget):
                                interface=name, details=details, warnings="; ".join(result.warnings))
             status = STATUS_FAILED
         elif result.severity == "warn":
-            self._show_ethtool("⚠ {tool} {interface}: {details} | Auffällig: {warnings}", "#ffaa00", tool=result.tool,
+            self._show_ethtool("⚠ {tool} {interface}: {details} | Auffällig: {warnings}", "#ffb52e", tool=result.tool,
                                interface=name, details=details, warnings="; ".join(result.warnings))
             status = STATUS_WARNING
         else:

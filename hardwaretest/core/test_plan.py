@@ -19,7 +19,7 @@ import uuid
 from typing import Callable, Optional
 
 from hardwaretest import __version__
-from hardwaretest.core import device_inventory, hardware_inventory, ipmi, privilege, proliant_check, zfs
+from hardwaretest.core import device_inventory, hardware_inventory, ipmi, privilege, proliant_check, session_log, zfs
 from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
 from hardwaretest.core.monitor_history import validated_sensor_limits
 from hardwaretest.core.nvidia import inspect_linux_nvidia, list_nvidia_gpus
@@ -68,7 +68,7 @@ class TestPlanConfig:
     # abzüglich Reserve; Swap wird dafür vorher deaktiviert und danach wieder aktiviert.
     ram_fill_enabled: bool = False
     ram_fill_seconds: int = 300
-    ram_fill_reserve_mb: int = 512
+    ram_fill_reserve_mb: int = 2048
     nvme_enabled: bool = True
     nvme_read_enabled: bool = False
     nvme_devices: tuple[NvmeDevice, ...] = ()
@@ -182,7 +182,8 @@ class TestPlanExecutor:
         step_progress_fn: Optional[Callable[[int], None]] = None,
     ) -> None:
         self.config = config
-        self._log = log_fn or (lambda _message: None)
+        self._user_log = log_fn or (lambda _message: None)
+        self._log = self._log_line
         self._progress = progress_fn or (lambda _done, _total, _name: None)
         self._step_progress = step_progress_fn or (lambda _percent: None)
         self._zfs_poll_seconds = 5.0
@@ -227,10 +228,19 @@ class TestPlanExecutor:
             steps.append("vulkan")
         return steps
 
+    def _log_line(self, message: str) -> None:
+        session_log.write("Gesamttest", message)
+        self._user_log(message)
+
     def execute(self) -> TestPlanResult:
+        session_log.test_started(str(id(self)), "Gesamttest", ", ".join(self.selected_step_keys()))
+        status = "abgebrochen (Ausnahme)"
         try:
-            return self._execute()
+            result = self._execute()
+            status = result.status
+            return result
         finally:
+            session_log.test_finished(str(id(self)), "Gesamttest", status)
             if self._active_runner is not None:
                 if self._active_runner.is_running():
                     self._active_runner.stop(aborted=True)
@@ -342,6 +352,8 @@ class TestPlanExecutor:
                     stream.flush()
                     aggregate = aggregates.setdefault(key, _StepAggregate())
                     aggregate.add(result)
+                    session_log.write("Gesamttest", f"Schritt {key} (Durchlauf {round_index + 1}): "
+                                      f"{result.status} – {result.summary}", important=True)
                     self._log(f"{name}: {_status_label(result.status, self.config.language)}")
                     if result.status == STATUS_CANCELLED or self._safety_triggered() or (
                             result.status == STATUS_FAILED and self.config.stop_on_error):

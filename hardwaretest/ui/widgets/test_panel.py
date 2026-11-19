@@ -397,7 +397,7 @@ class TestPanel(QWidget):
                 "✓ BESTANDEN – Keine Fehler gefunden ({seconds:.0f}s)", seconds=result.duration_actual
             ))
             self.result_label.setStyleSheet(
-                "color: #44ff44; font-size: 14px; font-weight: bold; padding: 4px;"
+                "color: #39d353; font-size: 14px; font-weight: bold; padding: 4px;"
             )
         else:
             error_summary = "; ".join(result.errors[:3])
@@ -405,7 +405,7 @@ class TestPanel(QWidget):
                 error_summary += f" ... (+{len(result.errors) - 3} weitere)"
             self.result_label.setText(language_manager.tr("✗ FEHLER GEFUNDEN – {error}", error=error_summary))
             self.result_label.setStyleSheet(
-                "color: #ff4444; font-size: 14px; font-weight: bold; padding: 4px;"
+                "color: #ff6257; font-size: 14px; font-weight: bold; padding: 4px;"
             )
 
     def _write_report(self, cancelled: bool = False) -> None:

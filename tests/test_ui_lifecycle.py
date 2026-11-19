@@ -568,3 +568,144 @@ def test_main_window_adds_proliant_tab_only_on_hpe_servers():
 
     source = inspect.getsource(mw.MainWindow.__init__)
     assert 'if ipmi.is_proliant():\n            self._tabs.addTab(self.proliant_panel, "ProLiant Info")' in source
+
+
+@pytest.mark.parametrize("available", [(800, 560), (1024, 728), (1920, 1040)])
+def test_small_display_keeps_controls_reachable(keep, monkeypatch, available):
+    from PySide6.QtCore import QRect
+    from hardwaretest.main import _apply_dark_theme
+    _apply_dark_theme(_APP)
+    monkeypatch.setattr(mw, "update_check_disabled", lambda: True)
+    window = mw.MainWindow()
+    keep(window)
+    window._apply_initial_geometry(True, QRect(0, 0, *available))
+    window._tabs.setCurrentWidget(window._ram_fill_panel)
+    window.show()
+    _APP.processEvents()
+    assert window.width() <= available[0]
+    assert window.height() <= available[1] - 24
+    assert window.minimumHeight() <= 320
+    target = window._ram_fill_panel.start_btn
+    window._content_scroll.ensureWidgetVisible(target)
+    _APP.processEvents()
+    point = target.mapTo(window._content_scroll.viewport(), target.rect().center())
+    assert window._content_scroll.viewport().rect().contains(point)
+    window.resize(640, 400)
+    _APP.processEvents()
+    assert window.width() == 640 and window.height() == 400
+    window.close()
+
+
+def test_ilo_dialog_failure_then_retry_clears_password_and_stays_responsive(monkeypatch, keep):
+    from hardwaretest.ui import ilo_login
+    from hardwaretest.core.ilo_session import IloError
+    made = []
+    class Session:
+        def __init__(self, address, verify=True):
+            self.connected=False
+            self.address=address
+            made.append(self)
+        def login(self, username, password):
+            if password == 'wrong': raise IloError('HTTP 401')
+            self.connected=True
+        def close(self): self.connected=False
+    dialog=ilo_login.IloLoginDialog(session_factory=lambda:Session(''))
+    keep(dialog)
+    assert not hasattr(dialog,'address') and not hasattr(dialog,'verify')
+    assert dialog.password.echoMode() == dialog.password.EchoMode.Password
+    dialog.username.setText('reader')
+    dialog.password.setText('wrong')
+    dialog._login()
+    worker=dialog._worker
+    assert dialog.password.text() == ''
+    _pump(lambda:dialog._worker is None)
+    assert '401' in dialog.status.text() and dialog.buttons.isEnabled()
+    assert worker.username == worker.password == ''
+    dialog.password.setText('correct')
+    dialog._login()
+    _pump(lambda:dialog._worker is None)
+    assert dialog.result() == dialog.DialogCode.Accepted
+    assert dialog.session.connected and dialog.password.text() == ''
+    dialog.session.close()
+
+
+def test_ilo_panel_logout_and_shutdown_forget_session(monkeypatch, keep):
+    from hardwaretest.ui.widgets import proliant_panel
+    monkeypatch.setattr(proliant_panel.ipmi,'is_proliant',lambda:False)
+    panel=proliant_panel.ProliantPanel()
+    keep(panel)
+    class Session:
+        connected=True
+        available_logs=['IML','IEL']
+        closed=False
+        def close(self): self.connected=False; self.closed=True
+    session=Session()
+    panel._ilo_session=session
+    panel._update_ilo_controls()
+    assert panel.ilo_logout_btn.isEnabled() and not panel.ilo_login_btn.isEnabled()
+    panel.ilo_logout()
+    _pump(lambda:panel._ilo_logout_worker is None)
+    assert session.closed and panel._ilo_session is None and panel.ilo_login_btn.isEnabled()
+    other=Session()
+    panel._ilo_session=other
+    panel.close_privileged_session()
+    assert other.closed and panel._ilo_session is None
+
+
+def test_detected_gen12_requests_local_login_once_and_skips_gen11(monkeypatch,keep):
+    from hardwaretest.ui.widgets import proliant_panel
+    monkeypatch.setattr(proliant_panel.ipmi,'is_proliant',lambda:False)
+    monkeypatch.setattr(proliant_panel.ipmi,'ipmi_available',lambda:False)
+    panel=proliant_panel.ProliantPanel();keep(panel)
+    panel._proliant=True
+    calls=[]
+    monkeypatch.setattr(panel,'ilo_login',lambda:calls.append('login'))
+    monkeypatch.setattr(proliant_panel.ipmi,'system_identity',lambda:{'product':'Synergy 480 Gen12'})
+    panel._prompt_ilo7();panel._prompt_ilo7()
+    assert calls==['login']
+    panel._ilo_prompted=False
+    monkeypatch.setattr(proliant_panel.ipmi,'system_identity',lambda:{'product':'ProLiant DL380 Gen11'})
+    panel._prompt_ilo7()
+    assert calls==['login']
+
+
+def test_cancelled_ilo7_login_is_not_automatically_repeated(monkeypatch,keep):
+    from hardwaretest.ui.widgets import proliant_panel
+    monkeypatch.setattr(proliant_panel.ipmi,'is_proliant',lambda:False)
+    monkeypatch.setattr(proliant_panel.ipmi,'ipmi_available',lambda:False)
+    panel=proliant_panel.ProliantPanel();keep(panel)
+    panel._proliant=True
+    monkeypatch.setattr(proliant_panel.ipmi,'system_identity',lambda:{'product':'Synergy 480 Gen12'})
+    shown=[]
+    class Dialog:
+        def __init__(self,*args,**kwargs):shown.append(True)
+        def exec(self):return proliant_panel.QDialog.DialogCode.Rejected
+        def deleteLater(self):pass
+    monkeypatch.setattr(proliant_panel,'IloLoginDialog',Dialog)
+    panel._prompt_ilo7();panel._prompt_ilo7()
+    assert len(shown)==1 and panel._ilo_session is None
+    panel.ilo_login()
+    assert len(shown)==2
+
+
+@pytest.mark.parametrize('width',[640,800,1024])
+def test_tab_scroll_arrows_do_not_overlap_with_application_theme(width,monkeypatch,keep):
+    from PySide6.QtWidgets import QToolButton
+    from hardwaretest.main import _apply_dark_theme
+    _apply_dark_theme(_APP)
+    monkeypatch.setattr(mw,'update_check_disabled',lambda:True)
+    monkeypatch.setattr(mw.ipmi,'is_proliant',lambda:False)
+    monkeypatch.setattr(mw.ipmi,'ipmi_available',lambda:False)
+    window=mw.MainWindow();keep(window)
+    try:
+        window.resize(width,500);window.show();_APP.processEvents()
+        bar=window._tabs.tabBar()
+        arrows=[b for b in bar.findChildren(QToolButton) if b.objectName() in ('ScrollLeftButton','ScrollRightButton')]
+        assert len(arrows)==2
+        assert all(b.isVisible() for b in arrows)
+        left,right=sorted(arrows,key=lambda b:b.x())
+        assert not left.geometry().intersects(right.geometry())
+        assert all(bar.rect().contains(b.geometry()) for b in arrows)
+        assert all(b.width()>=24 for b in arrows)
+    finally:
+        window.close()

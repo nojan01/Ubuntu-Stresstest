@@ -99,7 +99,7 @@ def test_pressure_poll_drops_from_tail(monkeypatch):
 def test_pressure_poll_idle_when_enough_memory(monkeypatch):
     chunks = _chunks(2)
     pressure = mfs._Pressure(chunks, reserve_mb=1000)
-    monkeypatch.setattr(mfs, "_available_memory_mb", lambda: 600)
+    monkeypatch.setattr(mfs, "_available_memory_mb", lambda: 1600)
     pressure.poll()
     assert pressure.dropped_bytes == 0
     pressure.close()

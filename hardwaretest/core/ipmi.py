@@ -550,7 +550,10 @@ def _iml_error_text(error: str) -> str:
     lines = [re.sub(r"^\s*ERROR\s*:\s*", "", ln).strip() for ln in error.splitlines()]
     lines = [ln for ln in lines if ln][:3]
     text = " | ".join(lines) or error
-    if "chif" in error.lower() or "blobstore" in error.lower():
+    if "app account" in error.lower() or "--no_app_account" in error.lower():
+        text += _t_both(" – iLO7: Über 'iLO 7 anmelden' mit iLO-Adresse, Benutzer und Passwort anmelden.",
+                        "iLO7: Use 'iLO 7 login' with iLO address, username and password.")
+    elif "chif" in error.lower() or "blobstore" in error.lower():
         text += _t_both(" – Lokaler iLO-Zugriff (CHIF) fehlgeschlagen: Bibliothek ilorest_chif.so nicht gefunden "
                         "oder in iLO ist 'Require Host Authentication' aktiv.",
                         "Local iLO access (CHIF) failed: ilorest_chif.so not found or "
@@ -563,7 +566,7 @@ def _t_both(de: str, en: str) -> str:
 
 
 def read_iml(run: Runner) -> tuple[Optional[list[ImlEntry]], str]:
-    if not shutil.which("ilorest"):
+    if not shutil.which("ilorest") and not getattr(run, "supports_ilo_logs", False):
         return None, "ilorest nicht installiert / not installed"
     text, error = _run_text(run, ILOREST_IML_CMD, 240)
     if text is None:
@@ -596,14 +599,25 @@ def clearable_logs() -> list[str]:
     return logs
 
 
-def backup_iel(run: Runner, target: Path) -> tuple[bool, str]:
-    """iLO Event Log als JSON sichern (das Panel zeigt es nicht an, der Bericht enthält es also nicht)."""
-    text, error = _run_text(run, ILOREST_IEL_CMD, 240)
+def backup_log(run: Runner, log: str, target: Path) -> tuple[bool, str]:
+    commands = {"SEL": ["ipmitool", "sel", "elist"], "IML": ILOREST_IML_CMD, "IEL": ILOREST_IEL_CMD}
+    text, error = _run_text(run, commands[log], 240)
     if text is None:
-        return False, _iml_error_text(error)
+        return False, error
     try:
-        target.write_text(text, encoding="utf-8")
-    except OSError as exc:
+        if log != "SEL":
+            start = min(i for i in (text.find("{"), text.find("[")) if i >= 0)
+            data, _ = json.JSONDecoder().raw_decode(text[start:])
+            members = data if isinstance(data, list) else next(
+                (data[key] for key in ("Members", "Items") if key in data), None)
+            if not isinstance(members, list):
+                return False, "Ungültige Protokollantwort"
+            text = json.dumps(data, ensure_ascii=False)
+        with target.open("x", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except (OSError, ValueError, TypeError) as exc:
         return False, str(exc)
     return True, str(target)
 

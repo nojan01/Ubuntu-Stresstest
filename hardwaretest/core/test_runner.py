@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional, Union
 
-from hardwaretest.core import ras
+from hardwaretest.core import ras, session_log
 
 
 LogCallback = Callable[[str], None]
@@ -57,6 +57,8 @@ _FAILURE_PATTERNS = [
     re.compile(r"verifikationsfehler", re.IGNORECASE),
     re.compile(r"speicherfehler", re.IGNORECASE),
 ]
+
+from hardwaretest.tests.memory_fill_guard import ram_fill_active
 
 
 # Rückgabecodes, die bei einem ausdrücklich vom Bediener abgebrochenen
@@ -128,7 +130,10 @@ class BaseTestRunner:
         work_dir: Optional[PathLike] = None,
     ) -> None:
         self.params = params
-        self._log = log_fn or (lambda msg: None)
+        # Name im Sitzungsprotokoll; jede Ausgabezeile landet dort mit Zeitstempel.
+        self.log_name = type(self).__name__.removesuffix("Runner").lstrip("_") or "Test"
+        self._user_log = log_fn or (lambda msg: None)
+        self._log = self._log_line
         self._process: Optional[subprocess.Popen[str]] = None
         self._start_time: Optional[float] = None
         self._stdout_thread: Optional[threading.Thread] = None
@@ -157,10 +162,18 @@ class BaseTestRunner:
         # rasdaemon vorhanden, aber Stand beim Start nicht lesbar → Warnung im Ergebnis.
         self._ras_unreadable = False
 
+    def _log_line(self, message: str) -> None:
+        session_log.write(self.log_name, message)
+        # Der Aufrufer (z. B. Gesamttest) protokolliert dieselbe Zeile nicht noch einmal.
+        with session_log.quiet():
+            self._user_log(message)
+
     def build_command(self) -> List[str]:  # pragma: no cover - abstract hook
         raise NotImplementedError
 
     def start(self) -> None:
+        if ram_fill_active():
+            raise TestExecutionError("RAM-Fülltest läuft: Weitere Tests sind bis zum Ende gesperrt.")
         if self._process and self._process.poll() is None:
             raise TestExecutionError("Test läuft bereits")
         self._collected_errors = []
@@ -191,6 +204,7 @@ class BaseTestRunner:
             cwd=self._work_dir,
             preexec_fn=_child_preexec if os.name == "posix" else None,
         )
+        session_log.test_started(str(id(self)), self.log_name, " ".join(str(part) for part in cmd))
         self._stdout_thread = threading.Thread(target=self._stream_output, daemon=True)
         self._stdout_thread.start()
         # Watchdog: beendet den Prozess automatisch nach der eingestellten Dauer
@@ -304,6 +318,14 @@ class BaseTestRunner:
                 return
             self._finalized = True
             self._build_result()
+            result = self._result
+            if result is not None:
+                for error in result.errors[:20]:
+                    session_log.write(self.log_name, "FEHLER: " + error, important=True)
+                session_log.test_finished(
+                    str(id(self)), self.log_name,
+                    f"{result.status_text}, Exit-Code {result.exit_code}, {result.duration_actual:.0f} s"
+                    + (", abgebrochen" if self._aborted else ""))
 
     def _process_finished(self) -> bool:
         process = self._process

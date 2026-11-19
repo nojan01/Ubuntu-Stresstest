@@ -33,6 +33,9 @@ def _portable_self_check() -> int:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["--video-codec-worker"]:
+        from hardwaretest.tests.video_codec_script import main as video_main
+        return video_main(sys.argv[2:])
     if sys.argv[1:2] == ["--zfs-worker"]:
         from hardwaretest.core.zfs import worker_main
 

@@ -40,17 +40,69 @@ import mmap
 import os
 import random
 import signal
+import select
 import struct
 import sys
 import time
 import traceback
 from typing import Callable, List, Optional, Tuple
 
+try:
+    from hardwaretest.tests.memory_fill_policy import minimum_reserve_mb, memory_budget, MAX_WORKERS
+    from hardwaretest.tests.memory_fill_guard import ram_fill_lock, RamFillBusy
+except ModuleNotFoundError:  # direct execution of this standalone worker script
+    from memory_fill_policy import minimum_reserve_mb, memory_budget, MAX_WORKERS
+    from memory_fill_guard import ram_fill_lock, RamFillBusy
+
 # ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
 
 _stop = False
+
+_parent_watch = None
+
+
+class _ParentWatch:
+    """Watch the launching GUI through pidfd (or PID + start-time fallback)."""
+    def __init__(self, pid: int):
+        self.pid = pid
+        self.fd = None
+        self.identity = None
+        try:
+            self.fd = os.pidfd_open(pid)
+        except (AttributeError, OSError):
+            self.identity = self._identity()
+
+    def _identity(self):
+        try:
+            with open(f"/proc/{self.pid}/stat", encoding="utf-8") as f:
+                fields = f.read().rsplit(")", 1)[1].split()
+            return None if fields[0] == "Z" else fields[19]
+        except (OSError, IndexError):
+            return None
+
+    def alive(self) -> bool:
+        if self.fd is not None:
+            return not select.select([self.fd], [], [], 0)[0]
+        return self.identity is not None and self._identity() == self.identity
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+def _parent_alive() -> bool:
+    global _stop
+    if _parent_watch is not None and not _parent_watch.alive():
+        first = not _stop
+        _stop = True
+        if first:
+            with contextlib.suppress(OSError):
+                print("ABBRUCH: Hardwaretest-GUI wurde beendet; Testspeicher wird freigegeben.", flush=True)
+        return False
+    return not _stop
 # Verifizieren ist etwa doppelt so schnell wie Schreiben (gemessen 4300 vs.
 # 1800 MB/s). Damit das Pruefen des Geschriebenen noch in die Testzeit passt,
 # endet das Schreiben nach diesem Anteil der Restzeit.
@@ -86,7 +138,7 @@ def _read_meminfo_mb() -> int:
         import psutil
         return int(psutil.virtual_memory().available // (1024 * 1024))
     except Exception:
-        return 1024
+        return 0
 
 
 def _cgroup_v2_path(cgroup_file: str = "/proc/self/cgroup") -> Optional[str]:
@@ -166,7 +218,7 @@ def _wait_for_release(expected_mb: int, timeout_s: float,
     """
     t0 = time.monotonic()
     avail = _available_memory_mb()
-    while avail < expected_mb and not _stop:
+    while avail < expected_mb and not _stop and _parent_alive():
         waited = time.monotonic() - t0
         if waited >= timeout_s:
             return False, avail, waited
@@ -183,7 +235,7 @@ def _allocate_chunks(total_mb: int, chunk_mb: int) -> List[Chunk]:
     """Allokiert *total_mb* in Stuecken von *chunk_mb* via anonymem mmap."""
     chunks: List[Chunk] = []
     remaining = total_mb
-    while remaining > 0 and not _stop:
+    while remaining > 0 and not _stop and _parent_alive():
         size_mb = min(chunk_mb, remaining)
         size_bytes = size_mb * 1024 * 1024
         try:
@@ -372,7 +424,7 @@ class _Pressure:
     """
 
     def __init__(self, chunks: List[Chunk], reserve_mb: int,
-                 interval: float = 0.2) -> None:
+                 interval: float = 0.05) -> None:
         self.chunks = chunks
         self.reserve_mb = reserve_mb
         self.interval = interval
@@ -416,12 +468,14 @@ class _Pressure:
         return released
 
     def poll(self) -> None:
+        if not _parent_alive():
+            return
         now = time.monotonic()
         if now < self._next:
             return
         self._next = now + self.interval
         avail = _available_memory_mb()
-        if avail >= self.reserve_mb // 2 or self._tail == 0:
+        if avail >= self.reserve_mb or self._tail == 0:
             return
         before = self.dropped_bytes
         while avail < self.reserve_mb and self._tail > 0:
@@ -645,16 +699,12 @@ def _usable_cpus() -> int:
         n = len(os.sched_getaffinity(0))
     except (AttributeError, OSError):
         n = os.cpu_count() or 1
-    return max(1, n - 2 if n > 4 else n)
+    return max(1, min(MAX_WORKERS, n - 2 if n > 4 else n))
 
 
 def _min_reserve_mb() -> int:
-    """Mindestreserve: 1 % des RAM, 1-8 GB.
-
-    Ohne Swap kann der Kernel den Testspeicher nicht auslagern; bei zu kleiner
-    Reserve verdraengt er die Programmdateien von OS/GUI und das System friert ein.
-    """
-    return max(1024, min(8192, _read_meminfo_total_mb() // 100))
+    """OS/GUI floor: 2 % of RAM, at least 2 GiB, at most 16 GiB."""
+    return minimum_reserve_mb(_read_meminfo_total_mb())
 
 
 def _read_meminfo_total_mb() -> int:
@@ -898,6 +948,10 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
                          flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
     procs: List[Tuple[int, int]] = []
     for w in range(workers):
+        if pressure is not None:
+            pressure.poll()
+        if _stop:
+            break
         r, wfd = os.pipe()
         pid = os.fork()
         if pid == 0:
@@ -946,7 +1000,7 @@ def _run_parallel(kind: str, chunks: List[Chunk], builder: PatternBuilder,
                     with contextlib.suppress(ProcessLookupError):
                         os.kill(pid, signal.SIGTERM)
             if pending:
-                time.sleep(0.2)
+                time.sleep(0.05)
                 reporter.update(sum(
                     struct.unpack_from("<Q", counters, 8 * i)[0]
                     for i in range(workers)))
@@ -1018,6 +1072,8 @@ def _data_line_test(size_mb: int = _DATA_LINE_MB,
     done = 0
     try:
         for name, word in patterns or _data_line_patterns():
+            if not _parent_alive():
+                break
             if _stop or time.monotonic() >= deadline:
                 break
             builder = _const_word_builder(word)
@@ -1087,10 +1143,10 @@ def _moving_inversion(chunks: List[Chunk], builder: PatternBuilder,
 # Hauptschleife
 # ---------------------------------------------------------------------------
 
-def run_cycles(
+def _run_cycles(
     duration_seconds: int,
     memory_mb: int = 0,
-    reserve_mb: int = 512,
+    reserve_mb: int = 2048,
     chunk_mb: int = 256,
     quick: bool = False,
     pause_seconds: float = 3.0,
@@ -1113,6 +1169,14 @@ def run_cycles(
     _raise_memlock_limit()
     print(flush=True)
 
+    initial_available = _available_memory_mb()
+    if initial_available <= reserve_mb:
+        print(f"FEHLER: Verfuegbarer Speicher ({initial_available} MB) liegt nicht ueber "
+              f"der Reserve ({reserve_mb} MB).", flush=True)
+        print("Zyklen: 0 | Dauer: 0s | Fehler gesamt: 0 | Verifiziert: 0 Zyklen / 0 MB", flush=True)
+        print("ERGEBNIS: NICHT AUSSAGEKRÄFTIG – kein sicherer Testspeicher frei", flush=True)
+        return 2
+
     lock_warned = False
     lock_max_mb = 0
     dropped_total_mb = 0
@@ -1131,7 +1195,7 @@ def run_cycles(
     plan = _build_pattern_plan(quick=quick, cycle=plan_round)
     plan_idx = 0
 
-    while not _stop:
+    while not _stop and _parent_alive():
         elapsed = time.monotonic() - start
         if elapsed >= duration_seconds:
             break
@@ -1141,6 +1205,11 @@ def run_cycles(
             plan_round += 1
             plan = _build_pattern_plan(quick=quick, cycle=plan_round)
             plan_idx = 0
+
+        if not quick and plan_idx == 0 and _available_memory_mb() <= reserve_mb + 256:
+            aborted_reason = "Zu wenig sicherer Speicher fuer den Datenleitungstest"
+            print(aborted_reason, flush=True)
+            break
 
         # Datenleitungstest einmal je Musterrunde (nur Vollmodus).
         if plan_idx == 0 and not quick:
@@ -1187,6 +1256,22 @@ def run_cycles(
                 break
             target_mb = avail - reserve_mb
 
+        try:
+            page_size = os.sysconf("SC_PAGE_SIZE")
+        except (OSError, ValueError, AttributeError):
+            page_size = 4096
+        budget = memory_budget(avail, reserve_mb, _usable_cpus(), memory_mb, page_size)
+        target_mb = budget.target_mb
+        worker_count = budget.workers
+        print(f"Speicherplanung: verfuegbar {avail} MB, OS/GUI-Reserve {reserve_mb} MB, "
+              f"{worker_count} Worker, Arbeitspuffer {budget.scratch_mb} MB, "
+              f"Seitentabellen geschaetzt {budget.page_tables_mb} MB, Ziel {target_mb} MB.", flush=True)
+        if target_mb <= 0:
+            aborted_reason = "Keine sichere RAM-Testmenge nach Abzug des Prozessbedarfs"
+            cycle -= 1
+            print(aborted_reason, flush=True)
+            break
+
         print(f"--- Zyklus {cycle}: Muster {name} "
               f"(verbleibend: {remaining_time:.0f}s) ---")
         print(f"Allokiere {target_mb} MB in {chunk_mb}-MB-Bloecken ...",
@@ -1209,25 +1294,25 @@ def run_cycles(
         written_mb = 0
         written_segs: List[Segment] = []
         rotation = 0
-        half = _usable_cpus() // 2
+        half = worker_count // 2
         # Die fuer OS/GUI frei gelassenen Kerne wechseln je Zyklus.
         all_cpus = _all_cpus()
-        cpu_offset = (cycle - 1) * max(1, len(all_cpus) - _usable_cpus())
+        cpu_offset = (cycle - 1) * max(1, len(all_cpus) - worker_count)
         pressure = _Pressure(chunks, reserve_mb)
         try:
             try:
                 if not _stop:
                     print(f"  Schreibe {name} ({actual_mb} MB) ...", flush=True)
-                    spare = _spare_cpus(all_cpus, min(_usable_cpus(), len(chunks)),
+                    spare = _spare_cpus(all_cpus, min(worker_count, len(chunks)),
                                         cpu_offset)
-                    if spare and len(chunks) >= _usable_cpus():
+                    if spare and len(chunks) >= worker_count:
                         print(f"    Frei fuer OS/GUI: CPU {', '.join(map(str, spare))}",
                               flush=True)
                     t0 = time.monotonic()
                     rotation = cycle * (half + 1)
                     written_segs = pressure.keep(_run_parallel(
                         "fill", chunks, builder, _segments(chunks, None),
-                        rotation=rotation,
+                        rotation=rotation, workers=worker_count,
                         deadline=t0 + max(0.0, end - t0) * _WRITE_SHARE,
                         pressure=pressure, cpu_offset=cpu_offset))
                     written_mb = sum(s[2] for s in written_segs) // (1024 * 1024)
@@ -1261,7 +1346,7 @@ def run_cycles(
                     t0 = time.monotonic()
                     # Pruefen durch andere CPUs als beim Schreiben (halbe Runde versetzt).
                     errs = _run_parallel("verify", chunks, builder, written_segs,
-                                         rotation=rotation + half, pressure=pressure,
+                                         rotation=rotation + half, workers=worker_count, pressure=pressure,
                                          cpu_offset=cpu_offset)
                     verify_time = time.monotonic() - t0
                     written_segs = pressure.keep(written_segs)
@@ -1302,7 +1387,7 @@ def run_cycles(
                             else:
                                 errs = _moving_inversion(
                                     chunks, builder, written_segs, rotation, half,
-                                    pressure, cpu_offset=cpu_offset)
+                                    pressure, workers=worker_count, cpu_offset=cpu_offset)
                                 cycle_errors.extend(errs)
                                 if not _stop:
                                     inversion_done += 1
@@ -1367,7 +1452,7 @@ def run_cycles(
             print(f"  Pause {wait:.0f}s (Speicher freigegeben) ...",
                   flush=True)
             pause_end = time.monotonic() + wait
-            while not _stop and time.monotonic() < pause_end:
+            while not _stop and _parent_alive() and time.monotonic() < pause_end:
                 time.sleep(min(0.2, pause_end - time.monotonic()))
 
         print(flush=True)
@@ -1394,6 +1479,9 @@ def run_cycles(
     if total_errors > 0:
         print(f"ERGEBNIS: FEHLER GEFUNDEN – {total_errors} Verifikationsfehler")
         return 1
+    if _parent_watch is not None and not _parent_watch.alive():
+        print("ERGEBNIS: NICHT AUSSAGEKRÄFTIG – GUI beendet, Test geordnet abgebrochen", flush=True)
+        return 2
     if verified_cycles == 0 or verified_mb == 0:
         print("ERGEBNIS: NICHT AUSSAGEKRÄFTIG – keine verifizierten Zyklen")
         return 2
@@ -1413,6 +1501,28 @@ def run_cycles(
 # CLI
 # ---------------------------------------------------------------------------
 
+def run_cycles(duration_seconds: int, memory_mb: int = 0, reserve_mb: int = 2048,
+               chunk_mb: int = 256, quick: bool = False, pause_seconds: float = 3.0,
+               parent_pid: int = 0) -> int:
+    global _parent_watch
+    previous = _parent_watch
+    watcher = _ParentWatch(parent_pid) if parent_pid > 0 else None
+    _parent_watch = watcher
+    try:
+        if not _parent_alive():
+            return 2
+        with ram_fill_lock():
+            result = _run_cycles(duration_seconds, memory_mb, reserve_mb, chunk_mb, quick, pause_seconds)
+        return 2 if watcher is not None and not watcher.alive() else result
+    except RamFillBusy as exc:
+        print(f"Start gesperrt: {exc}", flush=True)
+        return 2
+    finally:
+        if watcher is not None:
+            watcher.close()
+        _parent_watch = previous
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Zyklischer RAM-Fuelltest: vollschreiben, verifizieren, "
@@ -1428,8 +1538,8 @@ def main(argv: list[str] | None = None) -> int:
              "(Standard: automatisch = verfuegbar - reserve)",
     )
     parser.add_argument(
-        "--reserve-mb", type=int, default=512,
-        help="Reserve fuer OS/GUI in MB (Standard: 512)",
+        "--reserve-mb", type=int, default=2048,
+        help="Mindestreserve fuer OS/GUI in MB (Standard: 2048; Prozessbedarf kommt hinzu)",
     )
     parser.add_argument(
         "--chunk-mb", type=int, default=256,
@@ -1444,6 +1554,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Pause zwischen den Zyklen in Sekunden, waehrend der der "
              "Speicher freigegeben bleibt (Standard: 3). 0 = keine Pause.",
     )
+    parser.add_argument("--parent-pid", type=int, default=0, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
         return run_cycles(
@@ -1453,6 +1564,7 @@ def main(argv: list[str] | None = None) -> int:
             chunk_mb=args.chunk_mb,
             quick=args.quick,
             pause_seconds=args.pause_seconds,
+            parent_pid=args.parent_pid,
         )
     except KeyboardInterrupt:
         print("Abbruch durch Benutzer (SIGINT).", flush=True)

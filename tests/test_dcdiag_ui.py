@@ -231,6 +231,12 @@ class _OtherPanel(QWidget):
         return False
 
 
+class _NvidiaPanel(_OtherPanel):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.video_panel = _OtherPanel()
+
+
 @pytest.mark.parametrize("binary", [None, "/usr/bin/dcdiag"])
 def test_main_window_conditional_tab_and_safety_registration(monkeypatch, binary):
     for name in (
@@ -241,6 +247,7 @@ def test_main_window_conditional_tab_and_safety_registration(monkeypatch, binary
         "SystemPanel", "InfoPanel", "HelpPanel",
     ):
         monkeypatch.setattr(main_window, name, _OtherPanel)
+    monkeypatch.setattr(main_window, "NvidiaPanel", _NvidiaPanel)
     monkeypatch.setattr(main_window, "available_dcdiag_path", lambda: binary)
     monkeypatch.setattr(main_window, "update_check_disabled", lambda: True)
     monkeypatch.setattr(main_window.ipmi, "is_proliant", lambda: False)
@@ -249,6 +256,9 @@ def test_main_window_conditional_tab_and_safety_registration(monkeypatch, binary
     titles = [window._tabs.tabText(index) for index in range(window._tabs.count())]
     assert "OpenDCDiag" in titles
     assert ("Intel DCDiag" in titles) == bool(binary)
+    nvidia = next(p for p in window._test_panels if isinstance(p, _NvidiaPanel))
+    assert nvidia.video_panel in window._test_panels
+    assert nvidia.video_panel._stop in window._stop_callbacks
     panels = [p for p in window._test_panels if isinstance(p, dcdiag_panel.DcDiagPanel)]
     if binary:
         assert len(panels) == 1

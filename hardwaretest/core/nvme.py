@@ -163,6 +163,16 @@ def read_nvme_smart(
     return parse_smart_log(ctrl, completed.stdout)
 
 
+class NvmeSelfTestUnsupported(RuntimeError):
+    """The controller rejected a self-test operation as unsupported."""
+
+
+def _raise_self_test_error(message: str) -> None:
+    if "invalid command opcode" in message.casefold():
+        raise NvmeSelfTestUnsupported(message)
+    raise RuntimeError(message)
+
+
 def start_nvme_self_test(
     device: str,
     test_type: str,
@@ -182,7 +192,7 @@ def start_nvme_self_test(
     )
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout or "nvme device-self-test failed").strip()
-        raise RuntimeError(message)
+        _raise_self_test_error(message)
 
 
 def is_self_test_in_progress_error(message: str) -> bool:
@@ -229,7 +239,7 @@ def read_nvme_self_test_status(
     )
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout or "nvme self-test log failed").strip()
-        raise RuntimeError(message)
+        _raise_self_test_error(message)
     return parse_self_test_status(completed.stdout)
 
 

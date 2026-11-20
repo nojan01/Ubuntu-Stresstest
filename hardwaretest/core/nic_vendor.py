@@ -193,13 +193,29 @@ class VendorDiagResult:
         return "warn" if self.warnings else "ok"
 
     @property
+    def transceiver_read_failed(self) -> bool:
+        return self.tool == "niccli" and any(
+            step.title == "Transceiver" and not step.ok and not step.unsupported for step in self.steps
+        )
+
+    @property
     def summary(self) -> str:
         done = sum(1 for step in self.steps if step.ok)
         parts = [f"{self.tool}: {done}/{len(self.steps)} Abfragen erfolgreich"]
         skipped = sum(1 for step in self.steps if step.unsupported)
         if skipped:
             parts[0] += f", {skipped} vom Adapter nicht unterstützt"
+        niccli_rows = dict(self.rows) if self.tool == "niccli" else {}
+        link = niccli_rows.get("[Link-Status] Physical link state", "")
+        if link.casefold() == "link down":
+            parts.append("Kein Link")
+        if niccli_rows.get("[Link-Status] Module Status", "").casefold().rstrip(".") == "module is inserted and accepted":
+            parts.append("Modul erkannt")
+        if self.transceiver_read_failed:
+            parts.append("Transceiver-Details konnten nicht gelesen werden")
         for key in ("Firmware", "Package Version", "Device Name", "Link Status", "Physical link state", "Speed", "Current link speed", "NVM Version", "FW Version"):
+            if link.casefold() == "link down" and key in ("Physical link state", "Current link speed"):
+                continue
             for row_key, value in self.rows:
                 if row_key.split("] ", 1)[-1].lower() == key.lower() and value:
                     parts.append(f"{key} {value}")
@@ -385,6 +401,10 @@ def _collect_rows(result: VendorDiagResult, step: VendorStep) -> None:
                 continue
             seen.add(key.lower())
             result.rows.append((f"[{step.title}] {key}", value))
+            if (step.command[:1] == ["niccli"] and step.title == "Link-Status"
+                    and key.casefold() in {"module power state", "module tx disable"}
+                    and value.casefold() == "not supported"):
+                continue
         if (_FAIL_WORDS.search(line) and not _BENIGN.search(line)) or _BAD_HEALTH.search(line):
             text = line.strip()
             if len(text) <= 200:

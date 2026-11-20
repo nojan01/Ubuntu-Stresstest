@@ -310,6 +310,8 @@ _EN: dict[str, str] = {
     "Vollständige Protokolldaten (nvme-cli):": "Complete log data (nvme-cli):",
     "Keine Protokolldaten geliefert.": "No log data returned.",
     "NVMe-Selbsttest wird gestartet …": "Starting NVMe self-test …",
+    "NVMe-Selbsttestfunktion nicht unterstützt": "NVMe self-test operation unsupported",
+    "Der Controller unterstützt diesen Selbsttestbefehl nicht.": "The controller does not support this self-test command.",
     "NVMe-Aktion fehlgeschlagen.": "NVMe action failed.",
     "NVMe-Aktion fehlgeschlagen": "NVMe action failed",
     "Soll der {test} NVMe-Selbsttest auf {device} gestartet werden? Der Test ist nicht destruktiv.": "Start the {test} NVMe self-test on {device}? The test is non-destructive.",

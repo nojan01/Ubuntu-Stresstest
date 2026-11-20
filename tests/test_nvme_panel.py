@@ -107,3 +107,17 @@ def test_aborted_read_test_with_errors_shows_them(monkeypatch, keep):
     assert "2 Problem(e)" in panel.io_result.text()
     assert "#ff6257" in panel.io_result.styleSheet()
     assert "bad magic header" in panel.io_status.text()
+
+
+def test_unsupported_self_test_shows_inline_notice(monkeypatch, keep):
+    monkeypatch.setattr(nvme_panel, "nvme_available", lambda: False)
+    panel = nvme_panel.NvmePanel()
+    keep(panel)
+
+    def unexpected_popup(*args):
+        pytest.fail("Unsupported self-test should be reported inline")
+
+    monkeypatch.setattr(nvme_panel.QMessageBox, "warning", unexpected_popup)
+    panel._worker_failed(nvme_panel.NvmeSelfTestUnsupported("Invalid Command Opcode"))
+    assert panel.result.text() == "NVMe-Selbsttestfunktion nicht unterstützt"
+    assert not panel._self_test_active

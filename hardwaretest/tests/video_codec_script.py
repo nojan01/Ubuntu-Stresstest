@@ -120,8 +120,12 @@ def telemetry(uuid, env):
         if gpu is None:
             return {'available': False}
         fields = {'encoder': 'utilization/encoder_util', 'decoder': 'utilization/decoder_util',
-                  'temperature': 'temperature/gpu_temp',
+                  'temperature': 'temperature/gpu_temp', 'pci': 'pci/pci_bus_id',
+                  'power': 'gpu_power_readings/power_draw', 'clock': 'clocks/graphics_clock',
+                  'width': 'pci/pci_gpu_link_info/link_widths/current_link_width',
                   'uncorrected_ecc': 'ecc_errors/volatile/uncorrected/total'}
+        if gpu.find(fields["power"]) is None:
+            fields["power"] = "power_readings/power_draw"
         return {key: gpu.findtext(path, default='nicht verfügbar') for key, path in fields.items()}
     except (OSError, CommandError, ET.ParseError):
         return {'available': False}
@@ -167,12 +171,12 @@ def stress(commands, seconds, streams, env, uuid):
                     break
                 if now >= next_sample:
                     progress = []
-                    for out, _ in files:
+                    for index, (out, _) in enumerate(files):
                         end = os.fstat(out.fileno()).st_size
                         tail = os.pread(out.fileno(),4096,max(0,end-4096))
                         pairs = [line.split('=',1) for line in tail.decode(errors='replace').splitlines() if '=' in line]
                         fields = dict(pairs)
-                        progress.append({key:fields.get(key,'nicht verfügbar') for key in ('frame','fps','speed')})
+                        progress.append(dict(fields, case='/'.join(selected[index][:2])))
                     emit(event='telemetry',gpu=uuid,elapsed=round(time.monotonic()-started,1),
                          values=telemetry(uuid,env),streams=progress)
                     next_sample = time.monotonic()+5

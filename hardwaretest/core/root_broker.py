@@ -162,7 +162,10 @@ while IFS= read -r line; do
           done
         done ;;
       dcgmi) ;;
-      nvme) case "${2:-}" in smart-log|self-test-log|device-self-test) ;; *) ok=0;; esac ;;
+      nvme) case "${2:-}" in
+          id-ctrl) [ "$#" = 5 ] && [ "$4" = "-o" ] && [ "$5" = "json" ] || ok=0
+                   case "$3" in /dev/nvme[0-9]*) case "${3#/dev/nvme}" in *[!0-9]*) ok=0;; esac ;; *) ok=0;; esac ;;
+          smart-log|self-test-log|device-self-test) ;; *) ok=0;; esac ;;
       smartctl|/usr/sbin/smartctl)
         # Nur lesende SMART-Abfrage ganzer Datentraeger im JSON-Format.
         [ $# -eq 4 ] && [ "$2" = "-a" ] && [ "$3" = "-j" ] || ok=0
@@ -687,7 +690,7 @@ class RootBroker:
         return self._run_job(self.submit(command), command, timeout)
 
     def ilo_local(self, operation: str, username: str = '', password: str = ''):
-        if operation not in {'login', 'logout', 'iml_read', 'iel_read', 'iml_clear', 'iel_clear'}:
+        if operation not in {'login', 'logout', 'drive_read', 'iml_read', 'iel_read', 'iml_clear', 'iel_clear'}:
             raise ValueError('Ungültiger iLO-Auftrag')
         payload = {'operation': operation}
         if operation == 'login':

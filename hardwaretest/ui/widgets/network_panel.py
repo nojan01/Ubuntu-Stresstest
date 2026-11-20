@@ -7,7 +7,7 @@ from datetime import datetime
 import subprocess
 from typing import Callable, Optional, Sequence
 
-from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QSettings, QSignalBlocker, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -105,6 +105,17 @@ class NetworkPanel(QWidget):
         ethtool_row.addStretch(1)
         adapter_layout = QVBoxLayout()
         adapter_layout.addLayout(adapter_header)
+        self.port_role = QComboBox()
+        self.port_role.addItems(["Optional", "Link erforderlich", "Unbenutzt"])
+        self.port_min = QSpinBox()
+        self.port_min.setRange(0, 1600000)
+        self.port_min.setSuffix(" Mbit/s")
+        profile = QFormLayout()
+        profile.addRow("Portprofil", self.port_role)
+        profile.addRow("Mindestgeschwindigkeit", self.port_min)
+        adapter_layout.addLayout(profile)
+        self.port_role.currentIndexChanged.connect(self._save_profile)
+        self.port_min.valueChanged.connect(self._save_profile)
         adapter_layout.addWidget(self.adapter_info)
         adapter_layout.addLayout(ethtool_row)
         adapter_layout.addWidget(self.ethtool_result)
@@ -236,14 +247,56 @@ class NetworkPanel(QWidget):
         )
         return f"{adapter.name} – {state} – {speed} – {adapter.driver}"
 
+    def _settings(self, adapter):
+        settings = QSettings("Hardwaretest", "Portprofile")
+        settings.beginGroup(adapter.mac_address or adapter.bus_address or adapter.name)
+        return settings
+
+    def _save_profile(self):
+        adapter = self._adapters.get(self.adapter_box.currentData())
+        if adapter:
+            settings = self._settings(adapter)
+            settings.setValue("role", self.port_role.currentIndex())
+            settings.setValue("minimum", self.port_min.value())
+            self._show_selected_adapter()
+
+    def _add_port_assessment(self, report, adapter):
+        assessment = self._assessment(adapter)
+        report.parameters.append(("Portprofil", assessment))
+        if assessment.startswith("Warnung") and report.status in (STATUS_PASSED, STATUS_INFO):
+            report.status = STATUS_WARNING
+
+    def _assessment(self, adapter):
+        settings = self._settings(adapter)
+        role = settings.value("role", 0, type=int)
+        minimum = settings.value("minimum", 0, type=int)
+        if role == 2:
+            return "Unbenutzt · Link aktiv" if adapter.carrier else "Unbenutzt"
+        if adapter.carrier is None:
+            return "Linkstatus unbekannt"
+        if not adapter.carrier:
+            return "Warnung · erwarteter Link fehlt" if role == 1 else "Optional · kein Link"
+        if minimum and not adapter.speed_mbps:
+            return "Mindestgeschwindigkeit nicht prüfbar"
+        if minimum and adapter.speed_mbps < minimum:
+            return f"Warnung · unter {minimum} Mbit/s"
+        return "Link OK"
+
     def _show_selected_adapter(self) -> None:
         selected = str(self.adapter_box.currentData() or "")
+        current = self._adapters.get(selected)
+        for widget in (self.port_role, self.port_min):
+            widget.setEnabled(current is not None)
+        with QSignalBlocker(self.port_role), QSignalBlocker(self.port_min):
+            settings = self._settings(current) if current else None
+            self.port_role.setCurrentIndex(settings.value("role", 0, type=int) if settings else 0)
+            self.port_min.setValue(settings.value("minimum", 0, type=int) if settings else 0)
         self._update_ethtool_buttons()
         adapters = [self._adapters[selected]] if selected in self._adapters else list(self._adapters.values())
         if not adapters:
             self.adapter_info.setPlainText(language_manager.tr("Keine Netzwerkadapter gefunden."))
             return
-        self.adapter_info.setPlainText("\n\n".join(self._format_adapter(item) for item in adapters))
+        self.adapter_info.setPlainText("\n\n".join(self._format_adapter(item) + "\nPortprofil: " + self._assessment(item) for item in adapters))
 
     @staticmethod
     def _format_adapter(adapter: NetworkAdapter) -> str:
@@ -455,6 +508,9 @@ class NetworkPanel(QWidget):
         if result is not None and result.errors:
             report.add_section(tr("Fehler"), "list", list(result.errors))
         report.raw_output = self.log_view.toPlainText()
+        adapter = self._adapters.get(self._stats_interface)
+        if adapter:
+            self._add_port_assessment(report, adapter)
         self.report_bar.publish(report)
 
     def _render_result(self) -> None:
@@ -646,6 +702,8 @@ class NetworkPanel(QWidget):
                         started=self._ethtool_started, finished=datetime.now(), parameters=params)
         if rows:
             report.add_section(tr(section), "pairs", list(rows))
+        if adapter:
+            self._add_port_assessment(report, adapter)
         report.hints.extend(hints)
         report.raw_output = self.log_view.toPlainText()
         self.report_bar.publish(report)

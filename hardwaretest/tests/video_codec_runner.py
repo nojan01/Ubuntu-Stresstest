@@ -41,6 +41,8 @@ class VideoCodecRunner(BaseTestRunner):
         self.gpus = gpus
         self.codec, self.mode, self.streams = codec, mode, streams
         self.results = []
+        from hardwaretest.core.gpu_comparison import VideoComparison
+        self.comparison = VideoComparison()
         self.events = []
         self.summary = None
 
@@ -70,6 +72,8 @@ class VideoCodecRunner(BaseTestRunner):
             return
         if not isinstance(event,dict):
             return
+        if event.get('event') == 'telemetry':
+            self.comparison.add(event)
         self.events.append(event)
         self.events[:] = self.events[-2000:]
         if event.get('event') == 'result':

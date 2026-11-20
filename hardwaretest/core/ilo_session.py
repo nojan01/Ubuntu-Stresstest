@@ -166,6 +166,28 @@ class IloSession:
                     elif str(service.get('Id', '')).upper() == 'IEL' or 'ilo event log' in identity:
                         self._logs.setdefault('IEL', service)
 
+    def drives(self):
+        with self._lock:
+            self._deadline = time.monotonic() + 60
+            try:
+                root, _ = self._request('GET', '/redfish/v1/')
+                found = {}
+                for system in self._members(root['Systems']['@odata.id']):
+                    body, _ = self._request('GET', system['@odata.id'])
+                    storage = body.get('Storage', {}).get('@odata.id')
+                    if not storage:
+                        continue
+                    for item in self._members(storage):
+                        controller, _ = self._request('GET', item['@odata.id'])
+                        for link in controller.get('Drives', []):
+                            path = link.get('@odata.id')
+                            if path and path not in found:
+                                drive, _ = self._request('GET', path)
+                                found[path] = dict(drive, _storage=controller.get('Name') or controller.get('Id'))
+                return list(found.values())
+            finally:
+                self._deadline = None
+
     def read_log(self, kind):
         with self._lock:
             if not self.connected:

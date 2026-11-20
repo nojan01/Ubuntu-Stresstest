@@ -277,6 +277,8 @@ class NvmePanel(QWidget):
         parts = [device.namespace_path]
         if device.model:
             parts.append(device.model)
+            if "ns204i" in device.model.lower():
+                parts.append("RAID 1 · Lesetest des logischen Volumes")
         if device.serial:
             parts.append(f"SN {device.serial}")
         if device.firmware:

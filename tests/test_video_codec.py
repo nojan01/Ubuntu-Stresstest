@@ -113,7 +113,7 @@ def test_ui_does_not_turn_missing_or_partial_results_into_success(monkeypatch,st
     monkeypatch.setattr(panel.report_bar,'publish',reports.append)
     panel._runner=SimpleNamespace(results=[{'status':status}],summary=summary,
         get_result=lambda:SimpleNamespace(errors=[]),gpus=[],codec='all',mode='both',
-        params=SimpleNamespace(duration_seconds=0),streams=2,events=[])
+        params=SimpleNamespace(duration_seconds=0),streams=2,events=[],comparison=SimpleNamespace(rows=lambda models: []))
     panel._finish()
     assert reports[-1].status==expected
     panel.deleteLater();app.processEvents()

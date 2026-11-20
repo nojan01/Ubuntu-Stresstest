@@ -182,6 +182,15 @@ def start_nvme_self_test(
     """Start a non-destructive NVMe device self-test (short or extended)."""
     if test_type not in {"short", "extended"}:
         raise ValueError(f"Unbekannter NVMe-Selbsttest: {test_type}")
+    identity = run([*command_prefix, "nvme", "id-ctrl", controller_path(device), "-o", "json"],
+                   check=False, capture_output=True, text=True, timeout=30)
+    if identity.returncode == 0:
+        try:
+            oacs = _as_int(json.loads(identity.stdout)["oacs"])
+        except (ValueError, KeyError, TypeError):
+            oacs = None
+        if oacs is not None and not oacs & 0x10:
+            raise NvmeSelfTestUnsupported("Controller meldet keinen Device Self-test (OACS Bit 4).")
     selector = "1" if test_type == "short" else "2"
     completed = run(
         [*command_prefix, "nvme", "device-self-test", controller_path(device), "-s", selector],

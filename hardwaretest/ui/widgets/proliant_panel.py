@@ -165,7 +165,14 @@ class ProliantWorker(QThread):
 
     def run(self):
         try:
-            self.done.emit(collect_proliant(self.panel.root_runner()))
+            data = collect_proliant(self.panel.root_runner())
+            session = self.panel._ilo_session
+            if session and session.connected:
+                try:
+                    data['ilo_drives'] = session.drives()
+                except (RuntimeError, OSError, ValueError, KeyError) as exc:
+                    data['drive_error'] = str(exc)
+            self.done.emit(data)
         except Exception as exc:  # pragma: no cover - runtime safety
             self.done.emit({"exception": str(exc)})
 
@@ -710,12 +717,14 @@ class ProliantPanel(QWidget):
             self._manual_read = False
             self.export()
         self.show_raid(data.get("raid"))
+        if data.get('drive_error'):
+            self.raid_summary.setText(self.raid_summary.text() + "\n" + data['drive_error'])
         state, text = self._summary(data)
         self.summary.setStyleSheet(_CSS.get(state, ""))
         self.summary.setText(text)
 
     @staticmethod
-    def _raid_rows(report) -> tuple[list, list, list]:
+    def _raid_rows(report, ilo_drives=()) -> tuple[list, list, list]:
         """Zeilen (Zellen, Schweregrad) für Controller-, LD- und PD-Tabelle."""
         def num(value):
             return "" if value is None else f"{value:g}" if isinstance(value, float) else str(value)
@@ -737,6 +746,20 @@ class ProliantPanel(QWidget):
                 pd_rows.append(([c.label, pd.location, pd.drive_type, pd.size, status, pd.model, pd.serial, pd.firmware,
                                  temp, num(pd.power_on_hours), num(pd.ssd_life_percent), pd.phy_rate, _sev(pd.severity)],
                                 pd.severity))
+        known = {row[6] for row, _ in pd_rows if row[6]}
+        for drive in ilo_drives:
+            serial = drive.get('SerialNumber')
+            if serial and serial in known:
+                continue
+            location = (drive.get('PhysicalLocation') or {}).get('PartLocation') or {}
+            status = drive.get('Status') or {}
+            health = status.get('Health')
+            severity = {'Critical': 'error', 'Warning': 'warn', 'OK': 'ok'}.get(health, 'info')
+            controller = drive.get('_storage') or str(drive.get('@odata.id', '')).partition('/Drives/')[0]
+            values = [controller or "iLO", location.get('ServiceLabel') or drive.get('Id'), drive.get('MediaType'),
+                      "", health or status.get('State'), drive.get('Model'), serial, drive.get('Revision'),
+                      "", "", "", "", _sev(severity)]
+            pd_rows.append(([str(value or '–') for value in values], severity))
         return ctrl_rows, ld_rows, pd_rows
 
     def show_raid(self, report) -> None:
@@ -758,7 +781,7 @@ class ProliantPanel(QWidget):
                     for f in report.findings()]
         findings.extend(_t("Fehler: ", "Error: ") + e for e in report.errors)
         self.raid_findings.setPlainText("\n".join(findings) or _t("Keine Befunde.", "No findings."))
-        ctrl_rows, ld_rows, pd_rows = self._raid_rows(report)
+        ctrl_rows, ld_rows, pd_rows = self._raid_rows(report, (self._data or {}).get("ilo_drives", []))
         for table, rows in ((self.raid_controllers, ctrl_rows), (self.raid_lds, ld_rows), (self.raid_pds, pd_rows)):
             _fill(table, rows)
             _fit_height(table)
@@ -926,6 +949,11 @@ class ProliantPanel(QWidget):
                            ("UUID", "UUID")):
             if dmi.get(key):
                 lines.append(f"{label}: {dmi[key]}")
+        for drive in data.get('ilo_drives', []):
+            slot = ((drive.get('PhysicalLocation') or {}).get('PartLocation') or {}).get('ServiceLabel')
+            lines.append("iLO Drive · " + " · ".join(str(value or '–') for value in
+                         (slot or drive.get('Id'), drive.get('Model'), drive.get('SerialNumber'),
+                          (drive.get('Status') or {}).get('Health'))))
         lines.append(f"BIOS/ROM: {identity.get('bios') or '?'} ({identity.get('bios_date') or '?'})")
         lines.append(_t("ProLiant/Synergy erkannt: ", "ProLiant/Synergy detected: ") + (_t("ja", "yes") if data["proliant"] else _t("nein", "no")))
         lines.append("")
@@ -1047,8 +1075,8 @@ class ProliantPanel(QWidget):
                for e in reversed(data.get("iml") or [])]
         raid = data.get("raid")
         raid_html = ""
-        if raid is not None and raid.available:
-            ctrl_rows, ld_rows, pd_rows = self._raid_rows(raid)
+        if raid is not None and (raid.available or data.get("ilo_drives")):
+            ctrl_rows, ld_rows, pd_rows = self._raid_rows(raid, data.get("ilo_drives", []))
             lang = language_manager.language
 
             def head(labels):

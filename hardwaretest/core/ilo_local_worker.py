@@ -18,6 +18,7 @@ OPERATIONS = {
     'iel_read': ['serverlogs', '--selectlog=IEL', '--json'],
     'iml_clear': ['serverlogs', '--selectlog=IML', '--clearlog'],
     'iel_clear': ['serverlogs', '--selectlog=IEL', '--clearlog'],
+    'drive_read': ['get', '--select=Drive.', '--json'],
     'logout': ['logout'],
 }
 

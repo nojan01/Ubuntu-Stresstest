@@ -114,6 +114,11 @@ class VideoCodecPanel(QGroupBox):
                       raw_output='\n'.join(json.dumps(e,ensure_ascii=False) for e in runner.events))
         report.add_section('Einzelergebnisse','table',header=['GPU','Codec','Prüfung','Status','Details'],
             rows=[(r.get('gpu',''),r.get('codec',''),r.get('direction',''),r.get('status',''),r.get('detail','')) for r in runner.results])
+        comparison = list(runner.comparison.rows({g.uuid: g.model for g in runner.gpus}))
+        if comparison:
+            report.add_section("GPU-Vergleich unter Videolast", "table", rows=comparison,
+                               header=["GPU", "PCI", "Streams", "Σ fps (Ø)", "Max °C", "Max W",
+                                       "Max MHz", "Max PCIe-Lanes", "Δ zum Modellmedian (ab ±20 %)"])
         report.hints=['Nicht unterstützt und fehlende Voraussetzungen sind keine bestandenen Prüfungen.',
                       'SSIM-Grenze 0.95 für diese Testsequenzen; ein Fehler beweist keinen Hardwaredefekt.',
                       'GPU-Auslastung/Temperatur im Rohprotokoll, soweit verfügbar. Kein vollständiges Xid-Kernelprotokoll.']

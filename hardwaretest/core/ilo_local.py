@@ -21,6 +21,23 @@ class LocalIloSession:
             raise IloError('iLO7-Anmeldung fehlgeschlagen. Bitte iLO-Zugangsdaten und lokalen Zugriff prüfen. / iLO7 login failed; check credentials and local access.')
         self.connected = True
 
+    def drives(self):
+        import json
+        result = self._broker.ilo_local('drive_read')
+        if result.returncode:
+            raise IloError('iLO-Laufwerksinventar nicht verfügbar')
+        def records(value):
+            if isinstance(value, list):
+                for item in value:
+                    yield from records(item)
+            elif isinstance(value, dict):
+                if value.get('SerialNumber') or str(value.get('@odata.type', '')).startswith('#Drive.'):
+                    yield value
+                else:
+                    for item in value.values():
+                        yield from records(item)
+        return list(records(json.loads(result.stdout)))
+
     def runner(self, fallback):
         def run(command, **kwargs):
             from hardwaretest.core import ipmi

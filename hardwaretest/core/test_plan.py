@@ -18,6 +18,7 @@ import time
 import uuid
 from typing import Callable, Optional
 
+from hardwaretest.core import error_snapshot
 from hardwaretest import __version__
 from hardwaretest.core import device_inventory, hardware_inventory, ipmi, privilege, proliant_check, session_log, zfs
 from hardwaretest.core.monitoring import MonitorSession, MonitoringGuard, collect_metrics
@@ -126,6 +127,7 @@ class TestPlanResult:
     requested_rounds: int = 1
     end_time: Optional[datetime] = None
     end_time_reached: bool = False
+    counter_history: list[str] = field(default_factory=list)
     system_info: list[str] = field(default_factory=list)
 
 
@@ -274,6 +276,7 @@ class TestPlanExecutor:
                                (self.config.min_throughput_mbit_s, 1_000_000)):
             if not math.isfinite(value) or not 0 <= value <= maximum:
                 raise ValueError("Ungültige Netzwerk-Grenzwerte / Invalid network thresholds")
+        counter_history = {}
         completed_rounds = 0
         aggregates: dict[str, _StepAggregate] = {}
         directory = self.config.output_dir.expanduser()
@@ -318,7 +321,7 @@ class TestPlanExecutor:
         # in memory; repeated plans therefore keep their TXT/HTML reports compact.
         with csv_path.open("x", encoding="utf-8", newline="") as stream:
             writer = csv.writer(stream)
-            writer.writerow(["round", "step", "status", "start", "end", "seconds", "summary"])
+            writer.writerow(["round", "step", "status", "start", "end", "seconds", "summary", "counter_deltas"])
             for round_index in range(rounds):
                 if self._cancel.is_set() or self._safety_triggered():
                     break
@@ -339,6 +342,7 @@ class TestPlanExecutor:
                     self._progress(round_index * len(step_keys) + index, rounds * len(step_keys), label)
                     self._step_progress(0)
                     self._log(f"=== {label} ===")
+                    baseline = error_snapshot.snapshot()
                     try:
                         result = handlers[key]()
                     except Exception as exc:  # defensive boundary for unattended plans
@@ -347,8 +351,13 @@ class TestPlanExecutor:
                                 self._active_runner.stop(aborted=True)
                             self._active_runner = None
                         result = self._instant_result(key, STATUS_FAILED, str(exc), [repr(exc)])
+                    final = error_snapshot.snapshot()
+                    deltas = error_snapshot.differences(baseline, final)
+                    counter_history[key] = f"{label} · " + " | ".join(deltas)
+                    if any(final[k] > baseline[k] for k in baseline.keys() & final.keys()):
+                        counter_history[key + "_increase"] = f"Δ ↑ {label} · " + " | ".join(deltas)
                     writer.writerow([round_index + 1, key, result.status, result.started_at,
-                                     result.finished_at, f"{result.duration_seconds:.3f}", result.summary])
+                                     result.finished_at, f"{result.duration_seconds:.3f}", result.summary, " | ".join(deltas)])
                     stream.flush()
                     aggregate = aggregates.setdefault(key, _StepAggregate())
                     aggregate.add(result)
@@ -394,6 +403,7 @@ class TestPlanExecutor:
             ))
         status = _overall_status(results, cancelled)
         plan_result = TestPlanResult(
+            counter_history=list(counter_history.values()),
             hostname=platform.node() or "unknown",
             started_at=started,
             finished_at=_now(),
@@ -1213,6 +1223,8 @@ def render_text_report(result: TestPlanResult, language: str = "de") -> str:
         f"CSV: {result.csv_report or '–'}",
         "",
     ]
+    if result.counter_history:
+        lines.extend(["ECC / PCIe / GPU (Δ)", *result.counter_history, ""])
     if result.system_info:
         lines.extend(["System", "-" * 6, *result.system_info, ""])
     for step in result.steps:
@@ -1240,6 +1252,8 @@ def render_html_report(result: TestPlanResult, language: str = "de") -> str:
                     (_text("Durchläufe", language), f"{result.completed_rounds}/{result.requested_rounds}"),
                     ("CSV", str(result.csv_report or "–"))],
     )
+    if result.counter_history:
+        report.add_section("ECC / PCIe / GPU (Δ)", "text", text="\n".join(result.counter_history))
     if result.system_info:
         report.add_section("System", "text", text="\n".join(result.system_info), collapsed=True)
     overview = [[_status_label(step.status, language), step.name, f"{step.duration_seconds:.1f} s", step.summary]

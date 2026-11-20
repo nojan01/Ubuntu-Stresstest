@@ -828,8 +828,12 @@ class NetworkPanel(QWidget):
                                interface=name, details=details, warnings="; ".join(result.warnings))
             status = STATUS_FAILED
         elif result.severity == "warn":
-            self._show_ethtool("⚠ {tool} {interface}: {details} | Auffällig: {warnings}", "#ffb52e", tool=result.tool,
-                               interface=name, details=details, warnings="; ".join(result.warnings))
+            warnings = [warning for warning in result.warnings
+                        if not (result.transceiver_read_failed and warning.startswith("Transceiver ("))]
+            template = ("⚠ {tool} {interface}: {details} | Auffällig: {warnings}" if warnings
+                        else "⚠ {tool} {interface}: {details}")
+            self._show_ethtool(template, "#ffb52e", tool=result.tool, interface=name,
+                               details=details, warnings="; ".join(warnings))
             status = STATUS_WARNING
         else:
             self._show_ethtool("✓ {tool} {interface}: {details}", "#55ff55", tool=result.tool, interface=name,

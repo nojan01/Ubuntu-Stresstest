@@ -1,7 +1,11 @@
 import json
 import subprocess
 
+import pytest
+
 from hardwaretest.core.nvme import (
+    NvmeSelfTestUnsupported,
+    start_nvme_self_test,
     controller_path,
     is_self_test_in_progress_error,
     parse_self_test_status,
@@ -153,3 +157,15 @@ def test_nvme_multi_drive_jobs_run_all_selected_namespaces():
         ]
         assert "group_reporting=0" in lines
         assert "rw=read" in lines
+
+
+@pytest.mark.parametrize(("operation", "args"), [(start_nvme_self_test, ("short",)), (read_nvme_self_test_status, ())])
+def test_self_test_invalid_opcode_is_unsupported(operation, args):
+    message = ("NVMe status: Invalid Command Opcode: A reserved coded value or "
+               "an unsupported value in the command opcode field(0x1)")
+
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, "", message)
+
+    with pytest.raises(NvmeSelfTestUnsupported, match="Invalid Command Opcode"):
+        operation("/dev/nvme0n1", *args, run=run)

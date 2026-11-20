@@ -28,6 +28,7 @@ from hardwaretest.core.nvme import (
     NvmeDevice,
     NvmeHealth,
     NvmeSelfTestStatus,
+    NvmeSelfTestUnsupported,
     is_self_test_in_progress_error,
     list_nvme_devices,
     nvme_available,
@@ -47,7 +48,7 @@ from hardwaretest.ui.widgets.worker_lifecycle import connect_finished, release_w
 
 class _NvmeWorker(QThread):
     completed = Signal(object)
-    failed = Signal(str)
+    failed = Signal(object)
 
     def __init__(self, action: Callable[[], object], parent: QWidget) -> None:
         super().__init__(parent)
@@ -57,7 +58,7 @@ class _NvmeWorker(QThread):
         try:
             self.completed.emit(self._action())
         except Exception as exc:  # pragma: no cover - system and polkit dependent
-            self.failed.emit(str(exc))
+            self.failed.emit(exc)
 
 
 class NvmePanel(QWidget):
@@ -758,7 +759,14 @@ class NvmePanel(QWidget):
         if release_worker(self, "_worker", worker):
             self._set_device_actions_enabled(self.device_box.count() > 0)
 
-    def _worker_failed(self, message: str, show_failure: bool = True) -> None:
+    def _worker_failed(self, error: Exception | str, show_failure: bool = True) -> None:
+        message = str(error)
+        if isinstance(error, NvmeSelfTestUnsupported) and not self._self_test_active:
+            self.self_test_progress.setVisible(False)
+            self._set_runtime_text(self.result, "NVMe-Selbsttestfunktion nicht unterstützt")
+            self._set_runtime_text(self.status, "Der Controller unterstützt diesen Selbsttestbefehl nicht.")
+            self.result.setStyleSheet("color: #ffb52e; font-size: 14px; font-weight: bold; padding: 4px;")
+            return
         if not self._self_test_active:
             self.self_test_progress.setVisible(False)
         if is_self_test_in_progress_error(message):

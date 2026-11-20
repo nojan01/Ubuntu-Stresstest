@@ -338,3 +338,21 @@ def test_niccli_status_ignore_with_data_counts_as_success_and_bad_health_warns(m
     assert "Geräteinfo: Device Health                  : Bad (Flash/Recover card)" in result.warnings
     assert not any(w.startswith("Link-Status") for w in result.warnings)
     assert not nic_vendor._BAD_HEALTH.search("Device Health : Good")
+
+
+def test_niccli_unplugged_fibre_with_module_details_unavailable(monkeypatch):
+    monkeypatch.setattr(nic_vendor, "find_tool", lambda name: "/usr/bin/niccli" if name == "niccli" else None)
+    run = FakeRun({
+        "niccli --list": (0, " 1) BCM57414 (5c:00.0)\n"),
+        "niccli -i 1 show": (0, "Device Name : BCM57414\n"),
+        "niccli -i 1 show --pkg_ver": (0, "Package Version : 231.1\n"),
+        "niccli -i 1 link -s": (0, "Physical link state : Link Down\nCurrent link speed : Unknown\n"
+                                "Module Status : Module is inserted and accepted\n"
+                                "Module Power State : Not Supported\nModule Tx Disable : Not Supported\n"),
+        "niccli -i 1 cable -m --show": (1, "ERROR: Failed to get the module information.\nEXIT CODE : 0C014023\n"),
+    })
+    result = nic_vendor.run_vendor_diagnostics(adapter("bnxt_en", bdf="0000:5c:00.0"), run=run)
+    assert "Kein Link | Modul erkannt | Transceiver-Details konnten nicht gelesen werden" in result.summary
+    assert result.severity == "warn"
+    assert len(result.warnings) == 1 and "0C014023" in result.warnings[0]
+    assert ("[Link-Status] Module Tx Disable", "Not Supported") in result.rows

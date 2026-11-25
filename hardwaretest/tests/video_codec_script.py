@@ -88,8 +88,16 @@ def classify_error(detail):
                                'failed to initialise vaapi', 'failed to initialize vaapi',
                                'device creation failed', 'permission denied')):
         return 'unavailable'
+    # FFmpeg probes the chosen GPU when it opens NVENC or CUVID. Match the
+    # capability messages specifically, before generic downstream errors.
+    if (re.search(r'\[\w+_nvenc @ [^\]\n]+\] no capable devices found', text)
+            or re.search(r'\bcodec \w+_cuvid is not supported\b', text)):
+        return 'unsupported'
     if any(s in text for s in ('unsupported device', 'codec not supported', 'no usable encoding profile',
                                'no usable decoding profile', 'no usable encoding entrypoint',
+                               'the requested vaprofile is not supported',
+                               'the requested vaentrypoint is not supported',
+                               'hardware does not offer any usable surface formats',
                                'no support for codec', 'hardware does not support',
                                'does not support the required nvenc features',
                                'no nvenc capable devices found', 'not supported on this gpu')):

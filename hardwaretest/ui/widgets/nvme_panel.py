@@ -68,6 +68,8 @@ class NvmePanel(QWidget):
         super().__init__(parent)
         self._worker: Optional[_NvmeWorker] = None
         self._self_test_active = False
+        self._batch_pending: list[NvmeDevice] = []
+        self._batch_results: dict[NvmeDevice, NvmeSelfTestStatus | Exception] = {}
         self._devices: dict[str, NvmeDevice] = {}
         self._io_runner: Optional[BaseTestRunner] = None
         self._io_timed = False
@@ -129,7 +131,9 @@ class NvmePanel(QWidget):
         self.hint.setStyleSheet("color: #bbbbbb; font-style: italic;")
 
         form = QFormLayout()
-        form.addRow("NVMe-Laufwerk für Diagnose/Selbsttest", self.device_box)
+        form.addRow("NVMe-Ziellaufwerke", self.io_drive_container)
+        form.addRow("", self.select_all_nvme)
+        form.addRow("NVMe-Laufwerk für Protokoll", self.device_box)
         form.addRow("Selbsttest", self.self_test_box)
 
         buttons = QHBoxLayout()
@@ -139,7 +143,6 @@ class NvmePanel(QWidget):
         buttons.addWidget(self.self_test_log_btn)
 
         io_form = QFormLayout()
-        io_form.addRow("NVMe-Ziellaufwerke", self.io_drive_container)
         io_form.addRow("Benchmark-Modus", self.benchmark_mode)
         io_form.addRow("Benchmark-Dauer", self.benchmark_duration)
         io_buttons = QHBoxLayout()
@@ -153,7 +156,6 @@ class NvmePanel(QWidget):
             "Der vollständige Test liest jeden Block und kann viele Stunden dauern."
         ))
         io_layout.itemAt(0).widget().setWordWrap(True)
-        io_layout.addWidget(self.select_all_nvme)
         io_layout.addLayout(io_form)
         io_layout.addLayout(io_buttons)
         io_layout.addWidget(self.io_result)
@@ -285,18 +287,58 @@ class NvmePanel(QWidget):
             parts.append(f"FW {device.firmware}")
         return " – ".join(parts)
 
+    def _selected_controllers(self) -> list[NvmeDevice]:
+        controllers = {}
+        for device in self._selected_io_devices():
+            controllers.setdefault(device.controller_path or device.namespace_path, device)
+        if not controllers:
+            self._show_no_io_device_selected()
+        return list(controllers.values())
+
+    @staticmethod
+    def _run_for_devices(devices, action):
+        results = []
+        for device in devices:
+            try:
+                value = action(device.namespace_path)
+            except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as error:
+                value = error
+            results.append((device, value))
+        return results
+
     def _read_health(self) -> None:
-        device = self._selected_device()
-        if not device:
+        devices = self._selected_controllers()
+        if not devices:
             return
         self._set_runtime_text(self.status, "NVMe-Gesundheitsdaten werden gelesen …")
         self._set_device_actions_enabled(False)
-        self._run_worker(lambda: read_nvme_smart(device, run=self._nvme_run), self._show_health)
+        self._run_worker(
+            lambda: self._run_for_devices(devices, lambda path: read_nvme_smart(path, run=self._nvme_run)),
+            self._show_health_batch,
+        )
+
+    def _show_health_batch(self, results) -> None:
+        self._last_health = None
+        sections = []
+        for device, value in results:
+            if isinstance(value, NvmeHealth):
+                if len(results) == 1:
+                    self._last_health = value
+                    self._last_health_device = device
+                sections.append(self._health_text(value, device))
+            else:
+                sections.append(f"{self._device_label(device)}: {value}")
+        self.details.setPlainText("\n\n".join(sections))
+        if all(isinstance(value, NvmeHealth) for _, value in results):
+            self._set_runtime_text(self.status, "NVMe-Gesundheitsdaten aktualisiert.")
+        else:
+            self._set_runtime_text(self.status, "NVMe-Gesundheitsdaten unvollständig. Details prüfen.")
 
     def _start_self_test(self) -> None:
-        device = self._selected_device()
-        if not device:
+        devices = self._selected_controllers()
+        if not devices:
             return
+        device = ", ".join(item.namespace_path for item in devices)
         test_type = self.self_test_box.currentData() or "short"
         test_name = language_manager.tr("kurzen" if test_type == "short" else "erweiterten")
         answer = QMessageBox.question(
@@ -314,8 +356,10 @@ class NvmePanel(QWidget):
         self._set_runtime_text(self.status, "NVMe-Selbsttest wird gestartet …")
         self._set_device_actions_enabled(False)
         self._run_worker(
-            lambda: start_nvme_self_test(device, test_type, run=self._nvme_run),
-            self._self_test_started,
+            lambda: self._run_for_devices(
+                devices, lambda path: start_nvme_self_test(path, test_type, run=self._nvme_run)
+            ),
+            self._self_test_batch_started,
         )
 
     def _read_self_test_log(self) -> None:
@@ -350,15 +394,6 @@ class NvmePanel(QWidget):
         connect_finished(worker, self._worker_finished)
         worker.start()
         return True
-
-    def _show_health(self, value: object) -> None:
-        health = value
-        if not isinstance(health, NvmeHealth):
-            return
-        self._last_health = health
-        self._last_health_device = self._selected_device_info()
-        self._render_health_details(health, self._last_health_device)
-        self._set_runtime_text(self.status, "NVMe-Gesundheitsdaten aktualisiert.")
 
     def _render_health_details(self, health: NvmeHealth, device: NvmeDevice) -> None:
         self.details.setPlainText(self._health_text(health, device))
@@ -396,12 +431,32 @@ class NvmePanel(QWidget):
         ]
         return "\n".join(lines)
 
-    def _self_test_started(self, _value: object) -> None:
+    def _self_test_batch_started(self, results) -> None:
         self._self_test_started_at = datetime.now()
-        self._set_self_test_active(None)
+        self._batch_pending = []
+        self._batch_results = {}
+        for device, value in results:
+            if value is None or is_self_test_in_progress_error(str(value)):
+                self._batch_pending.append(device)
+            else:
+                self._batch_results[device] = value
+        if self._batch_pending:
+            self._set_self_test_active(None)
+        else:
+            self._finish_self_test_batch()
 
     def _poll_self_test_status(self) -> None:
         if self._worker is not None or not self._self_test_active:
+            return
+        if self._batch_pending:
+            devices = list(self._batch_pending)
+            self._run_worker(
+                lambda: self._run_for_devices(
+                    devices, lambda path: read_nvme_self_test_status(path, run=self._nvme_run)
+                ),
+                self._show_self_test_batch_status,
+                show_failure=False,
+            )
             return
         device = self._selected_device()
         if device:
@@ -410,6 +465,59 @@ class NvmePanel(QWidget):
                 self._show_self_test_status,
                 show_failure=False,
             )
+
+    def _show_self_test_batch_status(self, results) -> None:
+        progress = []
+        for device, value in results:
+            if isinstance(value, NvmeSelfTestStatus) and value.active:
+                progress.append(value.completion_percent)
+            elif isinstance(value, Exception) and is_self_test_in_progress_error(str(value)):
+                progress.append(None)
+            else:
+                self._batch_pending.remove(device)
+                self._batch_results[device] = value
+        if self._batch_pending:
+            self._set_self_test_active(None if None in progress else min(progress))
+        else:
+            self._finish_self_test_batch()
+
+    def _finish_self_test_batch(self) -> None:
+        self._self_test_active = False
+        self._status_timer.stop()
+        self.self_test_progress.setVisible(False)
+        tr = language_manager.tr
+        rows = []
+        failed = incomplete = False
+        for device, value in self._batch_results.items():
+            if isinstance(value, NvmeSelfTestUnsupported):
+                label, detail = tr("Nicht unterstützt"), str(value)
+                incomplete = True
+            elif isinstance(value, Exception):
+                label, detail = tr("Nicht auswertbar"), str(value)
+                incomplete = True
+            else:
+                label = tr("BESTANDEN") if value.passed is True else (
+                    tr("FEHLGESCHLAGEN") if value.passed is False else tr("Nicht auswertbar")
+                )
+                detail = value.raw_log
+                failed |= value.passed is False
+                incomplete |= value.passed is None
+            rows.append((self._device_label(device), label, detail))
+        state = STATUS_FAILED if failed else STATUS_WARNING if incomplete else STATUS_PASSED
+        summary_key = "NVMe-Selbsttest fehlgeschlagen." if failed else (
+            "NVMe-Selbsttest nicht vollständig auswertbar." if incomplete else "NVMe-Selbsttest bestanden."
+        )
+        self._set_runtime_text(self.result, summary_key)
+        self._set_runtime_text(self.status, summary_key)
+        self.result.setStyleSheet("color: " + {
+            STATUS_FAILED: "#ff6257", STATUS_WARNING: "#ffb52e", STATUS_PASSED: "#39d353"
+        }[state] + "; font-weight: bold;")
+        self.details.setPlainText("\n\n".join(f"{device} — {label}\n{detail}" for device, label, detail in rows))
+        report = Report(test="nvme-selbsttest", title=tr("NVMe – Geräteselbsttest"), status=state,
+                        summary=tr(summary_key), started=self._self_test_started_at, finished=datetime.now())
+        report.add_section(tr("Einzelergebnisse"), "table",
+                           header=[tr("Gerät"), tr("Status"), tr("Details")], rows=rows)
+        self.report_bar.publish(report)
 
     def _show_self_test_status(self, value: object) -> None:
         if not isinstance(value, NvmeSelfTestStatus):
@@ -864,7 +972,9 @@ class NvmePanel(QWidget):
     def _set_device_actions_enabled(self, enabled: bool) -> None:
         self.health_btn.setEnabled(enabled)
         self.self_test_btn.setEnabled(enabled and not self._self_test_active)
-        self.self_test_log_btn.setEnabled(enabled)
+        self.scan_btn.setEnabled(self._worker is None and not self._self_test_active)
+        self.device_box.setEnabled(enabled and not self._self_test_active)
+        self.self_test_log_btn.setEnabled(enabled and not self._batch_pending)
         self.self_test_box.setEnabled(enabled and not self._self_test_active)
         if self._io_runner is None:
             self._set_io_actions_enabled(enabled)

@@ -121,3 +121,48 @@ def test_unsupported_self_test_shows_inline_notice(monkeypatch, keep):
     panel._worker_failed(nvme_panel.NvmeSelfTestUnsupported("Invalid Command Opcode"))
     assert panel.result.text() == "NVMe-Selbsttestfunktion nicht unterstützt"
     assert not panel._self_test_active
+
+
+@pytest.mark.parametrize("action", ["smart", "self-test"])
+def test_nvme_actions_use_checked_controllers_and_continue_after_failure(monkeypatch, keep, action):
+    devices = [
+        nvme_panel.NvmeDevice(f"/dev/nvme{ctrl}n{ns}", f"/dev/nvme{ctrl}", "", "", "", 0)
+        for ctrl, ns in [(0, 1), (0, 2), (1, 1), (2, 1)]
+    ]
+    monkeypatch.setattr(nvme_panel, "nvme_available", lambda: True)
+    monkeypatch.setattr(nvme_panel, "list_nvme_devices", lambda: devices)
+    panel = nvme_panel.NvmePanel()
+    keep(panel)
+    for device in devices[1:]:
+        panel._io_drive_checks[device.namespace_path].setChecked(True)
+    panel._io_drive_checks[devices[-1].namespace_path].setChecked(False)
+    monkeypatch.setattr(panel, "_run_worker",
+                        lambda run, callback, **kwargs: callback(run()))
+    paths = []
+
+    def run(path, *args, **kwargs):
+        paths.append(path)
+        if path == "/dev/nvme0n1":
+            raise nvme_panel.NvmeSelfTestUnsupported("Invalid Command Opcode")
+        if action == "smart":
+            return nvme_panel.NvmeHealth(device="/dev/nvme1")
+
+    if action == "smart":
+        monkeypatch.setattr(nvme_panel, "read_nvme_smart", run)
+        panel._read_health()
+        assert "unvollständig" in panel.status.text()
+    else:
+        monkeypatch.setattr(nvme_panel, "start_nvme_self_test", run)
+        monkeypatch.setattr(nvme_panel.QMessageBox, "question",
+                            lambda *args: nvme_panel.QMessageBox.StandardButton.Yes)
+        reports = []
+        monkeypatch.setattr(panel.report_bar, "publish", reports.append)
+        panel._start_self_test()
+        assert panel._batch_pending == [devices[2]]
+        monkeypatch.setattr(nvme_panel, "read_nvme_self_test_status",
+                            lambda path, **kw: NvmeSelfTestStatus(active=False, result_code=0, raw_log="test log"))
+        panel._poll_self_test_status()
+        assert not panel._self_test_active
+        assert reports[0].status == nvme_panel.STATUS_WARNING
+    assert paths == ["/dev/nvme0n1", "/dev/nvme1n1"]
+    assert "/dev/nvme0n1" in panel.details.toPlainText()

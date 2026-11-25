@@ -257,7 +257,7 @@ class NvidiaPanel(QWidget):
         layout.addWidget(monitor_group)
         layout.addWidget(stress_group)
         self.video_panel = VideoCodecPanel(
-            lambda: [g for g in self._gpus if g.index in self._selected_indices()],
+            lambda: self._gpus,
             lambda: self._runner is None or not self._runner.is_running(), self)
         layout.addWidget(self.video_panel)
         layout.addWidget(diag_group)
@@ -309,6 +309,7 @@ class NvidiaPanel(QWidget):
         self._show_linux_status(status)
         if not status.driver_ready:
             self._gpus = []
+            self.video_panel.refresh_devices()
             self._clear_checks()
             self._set_diagnostic_enabled(False)
             self._set_monitoring_available(False)
@@ -327,6 +328,7 @@ class NvidiaPanel(QWidget):
         self._show_linux_status(status)
         if not status.driver_ready:
             self._gpus = []
+            self.video_panel.refresh_devices()
             self._clear_checks()
             self._set_diagnostic_enabled(False)
             self._set_monitoring_available(False)
@@ -364,6 +366,7 @@ class NvidiaPanel(QWidget):
 
     def _show_gpus(self, value: object) -> None:
         self._gpus = list(value) if isinstance(value, list) else []
+        self.video_panel.refresh_devices()
         self.datasheet_btn.setEnabled(bool(self._gpus))
         self._clear_checks()
         for position, gpu in enumerate(self._gpus):
@@ -570,7 +573,10 @@ class NvidiaPanel(QWidget):
     def _show_telemetry(self, value: object) -> None:
         fresh = list(value) if isinstance(value, list) else []
         if fresh:
+            inventory_changed = [g.uuid for g in fresh] != [g.uuid for g in self._gpus]
             self._gpus = fresh
+            if inventory_changed:
+                self.video_panel.refresh_devices()
             self.inventory.setPlainText("\n\n".join(self._format_gpu(gpu) for gpu in fresh))
         selected = set(self._selected_indices())
         visible = [gpu for gpu in fresh if gpu.index in selected]

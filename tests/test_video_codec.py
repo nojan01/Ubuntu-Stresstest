@@ -14,6 +14,17 @@ from hardwaretest.tests import video_codec_script as video
     ('Too many concurrent sessions','unavailable'),
     ('OpenEncodeSessionEx failed: unsupported device (2)','unsupported'),
     ('Codec not supported','unsupported'),
+    ('[av1_nvenc @ 0x123] No capable devices found\nError opening encoder: Invalid argument','unsupported'),
+    ('[av1_cuvid @ 0x123] Codec av1_cuvid is not supported.\nError opening decoder: Invalid argument','unsupported'),
+    ('[av1_nvenc @ 0x123] Cannot load libcuda.so.1\n[av1_nvenc @ 0x123] No capable devices found','unavailable'),
+    ('[av1_cuvid @ 0x123] Error opening decoder: Invalid argument','error'),
+    ('[av1_vaapi] No usable encoding entrypoint found for profile VAProfileAV1Profile0','unsupported'),
+    ('[av1] No support for codec av1 profile 0.','unsupported'),
+    ('Failed to create decode configuration: 13 (the requested VAEntrypoint is not supported).','unsupported'),
+    ('Failed to create decode configuration: 12 (the requested VAProfile is not supported).','unsupported'),
+    ('Hardware does not offer any usable surface formats.','unsupported'),
+    ('Failed to end picture decode issue: 23 (internal decoding error).','error'),
+    ('Failed to initialise VAAPI connection: -1 (unknown libva error).','unavailable'),
     ('Frame-Prüfsummen oder Bildanzahl weichen ab','error'),
     ('Unbekannter Verarbeitungsfehler','error'),
 ])
@@ -51,7 +62,7 @@ def test_worker_never_falls_back_to_software_or_hides_incomplete_checks(tmp_path
     calls=[]
     def invoke(command,env,timeout=90):
         calls.append((command,dict(env)))
-        assert env['CUDA_VISIBLE_DEVICES']=='GPU-example'
+        assert env['CUDA_VISIBLE_DEVICES'] in ('GPU-first', 'GPU-second')
         assert 'LD_LIBRARY_PATH' not in env
         gpu=any('_nvenc' in str(x) or '_cuvid' in str(x) for x in command)
         if gpu and outcome=='missing':raise video.CommandError('Cannot load libcuda.so.1')
@@ -62,14 +73,22 @@ def test_worker_never_falls_back_to_software_or_hides_incomplete_checks(tmp_path
             return f'0, 0, 0, 1, 42, {value}\n',''
         return '',''
     monkeypatch.setattr(video,'invoke',invoke)
-    result=video.main(['--gpus','GPU-example','--vectors',str(tmp_path),'--codec','h264'])
+    result=video.main(['--gpus','GPU-first,GPU-second','--vectors',str(tmp_path),'--codec','h264'])
     assert result==expected
     events=[json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert any(e.get('direction')=='decode' for e in events)
+    assert [(e['gpu'], e['direction']) for e in events if e['event'] == 'result'] == [
+        (gpu, direction)
+        for gpu in ('GPU-first', 'GPU-second')
+        for direction in ('encode', 'decode')
+    ]
+    for encoder in ('h264_nvenc', 'h264_cuvid'):
+        assert [env['CUDA_VISIBLE_DEVICES'] for cmd, env in calls if encoder in cmd] == [
+            'GPU-first', 'GPU-second'
+        ]
     assert any('h264_cuvid' in cmd and cmd[cmd.index('-gpu')+1]=='0' for cmd,_ in calls)
     assert any('h264_nvenc' in cmd and cmd[cmd.index('-gpu')+1]=='0' for cmd,_ in calls)
     if outcome in ('missing','unsupported'):
-        assert events[-1]['passed']==0 and events[-1]['incomplete']==2
+        assert events[-1]['passed']==0 and events[-1]['incomplete']==4
 
 
 def test_cancellation_terminates_a_running_child(monkeypatch):
